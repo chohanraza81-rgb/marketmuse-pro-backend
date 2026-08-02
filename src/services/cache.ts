@@ -3,7 +3,7 @@ import NodeCache from 'node-cache';
 class CacheService {
   private cache: NodeCache;
 
-  constructor(ttlSeconds: number = 86400) { // 24h default
+  constructor(ttlSeconds: number = 86400) {
     this.cache = new NodeCache({ stdTTL: ttlSeconds, checkperiod: 120 });
   }
 
@@ -12,7 +12,12 @@ class CacheService {
   }
 
   set<T>(key: string, value: T, ttl?: number): void {
-    this.cache.set(key, value, ttl ?? undefined);
+    // Fix: explicitly pass ttl or undefined
+    if (ttl !== undefined) {
+      this.cache.set(key, value, ttl);
+    } else {
+      this.cache.set(key, value);
+    }
   }
 
   del(key: string): void {
