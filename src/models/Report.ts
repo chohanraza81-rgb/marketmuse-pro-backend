@@ -9,6 +9,7 @@ export interface IReport extends Document {
   markdown: string;
   charts: any;
   createdAt: Date;
+  __v?: number; // Add this line to make __v optional
 }
 
 interface IReportModel extends Model<IReport> {
@@ -68,9 +69,7 @@ const ReportSchema = new Schema<IReport, IReportModel>(
     toJSON: {
       virtuals: true,
       transform: function(_doc, ret) {
-        if (ret.__v !== undefined) {
-          delete ret.__v;
-        }
+        delete ret.__v; // Now works because __v is optional in interface
         return ret;
       }
     },
@@ -88,19 +87,15 @@ ReportSchema.index({ type: 1, country: 1 });
 ReportSchema.pre('save', function(next) {
   const doc = this as unknown as IReport;
   
-  // Validate type
   if (!['product', 'seo'].includes(doc.type)) {
     return next(new Error(`Invalid report type: ${doc.type}. Must be "product" or "seo"`));
   }
 
-  // Validate country
   if (!['us', 'pk', 'gb', 'ae', 'sa'].includes(doc.country)) {
     return next(new Error(`Invalid country: ${doc.country}`));
   }
 
-  // Ensure value is $99
   doc.value = '$99';
-
   next();
 });
 
