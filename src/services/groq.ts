@@ -1,4 +1,4 @@
-import Groq from '@groq-sdk';
+import Groq from 'groq-sdk';
 import { env } from '../config/env';
 
 const groq = new Groq({ apiKey: env.GROQ_API_KEY });
@@ -29,24 +29,58 @@ export const runGroqPrompt = async (systemPrompt: string, userMessage: string): 
     if (!content) throw new Error('Empty response from Groq');
     return content;
   } catch (error: any) {
-    if (error.name === 'AbortError') throw new Error('Groq request timed out');
-    throw error;
+    if (error.name === 'AbortError') throw new Error('Groq request timed out after 25 seconds');
+    if (error.status === 401) throw new Error('Invalid Groq API key');
+    if (error.status === 429) throw new Error('Groq rate limit exceeded');
+    if (error.status === 500) throw new Error('Groq server error');
+    throw new Error(`Groq API error: ${error.message || 'Unknown error'}`);
   } finally {
     clearTimeout(timeout);
   }
 };
 
-// Retry wrapper
-export const runGroqWithRetry = async (systemPrompt: string, userMessage: string, retries = 2): Promise<string> => {
+// Retry wrapper with exponential backoff
+export const runGroqWithRetry = async (
+  systemPrompt: string,
+  userMessage: string,
+  retries: number = 2
+): Promise<string> => {
   let lastError: any;
+  
   for (let i = 0; i <= retries; i++) {
     try {
-      return await runGroqPrompt(systemPrompt, userMessage);
-    } catch (err) {
+      console.log(`🔄 Groq API attempt ${i + 1}/${retries + 1}`);
+      const result = await runGroqPrompt(systemPrompt, userMessage);
+      console.log('✅ Groq API success');
+      return result;
+    } catch (err: any) {
       lastError = err;
-      if (i === retries) throw lastError;
-      await new Promise(r => setTimeout(r, 2000 * (i + 1)));
+      console.error(`❌ Groq attempt ${i + 1} failed:`, err.message);
+      
+      if (i === retries) {
+        console.error('❌ All Groq retries exhausted');
+        throw lastError;
+      }
+      
+      // Exponential backoff: 2s, 4s, 8s...
+      const delay = Math.min(2000 * Math.pow(2, i), 10000);
+      console.log(`⏳ Retrying in ${delay / 1000}s...`);
+      await new Promise(r => setTimeout(r, delay));
     }
   }
+  
   throw lastError;
+};
+
+// Health check
+export const checkGroqHealth = async (): Promise<boolean> => {
+  try {
+    const response = await runGroqPrompt(
+      'Respond with only "OK"',
+      'Health check'
+    );
+    return response.includes('OK');
+  } catch {
+    return false;
+  }
 };
