@@ -8,6 +8,22 @@ import { runGroqWithRetry } from '../services/groq';
 import { Report } from '../models/Report';
 import { ZodError } from 'zod';
 
+// Bulletproof JSON extraction
+const extractJSON = (raw: string): any => {
+  let cleaned = raw.replace(/```json|```/g, '').trim();
+  const startIdx = cleaned.indexOf('{');
+  const endIdx = cleaned.lastIndexOf('}');
+  if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
+    cleaned = cleaned.substring(startIdx, endIdx + 1);
+  }
+  try {
+    return JSON.parse(cleaned);
+  } catch (err) {
+    console.error('❌ extractJSON failed. Cleaned string:', cleaned.substring(0, 300));
+    throw new Error('AI response is not valid JSON');
+  }
+};
+
 const PRODUCT_SYSTEM_PROMPT = `You are a senior e‑commerce product strategist at a top‑tier agency. 
 Given a niche, country, real shopping results, and Google Trends data, produce a detailed, actionable JSON analysis.
 
@@ -114,8 +130,8 @@ ${analysis.pricing_engine?.map((p: any, i: number) =>
 ## 🏆 Top Competitors
 ${analysis.competitors?.map((c: any, i: number) => 
   `### ${i + 1}. ${c.name}
-- **Strength:** ${c.strengths?.join(', ')}
-- **Weakness:** ${c.weaknesses?.join(', ')}`
+- **Strengths:** ${c.strengths?.join(', ')}
+- **Weaknesses:** ${c.weaknesses?.join(', ')}`
 ).join('\n\n') || 'No competitor data available'}
 
 ---
@@ -193,7 +209,6 @@ export const createProductReport = async (req: Request, res: Response, next: Nex
       image: p.thumbnail || '',
     })) || [];
 
-    // Build user message with real data (trimmed)
     const userMessage = `Niche: ${niche}
 Country: ${country} (${countryUpper})
 Exchange Rates: ${JSON.stringify(exchangeRates)}
@@ -209,14 +224,8 @@ Please analyze and return a complete JSON with ALL required fields. Be specific,
     console.log('🤖 Requesting Groq analysis...');
     const groqResponse = await runGroqWithRetry(PRODUCT_SYSTEM_PROMPT, userMessage);
     
-    let analysis;
-    try {
-      const cleaned = groqResponse.replace(/```json|```/g, '').trim();
-      analysis = JSON.parse(cleaned);
-    } catch (parseError) {
-      console.error('❌ Failed to parse Groq JSON:', groqResponse.substring(0, 200));
-      throw new Error('AI response format invalid. Please try again.');
-    }
+    // Use the new bulletproof extractor
+    const analysis = extractJSON(groqResponse);
 
     if (!analysis.market_score || !analysis.pricing_engine || !analysis.competitors) {
       throw new Error('AI response missing required fields');
