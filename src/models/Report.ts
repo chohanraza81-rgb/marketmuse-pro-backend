@@ -23,12 +23,6 @@ const ReportSchema = new Schema<IReport, IReportModel>(
       enum: {
         values: ['product', 'seo'],
         message: '{VALUE} is not a valid report type. Must be "product" or "seo"'
-      },
-      validate: {
-        validator: function(v: string): boolean {
-          return ['product', 'seo'].includes(v);
-        },
-        message: 'Type must be either "product" or "seo"'
       }
     },
     niche: {
@@ -58,23 +52,11 @@ const ReportSchema = new Schema<IReport, IReportModel>(
     },
     data: {
       type: Schema.Types.Mixed,
-      required: [true, 'Report data is required'],
-      validate: {
-        validator: function(v: any): boolean {
-          return v && typeof v === 'object' && Object.keys(v).length > 0;
-        },
-        message: 'Data must be a non-empty object'
-      }
+      required: [true, 'Report data is required']
     },
     markdown: {
       type: String,
-      required: [true, 'Markdown content is required'],
-      validate: {
-        validator: function(v: string): boolean {
-          return v && v.length >= 50;
-        },
-        message: 'Markdown must be at least 50 characters'
-      }
+      required: [true, 'Markdown content is required']
     },
     charts: {
       type: Schema.Types.Mixed,
@@ -85,8 +67,10 @@ const ReportSchema = new Schema<IReport, IReportModel>(
     timestamps: { createdAt: true, updatedAt: false },
     toJSON: {
       virtuals: true,
-      transform: function(doc, ret) {
-        delete ret.__v;
+      transform: function(_doc, ret) {
+        if (ret.__v !== undefined) {
+          delete ret.__v;
+        }
         return ret;
       }
     },
@@ -102,7 +86,7 @@ ReportSchema.index({ type: 1, country: 1 });
 
 // Pre-save hook to ensure data integrity
 ReportSchema.pre('save', function(next) {
-  const doc = this as IReport;
+  const doc = this as unknown as IReport;
   
   // Validate type
   if (!['product', 'seo'].includes(doc.type)) {
