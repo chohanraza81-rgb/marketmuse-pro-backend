@@ -2,6 +2,7 @@ import { getJson } from 'serpapi';
 import { env } from '../config/env';
 import { cacheService } from './cache';
 import pLimit from 'p-limit';
+import { countryToGL } from './countries';
 
 const limit = pLimit(5);
 
@@ -24,13 +25,15 @@ export const getShoppingResults = async (query: string, country: string = 'us'):
   const cached = cacheService.get<any>(cacheKey);
   if (cached) return cached;
 
+  const gl = countryToGL[country] || 'us';  // convert to Google country code
+
   const data = await limit(() =>
     withRetry(() =>
       getJson({
         api_key: env.SERPAPI_KEY,
         q: query,
         tbm: 'shop',
-        gl: country,
+        gl: gl,
         num: 10,
       })
     )
@@ -45,12 +48,14 @@ export const getKeywordSuggestions = async (query: string, country: string = 'us
   const cached = cacheService.get<string[]>(cacheKey);
   if (cached) return cached;
 
+  const gl = countryToGL[country] || 'us';
+
   const data: any = await limit(() =>
     withRetry(() =>
       getJson({
         api_key: env.SERPAPI_KEY,
         q: query,
-        gl: country,
+        gl: gl,
       })
     )
   );
@@ -65,12 +70,14 @@ export const getSearchResults = async (query: string, country: string = 'us'): P
   const cached = cacheService.get<any>(cacheKey);
   if (cached) return cached;
 
+  const gl = countryToGL[country] || 'us';
+
   const data = await limit(() =>
     withRetry(() =>
       getJson({
         api_key: env.SERPAPI_KEY,
         q: query,
-        gl: country,
+        gl: gl,
         num: 10,
       })
     )
