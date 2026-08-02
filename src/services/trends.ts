@@ -4,9 +4,9 @@ import pLimit from 'p-limit';
 
 const limit = pLimit(3);
 
-export const getTrends = async (keyword: string, country: string = 'US') => {
+export const getTrends = async (keyword: string, country: string = 'US'): Promise<any[]> => {
   const cacheKey = `trends_${keyword}_${country}`;
-  const cached = cacheService.get(cacheKey);
+  const cached = cacheService.get<any[]>(cacheKey);
   if (cached) return cached;
 
   const twelveMonthsAgo = new Date();
@@ -30,7 +30,7 @@ export const getTrends = async (keyword: string, country: string = 'US') => {
     return timelineData;
   } catch (error) {
     console.error('Google Trends fetch error, returning mock fallback');
-    // Return mock 12-month data to avoid breaking UI
+    // Return mock 12-month data
     const mock = Array.from({ length: 12 }, (_, i) => {
       const d = new Date();
       d.setMonth(d.getMonth() - (11 - i));
