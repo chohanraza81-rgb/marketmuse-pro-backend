@@ -7,82 +7,89 @@ import { runGroqWithRetry } from '../services/groq';
 import { Report } from '../models/Report';
 import { ZodError } from 'zod';
 
-// Bulletproof JSON extraction
 const extractJSON = (raw: string): any => {
-  let cleaned = raw.replace(/```json|```/g, '').trim();
-  const startIdx = cleaned.indexOf('{');
-  const endIdx = cleaned.lastIndexOf('}');
-  if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
-    cleaned = cleaned.substring(startIdx, endIdx + 1);
+  console.log('🔧 Raw Groq response length:', raw.length);
+  
+  let cleaned = raw
+    .replace(/```json\s*/g, '')
+    .replace(/```\s*/g, '')
+    .replace(/^[^{[]*/, '')
+    .trim();
+
+  const firstBrace = cleaned.indexOf('{');
+  const firstBracket = cleaned.indexOf('[');
+  let startIdx = -1, endIdx = -1;
+
+  if (firstBrace !== -1 && (firstBrace < firstBracket || firstBracket === -1)) {
+    startIdx = firstBrace;
+    let depth = 1;
+    for (let i = startIdx + 1; i < cleaned.length; i++) {
+      if (cleaned[i] === '{') depth++;
+      else if (cleaned[i] === '}') depth--;
+      if (depth === 0) { endIdx = i; break; }
+    }
+  } else if (firstBracket !== -1) {
+    startIdx = firstBracket;
+    let depth = 1;
+    for (let i = startIdx + 1; i < cleaned.length; i++) {
+      if (cleaned[i] === '[') depth++;
+      else if (cleaned[i] === ']') depth--;
+      if (depth === 0) { endIdx = i; break; }
+    }
   }
+
+  if (startIdx !== -1 && endIdx !== -1) {
+    cleaned = cleaned.substring(startIdx, endIdx + 1);
+  } else {
+    // If JSON is truncated (no closing brace), try to fix common ending
+    if (startIdx !== -1 && endIdx === -1) {
+      cleaned = cleaned.substring(startIdx);
+      console.warn('⚠️ JSON appears truncated. Attempting to salvage...');
+      // Add missing closing braces (heuristic)
+      const openBraces = (cleaned.match(/{/g) || []).length;
+      const closeBraces = (cleaned.match(/}/g) || []).length;
+      cleaned += '}'.repeat(openBraces - closeBraces);
+      // Also close arrays if needed
+      const openBrackets = (cleaned.match(/\[/g) || []).length;
+      const closeBrackets = (cleaned.match(/\]/g) || []).length;
+      cleaned += ']'.repeat(openBrackets - closeBrackets);
+    }
+  }
+
+  console.log('📝 Extracted JSON candidate:', cleaned.substring(0, 200));
+
   try {
     return JSON.parse(cleaned);
   } catch (err) {
-    console.error('❌ extractJSON failed. Cleaned string:', cleaned.substring(0, 300));
+    console.error('❌ JSON.parse failed. Full cleaned string:', cleaned);
     throw new Error('AI response is not valid JSON');
   }
 };
 
-const SEO_SYSTEM_PROMPT = `You are an SEO director at a leading agency. Given a niche, country, real SERP top 10, related questions, and 12-month Google Trends, create a comprehensive SEO strategy.
-
-Use the provided SERP data to extract real competitor URLs, titles, word counts, and backlink estimates. **Do not invent fake URLs** – reference the actual results.
-
-Respond ONLY with a valid JSON object (no markdown, no code fences) exactly following this structure:
+// SHORTER system prompt to avoid token truncation
+const SEO_SYSTEM_PROMPT = `You are an SEO strategist. Analyze SERP data and trends. Return ONLY valid JSON (no markdown) with this structure. Keep keyword volumes realistic and varied (not all same). Content titles must be unique.
 
 {
   "trend_score": "Seasonal" or "Evergreen",
-  "trend_insight": string (one sentence explaining the trend pattern),
+  "trend_insight": string,
   "keywords": [
-    {
-      "keyword": string,
-      "volume": number (realistic monthly searches, varying from high to low),
-      "kd": number (0-100),
-      "cpc": number,
-      "intent": string ("informational", "commercial", "transactional")
-    }
-  ] (exactly 50, sorted by volume descending, with a realistic distribution: 5 high volume, 15 medium, 30 long-tail low volume),
+    { "keyword": string, "volume": number, "kd": number, "cpc": number, "intent": string }
+  ] (50, sorted by volume),
   "serp_analysis": [
-    {
-      "position": number,
-      "title": string (from SERP data),
-      "url": string (from SERP data),
-      "da": number (estimated domain authority),
-      "pa": number (estimated page authority),
-      "word_count": number,
-      "backlinks": number,
-      "ranking_keywords": number,
-      "traffic_estimate": number,
-      "strengths": string,
-      "weaknesses": string
-    }
-  ] (exactly 10),
+    { "position": number, "title": string, "url": string, "da": number, "word_count": number, "backlinks": number }
+  ] (10, from data),
   "content_calendar": [
-    {
-      "week": number (1-24),
-      "title": string (creative, click‑worthy blog post title),
-      "keyword": string (primary target keyword),
-      "content_type": string (e.g., "Pillar Page", "Listicle", "How‑to Guide", "Review"),
-      "word_count_target": number,
-      "outline": [string] (3-5 bullet points outlining the content)
-    }
-  ] (exactly 24 weeks),
+    { "week": number, "title": string, "keyword": string, "content_type": string, "word_count_target": number }
+  ] (24),
   "backlink_strategy": {
     "overview": string,
-    "target_sites": [
-      { "site": string, "type": string, "contact_method": string }
-    ] (5-10 specific sites/blogs to reach out to),
-    "guest_post_ideas": [string] (3-5 topics),
-    "resource_page_targets": [string],
-    "broken_link_opportunities": [string]
+    "target_sites": [ { "site": string, "type": string } ] (5),
+    "guest_post_ideas": [string] (3)
   },
-  "onpage_checklist": [string] (10-15 actionable points),
+  "onpage_checklist": [string] (10),
   "chart_data": {
-    "trend_12m": number[] (12 values 0-100 from trends),
-    "related_queries": [string] (from real data),
-    "keyword_difficulty_distribution": { "easy": number, "medium": number, "hard": number },
-    "volume_vs_kd": [
-      { "keyword": string, "volume": number, "kd": number, "cpc": number }
-    ] (top 20)
+    "trend_12m": number[] (12),
+    "keyword_difficulty_distribution": { "easy": number, "medium": number, "hard": number }
   }
 }`;
 
@@ -110,100 +117,36 @@ function generateSEOMarkdown(analysis: any, niche: string, country: string): str
 
 ${analysis.trend_insight || ''}
 
-This niche shows **${analysis.trend_score.toLowerCase()}** patterns. ${
-    analysis.trend_score === 'Seasonal' 
-      ? 'Plan content calendar around peak seasons for maximum traffic.' 
-      : 'Consistent content publishing will yield steady traffic growth.'
-  }
+---
+
+## 🏆 Top Keywords
+${analysis.keywords?.slice(0, 30).map((k: any, i: number) => 
+  `- **${k.keyword}** (Vol: ${k.volume}, KD: ${k.kd}, CPC: $${k.cpc}) [${k.intent}]`
+).join('\n') || 'None'}
 
 ---
 
-## 🏆 Top 50 Golden Keywords
-
-| # | Keyword | Volume | KD | CPC | Intent | Difficulty |
-|---|---------|--------|----|-----|--------|------------|
-${analysis.keywords?.slice(0, 50).map((k: any, i: number) => 
-  `| ${i + 1} | ${k.keyword} | ${k.volume?.toLocaleString() || 0} | ${k.kd || 0} | $${k.cpc?.toFixed(2) || '0.00'} | ${k.intent || 'informational'} | ${difficultyLabel(k.kd || 0)} |`
-).join('\n') || 'No keywords available'}
+## 📈 SERP Analysis
+${analysis.serp_analysis?.map((s: any) => 
+  `### #${s.position} ${s.title}\n- URL: ${s.url}\n- DA: ${s.da}\n- Words: ${s.word_count}\n- Backlinks: ${s.backlinks}`
+).join('\n\n') || 'None'}
 
 ---
 
-## 📈 SERP Analysis (Top 10 Competitors)
-
-${analysis.serp_analysis?.map((s: any, i: number) => 
-  `### #${s.position} - ${s.title || 'Unknown'}
-- **URL:** ${s.url || 'N/A'}
-- **Domain Authority:** ${s.da || 0}/100
-- **Page Authority:** ${s.pa || 0}/100
-- **Word Count:** ${s.word_count?.toLocaleString() || 0}
-- **Backlinks:** ${s.backlinks?.toLocaleString() || 0}
-- **Ranking Keywords:** ${s.ranking_keywords?.toLocaleString() || 0}
-- **Est. Traffic:** ${s.traffic_estimate?.toLocaleString() || 0}
-- **Strengths:** ${s.strengths || 'N/A'}
-- **Weaknesses:** ${s.weaknesses || 'N/A'}
-- **Difficulty to Beat:** ${s.da > 70 ? '🔴 Very Hard' : s.da > 50 ? '🟡 Moderate' : '🟢 Achievable'}`
-).join('\n\n') || 'No SERP data available'}
-
----
-
-## 📅 24-Week Content Calendar
-
-${analysis.content_calendar?.map((c: any, i: number) => 
-  `### Week ${c.week || i+1} – ${c.title || 'Untitled'}
-- **Type:** ${c.content_type || 'Blog Post'}
-- **Target Keyword:** ${c.keyword || 'N/A'}
-- **Word Count Target:** ${c.word_count_target || 1000}
-- **Outline:** ${(c.outline || []).join(', ')}`
-).join('\n') || 'No content calendar available'}
+## 📅 Content Calendar
+${analysis.content_calendar?.map((c: any) => 
+  `### Week ${c.week}: ${c.title}\n- Keyword: ${c.keyword}\n- Type: ${c.content_type}`
+).join('\n') || 'None'}
 
 ---
 
 ## 🔗 Backlink Strategy
-
-### Overview
-${analysis.backlink_strategy?.overview || 'N/A'}
-
-### Target Sites
-${analysis.backlink_strategy?.target_sites?.map((s: any) => 
-  `- **${s.site}** (${s.type}) – Contact via ${s.contact_method}`
-).join('\n') || 'None specified'}
-
-### Guest Post Ideas
-${analysis.backlink_strategy?.guest_post_ideas?.map((i: string) => `- ${i}`).join('\n') || 'None'}
-
-### Resource Page Targets
-${analysis.backlink_strategy?.resource_page_targets?.map((i: string) => `- ${i}`).join('\n') || 'None'}
-
-### Broken Link Opportunities
-${analysis.backlink_strategy?.broken_link_opportunities?.map((i: string) => `- ${i}`).join('\n') || 'None'}
+${analysis.backlink_strategy?.overview || ''}
+${analysis.backlink_strategy?.target_sites?.map((s: any) => `- ${s.site} (${s.type})`).join('\n') || ''}
 
 ---
 
-## ✅ On-Page SEO Checklist
-
-${analysis.onpage_checklist?.map((item: string, i: number) => `${i+1}. ${item}`).join('\n') || 'No checklist available'}
-
----
-
-## 📊 Keyword Difficulty Distribution
-
-- 🟢 **Easy (KD 0-30):** ${analysis.chart_data?.keyword_difficulty_distribution?.easy || 0}
-- 🟡 **Medium (KD 31-60):** ${analysis.chart_data?.keyword_difficulty_distribution?.medium || 0}
-- 🔴 **Hard (KD 61-100):** ${analysis.chart_data?.keyword_difficulty_distribution?.hard || 0}
-
----
-
-## 🎯 Priority Actions
-
-1. Target easy keywords first for quick wins
-2. Create pillar content for medium difficulty keywords
-3. Build backlinks gradually for hard keywords
-4. Update content regularly based on trend patterns
-5. Monitor SERP changes monthly
-
----
-
-*Report generated by MarketMuse AI PRO MAX ULTRA - $99/report*`;
+*Report by MarketMuse AI PRO MAX ULTRA*`;
 }
 
 export const createSEOReport = async (req: Request, res: Response, next: NextFunction) => {
@@ -226,34 +169,20 @@ export const createSEOReport = async (req: Request, res: Response, next: NextFun
       getTrends(niche, countryUpper),
     ]);
 
-    // Slim down SERP data to essential fields only (top 10)
-    const serpOrganic = (searchData as any).organic_results?.slice(0, 10).map((r: any) => ({
+    const serpOrganic = (searchData as any).organic_results?.slice(0, 5).map((r: any) => ({
       position: r.position,
       title: r.title,
       url: r.link,
-      snippet: r.snippet || '',
     })) || [];
 
-    const userMessage = `Niche: ${niche}
-Country: ${country} (${countryUpper})
+    // Shorter user message
+    const userMessage = `Niche: ${niche}\nCountry: ${country}\nSERP Top 5: ${JSON.stringify(serpOrganic)}\nTrends: ${JSON.stringify(trendsData.slice(0,6))}`;
 
-Real SERP Top 10:
-${JSON.stringify(serpOrganic, null, 2)}
-
-Related Questions (from SERP):
-${JSON.stringify(keywordSuggestions.slice(0, 15), null, 2)}
-
-12-Month Google Trends:
-${JSON.stringify(trendsData, null, 2)}
-
-Please analyze and return a complete JSON. Ensure keywords have realistic volumes (not all the same), content calendar titles are original and engaging, and the backlink strategy lists actual websites where possible.`;
-
-    console.log('🤖 Requesting Groq SEO analysis...');
+    console.log('🤖 Requesting Groq SEO...');
     const groqResponse = await runGroqWithRetry(SEO_SYSTEM_PROMPT, userMessage);
-    
     const analysis = extractJSON(groqResponse);
 
-    if (!analysis.keywords || !analysis.serp_analysis || !analysis.content_calendar) {
+    if (!analysis.keywords || !analysis.serp_analysis) {
       throw new Error('AI response missing required SEO fields');
     }
 
@@ -262,11 +191,7 @@ Please analyze and return a complete JSON. Ensure keywords have realistic volume
     const charts = {
       trends: trendsData,
       trendScore: analysis.trend_score,
-      serp: analysis.serp_analysis || [],
       keywords: analysis.keywords || [],
-      contentCalendar: analysis.content_calendar || [],
-      keywordDistribution: analysis.chart_data?.keyword_difficulty_distribution || {},
-      volumeVsKD: analysis.chart_data?.volume_vs_kd || [],
     };
 
     const report = await Report.create({
@@ -298,10 +223,7 @@ Please analyze and return a complete JSON. Ensure keywords have realistic volume
 
   } catch (err) {
     if (err instanceof ZodError) {
-      return res.status(400).json({ 
-        error: 'Validation failed', 
-        details: err.errors.map(e => ({ field: e.path.join('.'), message: e.message }))
-      });
+      return res.status(400).json({ error: 'Validation failed', details: err.errors });
     }
     next(err);
   }
@@ -310,12 +232,8 @@ Please analyze and return a complete JSON. Ensure keywords have realistic volume
 export const getSEOReport = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const report = await Report.findById(req.params.id);
-    if (!report) {
-      return res.status(404).json({ error: 'Report not found' });
-    }
-    if (report.type !== 'seo') {
-      return res.status(400).json({ error: 'This is not an SEO report' });
-    }
+    if (!report) return res.status(404).json({ error: 'Report not found' });
+    if (report.type !== 'seo') return res.status(400).json({ error: 'Not an SEO report' });
     res.json(report);
   } catch (err) {
     next(err);
