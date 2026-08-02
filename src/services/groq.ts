@@ -5,8 +5,8 @@ const groq = new Groq({ apiKey: env.GROQ_API_KEY });
 
 const TIMEOUT_MS = 25000;
 
-// Current recommended model (fast & free on Groq)
-const MODEL = 'llama-3.1-8b-instant';
+// Model with higher TPM (20k) to handle large prompts
+const MODEL = 'llama-3.3-70b-versatile';
 
 export const runGroqPrompt = async (systemPrompt: string, userMessage: string): Promise<string> => {
   const controller = new AbortController();
@@ -36,20 +36,13 @@ export const runGroqPrompt = async (systemPrompt: string, userMessage: string): 
     if (error.status === 401) throw new Error('Invalid Groq API key');
     if (error.status === 429) throw new Error('Groq rate limit exceeded');
     if (error.status === 500) throw new Error('Groq server error');
-    if (error.status === 400) {
-      // Check for model decommissioned error and suggest a fix
-      const msg = error.message || '';
-      if (msg.includes('model_decommissioned')) {
-        throw new Error(`Groq model decommissioned. Please update the model in src/services/groq.ts. Current: ${MODEL}`);
-      }
-    }
+    if (error.status === 413) throw new Error('Groq token limit exceeded – prompt too large for free tier. Consider reducing data size.');
     throw new Error(`Groq API error: ${error.message || 'Unknown error'}`);
   } finally {
     clearTimeout(timeout);
   }
 };
 
-// Retry wrapper with exponential backoff
 export const runGroqWithRetry = async (
   systemPrompt: string,
   userMessage: string,
@@ -59,7 +52,7 @@ export const runGroqWithRetry = async (
 
   for (let i = 0; i <= retries; i++) {
     try {
-      console.log(`🔄 Groq API attempt ${i + 1}/${retries + 1}`);
+      console.log(`🔄 Groq API attempt ${i + 1}/${retries + 1} with model ${MODEL}`);
       const result = await runGroqPrompt(systemPrompt, userMessage);
       console.log('✅ Groq API success');
       return result;
@@ -72,7 +65,6 @@ export const runGroqWithRetry = async (
         throw lastError;
       }
 
-      // Exponential backoff: 2s, 4s, 8s... max 10s
       const delay = Math.min(2000 * Math.pow(2, i), 10000);
       console.log(`⏳ Retrying in ${delay / 1000}s...`);
       await new Promise(r => setTimeout(r, delay));
@@ -82,7 +74,6 @@ export const runGroqWithRetry = async (
   throw lastError;
 };
 
-// Health check
 export const checkGroqHealth = async (): Promise<boolean> => {
   try {
     const response = await runGroqPrompt(
