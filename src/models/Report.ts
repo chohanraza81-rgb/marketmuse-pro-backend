@@ -1,4 +1,4 @@
-import mongoose, { Schema, Document } from 'mongoose';
+import mongoose, { Schema, Document, Model } from 'mongoose';
 
 export interface IReport extends Document {
   type: 'product' | 'seo';
@@ -11,17 +11,21 @@ export interface IReport extends Document {
   createdAt: Date;
 }
 
-const ReportSchema = new Schema<IReport>(
+interface IReportModel extends Model<IReport> {
+  cleanupInvalid(): Promise<{ deletedCount: number }>;
+}
+
+const ReportSchema = new Schema<IReport, IReportModel>(
   {
     type: {
       type: String,
+      required: [true, 'Report type is required'],
       enum: {
         values: ['product', 'seo'],
         message: '{VALUE} is not a valid report type. Must be "product" or "seo"'
       },
-      required: [true, 'Report type is required'],
       validate: {
-        validator: function(v: string) {
+        validator: function(v: string): boolean {
           return ['product', 'seo'].includes(v);
         },
         message: 'Type must be either "product" or "seo"'
@@ -56,7 +60,7 @@ const ReportSchema = new Schema<IReport>(
       type: Schema.Types.Mixed,
       required: [true, 'Report data is required'],
       validate: {
-        validator: function(v: any) {
+        validator: function(v: any): boolean {
           return v && typeof v === 'object' && Object.keys(v).length > 0;
         },
         message: 'Data must be a non-empty object'
@@ -66,7 +70,7 @@ const ReportSchema = new Schema<IReport>(
       type: String,
       required: [true, 'Markdown content is required'],
       validate: {
-        validator: function(v: string) {
+        validator: function(v: string): boolean {
           return v && v.length >= 50;
         },
         message: 'Markdown must be at least 50 characters'
@@ -98,33 +102,37 @@ ReportSchema.index({ type: 1, country: 1 });
 
 // Pre-save hook to ensure data integrity
 ReportSchema.pre('save', function(next) {
+  const doc = this as IReport;
+  
   // Validate type
-  if (!['product', 'seo'].includes(this.type)) {
-    return next(new Error(`Invalid report type: ${this.type}. Must be "product" or "seo"`));
+  if (!['product', 'seo'].includes(doc.type)) {
+    return next(new Error(`Invalid report type: ${doc.type}. Must be "product" or "seo"`));
   }
 
   // Validate country
-  if (!['us', 'pk', 'gb', 'ae', 'sa'].includes(this.country)) {
-    return next(new Error(`Invalid country: ${this.country}`));
+  if (!['us', 'pk', 'gb', 'ae', 'sa'].includes(doc.country)) {
+    return next(new Error(`Invalid country: ${doc.country}`));
   }
 
   // Ensure value is $99
-  this.value = '$99';
+  doc.value = '$99';
 
   next();
 });
 
-// Static method to cleanup old data
-ReportSchema.statics.cleanupInvalid = async function() {
+// Static method to cleanup invalid reports
+ReportSchema.statics.cleanupInvalid = async function(): Promise<{ deletedCount: number }> {
   const result = await this.deleteMany({
     $or: [
       { type: { $nin: ['product', 'seo'] } },
       { niche: { $exists: false } },
       { data: { $exists: false } },
-      { country: { $nin: ['us', 'pk', 'gb', 'ae', 'sa'] } }
+      { country: { $nin: ['us', 'pk', 'gb', 'ae', 'sa'] } },
+      { markdown: { $exists: false } },
+      { value: { $ne: '$99' } }
     ]
   });
-  return result;
+  return { deletedCount: result.deletedCount };
 };
 
-export const Report = mongoose.model<IReport>('Report', ReportSchema);
+export const Report = mongoose.model<IReport, IReportModel>('Report', ReportSchema);
