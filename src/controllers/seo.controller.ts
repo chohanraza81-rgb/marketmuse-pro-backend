@@ -7,11 +7,27 @@ import { runGroqWithRetry } from '../services/groq';
 import { Report } from '../models/Report';
 import { ZodError } from 'zod';
 
+// Bulletproof JSON extraction
+const extractJSON = (raw: string): any => {
+  let cleaned = raw.replace(/```json|```/g, '').trim();
+  const startIdx = cleaned.indexOf('{');
+  const endIdx = cleaned.lastIndexOf('}');
+  if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
+    cleaned = cleaned.substring(startIdx, endIdx + 1);
+  }
+  try {
+    return JSON.parse(cleaned);
+  } catch (err) {
+    console.error('❌ extractJSON failed. Cleaned string:', cleaned.substring(0, 300));
+    throw new Error('AI response is not valid JSON');
+  }
+};
+
 const SEO_SYSTEM_PROMPT = `You are an SEO director at a leading agency. Given a niche, country, real SERP top 10, related questions, and 12-month Google Trends, create a comprehensive SEO strategy.
 
 Use the provided SERP data to extract real competitor URLs, titles, word counts, and backlink estimates. **Do not invent fake URLs** – reference the actual results.
 
-Respond ONLY with a valid JSON object:
+Respond ONLY with a valid JSON object (no markdown, no code fences) exactly following this structure:
 
 {
   "trend_score": "Seasonal" or "Evergreen",
@@ -218,7 +234,6 @@ export const createSEOReport = async (req: Request, res: Response, next: NextFun
       snippet: r.snippet || '',
     })) || [];
 
-    // Build user message with real data (trimmed)
     const userMessage = `Niche: ${niche}
 Country: ${country} (${countryUpper})
 
@@ -236,14 +251,7 @@ Please analyze and return a complete JSON. Ensure keywords have realistic volume
     console.log('🤖 Requesting Groq SEO analysis...');
     const groqResponse = await runGroqWithRetry(SEO_SYSTEM_PROMPT, userMessage);
     
-    let analysis;
-    try {
-      const cleaned = groqResponse.replace(/```json|```/g, '').trim();
-      analysis = JSON.parse(cleaned);
-    } catch (parseError) {
-      console.error('❌ Failed to parse Groq JSON for SEO:', groqResponse.substring(0, 200));
-      throw new Error('AI response format invalid. Please try again.');
-    }
+    const analysis = extractJSON(groqResponse);
 
     if (!analysis.keywords || !analysis.serp_analysis || !analysis.content_calendar) {
       throw new Error('AI response missing required SEO fields');
