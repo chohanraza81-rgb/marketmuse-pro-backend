@@ -8,54 +8,77 @@ import { runGroqWithRetry } from '../services/groq';
 import { Report } from '../models/Report';
 import { ZodError } from 'zod';
 
-const PRODUCT_SYSTEM_PROMPT = `You are a world-class e-commerce market analyst. 
-Given a niche and country, perform deep research using provided data (shopping results, trends). 
-Respond ONLY with a valid JSON object (no markdown, no code fences) that exactly follows this structure:
-{
-  "market_score": number (0-100),
-  "pricing_engine": [
-    { 
-      "title": string, 
-      "image": string, 
-      "price": number, 
-      "currency": string, 
-      "estimated_cost": number, 
-      "estimated_profit": number, 
-      "reviews": number 
-    }
-  ],
-  "competitors": [ 
-    { "name": string, "strength": string, "weakness": string } 
-  ] (max 10),
-  "market_gap": [ 
-    { "insight": string, "icon": string } 
-  ] (exactly 3),
-  "personas": [ 
-    { "name": string, "avatar": string, "description": string, "ads_channel": string } 
-  ] (exactly 3),
-  "launch_plan": [ 
-    { "day": number, "task": string } 
-  ] (30 days, day 1 to 30),
-  "risks": [ string ],
-  "chart_data": { 
-    "demand_forecast": number[], 
-    "competitor_market_share": [ 
-      { "name": string, "value": number } 
-    ] 
-  }
-}
+const PRODUCT_SYSTEM_PROMPT = `You are a senior e‑commerce product strategist at a top‑tier agency. 
+Given a niche, country, real shopping results, and Google Trends data, produce a detailed, actionable JSON analysis.
 
-IMPORTANT: 
-- market_score must be realistic (40-95 range)
-- pricing_engine must have exactly 10 products with realistic prices
-- estimated_cost should be 40-70% of price
-- estimated_profit = price - estimated_cost
-- All numbers must be positive integers where applicable
-- icons for market_gap should be relevant emojis (🔥💰📊🎯⚡🛡️📈💡)
-- avatars for personas should be emojis (👨‍💼👩‍💻🧑‍🎨👨‍🔧👩‍🚀🧑‍🍳)
-- launch_plan must have exactly 30 items, days 1-30
-- chart_data.demand_forecast must have 12 numbers (monthly)
-- chart_data.competitor_market_share must sum to 100`;
+Use the provided real data to extract genuine product titles, prices, and competitor names. **Do not invent vague names** – refer to actual stores/sources from the data.
+
+Respond ONLY with a valid JSON object (no markdown, no code fences) exactly following this structure:
+
+{
+  "market_score": number (0–100, realistic, justified by demand vs competition),
+  "market_summary": string (2-3 sentences summarizing opportunity, target audience, and key insight),
+  "pricing_engine": [
+    {
+      "title": string (exact product name from the shopping data),
+      "image": string (URL from the data, if available),
+      "price": number (in USD),
+      "estimated_cost": number (realistic landed cost, typically 30-60% of price),
+      "estimated_profit": number (price - estimated_cost),
+      "profit_margin_percent": number,
+      "reviews": number,
+      "rating": number (1-5),
+      "source": string (store name, e.g., "Amazon", "Walmart")
+    }
+  ] (exactly 10 products, sorted by profit margin descending),
+  "competitors": [
+    {
+      "name": string (actual competitor brand/store from data or known players),
+      "market_share_estimate": string (e.g., "High", "Medium", "Low"),
+      "strengths": [string, string],
+      "weaknesses": [string, string],
+      "pricing_strategy": string,
+      "target_audience": string
+    }
+  ] (5-7 detailed competitors),
+  "market_gaps": [
+    {
+      "insight": string (specific, actionable gap with a concrete suggestion),
+      "icon": string (relevant emoji)
+    }
+  ] (exactly 3),
+  "personas": [
+    {
+      "name": string,
+      "avatar": string (emoji),
+      "demographics": string (age, income, location),
+      "goals": string,
+      "pain_points": string,
+      "buying_triggers": string,
+      "preferred_channels": [string, string]
+    }
+  ] (exactly 3),
+  "launch_plan": [
+    {
+      "day": number (1-30),
+      "task": string (specific, niche‑related action, e.g., "Source 3 suppliers on Alibaba for bamboo toothbrushes"),
+      "category": string (e.g., "Sourcing", "Marketing", "Content", "Operations")
+    }
+  ] (exactly 30 items, covering sourcing, branding, listing optimization, ads, influencer outreach, etc.),
+  "profit_forecast": {
+    "monthly_revenue_estimate": number,
+    "monthly_profit_estimate": number,
+    "break_even_months": number,
+    "assumptions": string
+  },
+  "risks": [string] (3-5 specific risks with mitigation tips),
+  "chart_data": {
+    "demand_forecast": number[] (12 monthly trend values 0-100 based on Google Trends),
+    "competitor_market_share": [
+      { "name": string, "value": number }
+    ] (sum to 100)
+  }
+}`;
 
 function generateProductMarkdown(analysis: any, niche: string, country: string): string {
   const countryNames: Record<string, string> = {
@@ -91,8 +114,8 @@ ${analysis.pricing_engine?.map((p: any, i: number) =>
 ## 🏆 Top Competitors
 ${analysis.competitors?.map((c: any, i: number) => 
   `### ${i + 1}. ${c.name}
-- **Strength:** ${c.strength}
-- **Weakness:** ${c.weakness}`
+- **Strength:** ${c.strengths?.join(', ')}
+- **Weakness:** ${c.weaknesses?.join(', ')}`
 ).join('\n\n') || 'No competitor data available'}
 
 ---
@@ -108,17 +131,28 @@ ${g.insight}`
 ## 👥 Customer Personas
 ${analysis.personas?.map((p: any, i: number) => 
   `### ${p.avatar} Persona ${i + 1}: ${p.name}
-- **Description:** ${p.description}
-- **Best Ads Channel:** ${p.ads_channel}`
+- **Demographics:** ${p.demographics}
+- **Goals:** ${p.goals}
+- **Pain Points:** ${p.pain_points}
+- **Buying Triggers:** ${p.buying_triggers}
+- **Best Channels:** ${p.preferred_channels?.join(', ')}`
 ).join('\n\n') || 'No persona data available'}
 
 ---
 
 ## 📅 30-Day Launch Plan
 ${analysis.launch_plan?.map((d: any) => 
-  `### Day ${d.day}
+  `### Day ${d.day} (${d.category})
 ${d.task}`
 ).join('\n') || 'No launch plan available'}
+
+---
+
+## 💸 Profit Forecast
+- **Monthly Revenue Estimate:** $${analysis.profit_forecast?.monthly_revenue_estimate || 0}
+- **Monthly Profit Estimate:** $${analysis.profit_forecast?.monthly_profit_estimate || 0}
+- **Break-Even:** ${analysis.profit_forecast?.break_even_months || 'N/A'} months
+- **Assumptions:** ${analysis.profit_forecast?.assumptions || 'N/A'}
 
 ---
 
@@ -132,11 +166,9 @@ ${analysis.risks?.map((r: string) => `- ${r}`).join('\n') || 'No risks identifie
 
 export const createProductReport = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    // Validate input
     const { niche, country } = productResearchSchema.parse(req.body);
     const countryUpper = country.toUpperCase();
     
-    // Check cache
     const cacheKey = `product_report_${niche}_${country}`;
     const cached = cacheService.get(cacheKey);
     if (cached) {
@@ -146,15 +178,14 @@ export const createProductReport = async (req: Request, res: Response, next: Nex
 
     console.log(`🔍 Starting product research: "${niche}" in ${countryUpper}`);
 
-    // Parallel data fetching
     const [shoppingData, trendsData, exchangeRates] = await Promise.all([
       getShoppingResults(niche, country),
       getTrends(niche, countryUpper),
       getExchangeRates(),
     ]);
 
-    // Extract relevant shopping items for Groq
-    const products = (shoppingData as any).shopping_results?.slice(0, 10).map((p: any) => ({
+    // Slim down the shopping data to avoid token limit (max 5 products, only essential fields)
+    const products = (shoppingData as any).shopping_results?.slice(0, 5).map((p: any) => ({
       title: p.title || 'Unknown Product',
       price: p.extracted_price || p.price || 0,
       source: p.source || 'Unknown',
@@ -162,24 +193,22 @@ export const createProductReport = async (req: Request, res: Response, next: Nex
       image: p.thumbnail || '',
     })) || [];
 
-    // Build user message with real data
+    // Build user message with real data (trimmed)
     const userMessage = `Niche: ${niche}
 Country: ${country} (${countryUpper})
 Exchange Rates: ${JSON.stringify(exchangeRates)}
 
-Top Shopping Results:
+Real Shopping Data (top 5 products):
 ${JSON.stringify(products, null, 2)}
 
-12-Month Trends Data (first 6 months):
+12-Month Google Trends (first 6 months):
 ${JSON.stringify(trendsData.slice(0, 6), null, 2)}
 
-Please analyze this market and provide complete JSON response.`;
+Please analyze and return a complete JSON with ALL required fields. Be specific, use real product titles from the data, and suggest a realistic 30-day launch plan with niche-specific tasks.`;
 
-    // Get AI analysis
     console.log('🤖 Requesting Groq analysis...');
     const groqResponse = await runGroqWithRetry(PRODUCT_SYSTEM_PROMPT, userMessage);
     
-    // Parse JSON from Groq
     let analysis;
     try {
       const cleaned = groqResponse.replace(/```json|```/g, '').trim();
@@ -189,15 +218,12 @@ Please analyze this market and provide complete JSON response.`;
       throw new Error('AI response format invalid. Please try again.');
     }
 
-    // Validate required fields
     if (!analysis.market_score || !analysis.pricing_engine || !analysis.competitors) {
       throw new Error('AI response missing required fields');
     }
 
-    // Generate markdown
     const markdown = generateProductMarkdown(analysis, niche, country);
 
-    // Build chart data for frontend
     const charts = {
       trends: trendsData,
       marketScore: analysis.market_score,
@@ -206,7 +232,6 @@ Please analyze this market and provide complete JSON response.`;
       pricing: analysis.pricing_engine || [],
     };
 
-    // Save to database
     const report = await Report.create({
       type: 'product',
       niche,
@@ -231,21 +256,16 @@ Please analyze this market and provide complete JSON response.`;
       createdAt: report.createdAt,
     };
 
-    // Cache for 24 hours
     cacheService.set(cacheKey, result, 86400);
-
     return res.status(201).json(result);
 
   } catch (err) {
-    // Handle validation errors
     if (err instanceof ZodError) {
       return res.status(400).json({ 
         error: 'Validation failed', 
         details: err.errors.map(e => ({ field: e.path.join('.'), message: e.message }))
       });
     }
-    
-    // Pass other errors to error handler
     next(err);
   }
 };
