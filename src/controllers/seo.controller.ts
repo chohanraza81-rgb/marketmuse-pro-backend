@@ -7,67 +7,68 @@ import { runGroqWithRetry } from '../services/groq';
 import { Report } from '../models/Report';
 import { ZodError } from 'zod';
 
-const SEO_SYSTEM_PROMPT = `You are an expert SEO strategist with 10+ years of experience. Given a niche and country, analyze search data and trends to create a comprehensive SEO report.
+const SEO_SYSTEM_PROMPT = `You are an SEO director at a leading agency. Given a niche, country, real SERP top 10, related questions, and 12-month Google Trends, create a comprehensive SEO strategy.
 
-Respond ONLY with a valid JSON object (no markdown, no code fences, no extra text) that exactly follows this structure:
+Use the provided SERP data to extract real competitor URLs, titles, word counts, and backlink estimates. **Do not invent fake URLs** – reference the actual results.
+
+Respond ONLY with a valid JSON object:
+
 {
+  "trend_score": "Seasonal" or "Evergreen",
+  "trend_insight": string (one sentence explaining the trend pattern),
   "keywords": [
     {
       "keyword": string,
-      "volume": number,
+      "volume": number (realistic monthly searches, varying from high to low),
       "kd": number (0-100),
-      "cpc": number
+      "cpc": number,
+      "intent": string ("informational", "commercial", "transactional")
     }
-  ] (exactly 50 items, sorted by volume descending),
-  "trend_score": string ("Seasonal" or "Evergreen"),
+  ] (exactly 50, sorted by volume descending, with a realistic distribution: 5 high volume, 15 medium, 30 long-tail low volume),
   "serp_analysis": [
     {
-      "position": number (1-10),
-      "title": string,
-      "url": string,
-      "da": number (0-100),
+      "position": number,
+      "title": string (from SERP data),
+      "url": string (from SERP data),
+      "da": number (estimated domain authority),
+      "pa": number (estimated page authority),
       "word_count": number,
-      "backlinks": number
+      "backlinks": number,
+      "ranking_keywords": number,
+      "traffic_estimate": number,
+      "strengths": string,
+      "weaknesses": string
     }
-  ] (exactly 10 items),
+  ] (exactly 10),
   "content_calendar": [
     {
-      "title": string,
-      "keyword": string
+      "week": number (1-24),
+      "title": string (creative, click‑worthy blog post title),
+      "keyword": string (primary target keyword),
+      "content_type": string (e.g., "Pillar Page", "Listicle", "How‑to Guide", "Review"),
+      "word_count_target": number,
+      "outline": [string] (3-5 bullet points outlining the content)
     }
-  ] (exactly 24 items),
-  "backlink_strategy": string (detailed strategy 200+ words),
-  "onpage_checklist": [string] (at least 10 items),
+  ] (exactly 24 weeks),
+  "backlink_strategy": {
+    "overview": string,
+    "target_sites": [
+      { "site": string, "type": string, "contact_method": string }
+    ] (5-10 specific sites/blogs to reach out to),
+    "guest_post_ideas": [string] (3-5 topics),
+    "resource_page_targets": [string],
+    "broken_link_opportunities": [string]
+  },
+  "onpage_checklist": [string] (10-15 actionable points),
   "chart_data": {
-    "trend_12m": [number] (12 monthly values),
-    "related_queries": [string] (10 related queries),
-    "keyword_difficulty_distribution": {
-      "easy": number (KD 0-30 count),
-      "medium": number (KD 31-60 count),
-      "hard": number (KD 61-100 count)
-    },
+    "trend_12m": number[] (12 values 0-100 from trends),
+    "related_queries": [string] (from real data),
+    "keyword_difficulty_distribution": { "easy": number, "medium": number, "hard": number },
     "volume_vs_kd": [
-      {
-        "keyword": string,
-        "volume": number,
-        "kd": number,
-        "cpc": number
-      }
-    ] (top 20 keywords for bubble chart)
+      { "keyword": string, "volume": number, "kd": number, "cpc": number }
+    ] (top 20)
   }
-}
-
-IMPORTANT RULES:
-- Keywords must be realistic and relevant to the niche
-- KD (Keyword Difficulty) must be 0-100 scale
-- Volume numbers must be realistic monthly searches
-- CPC must be realistic (typically $0.50-$50)
-- SERP analysis must have realistic DA scores (20-95)
-- Content calendar titles must be unique and SEO-optimized
-- Backlink strategy must be actionable and specific
-- Onpage checklist must cover all major SEO factors
-- chart_data.trend_12m must show realistic seasonal or growth patterns
-- All arrays must have the exact number of items specified`;
+}`;
 
 function generateSEOMarkdown(analysis: any, niche: string, country: string): string {
   const countryNames: Record<string, string> = {
@@ -91,6 +92,8 @@ function generateSEOMarkdown(analysis: any, niche: string, country: string): str
 
 ## 📊 Trend Analysis: **${analysis.trend_score}**
 
+${analysis.trend_insight || ''}
+
 This niche shows **${analysis.trend_score.toLowerCase()}** patterns. ${
     analysis.trend_score === 'Seasonal' 
       ? 'Plan content calendar around peak seasons for maximum traffic.' 
@@ -101,10 +104,10 @@ This niche shows **${analysis.trend_score.toLowerCase()}** patterns. ${
 
 ## 🏆 Top 50 Golden Keywords
 
-| # | Keyword | Volume | KD | CPC | Difficulty |
-|---|---------|--------|----|-----|------------|
+| # | Keyword | Volume | KD | CPC | Intent | Difficulty |
+|---|---------|--------|----|-----|--------|------------|
 ${analysis.keywords?.slice(0, 50).map((k: any, i: number) => 
-  `| ${i + 1} | ${k.keyword} | ${k.volume?.toLocaleString() || 0} | ${k.kd || 0} | $${k.cpc?.toFixed(2) || '0.00'} | ${difficultyLabel(k.kd || 0)} |`
+  `| ${i + 1} | ${k.keyword} | ${k.volume?.toLocaleString() || 0} | ${k.kd || 0} | $${k.cpc?.toFixed(2) || '0.00'} | ${k.intent || 'informational'} | ${difficultyLabel(k.kd || 0)} |`
 ).join('\n') || 'No keywords available'}
 
 ---
@@ -115,8 +118,13 @@ ${analysis.serp_analysis?.map((s: any, i: number) =>
   `### #${s.position} - ${s.title || 'Unknown'}
 - **URL:** ${s.url || 'N/A'}
 - **Domain Authority:** ${s.da || 0}/100
+- **Page Authority:** ${s.pa || 0}/100
 - **Word Count:** ${s.word_count?.toLocaleString() || 0}
 - **Backlinks:** ${s.backlinks?.toLocaleString() || 0}
+- **Ranking Keywords:** ${s.ranking_keywords?.toLocaleString() || 0}
+- **Est. Traffic:** ${s.traffic_estimate?.toLocaleString() || 0}
+- **Strengths:** ${s.strengths || 'N/A'}
+- **Weaknesses:** ${s.weaknesses || 'N/A'}
 - **Difficulty to Beat:** ${s.da > 70 ? '🔴 Very Hard' : s.da > 50 ? '🟡 Moderate' : '🟢 Achievable'}`
 ).join('\n\n') || 'No SERP data available'}
 
@@ -125,32 +133,47 @@ ${analysis.serp_analysis?.map((s: any, i: number) =>
 ## 📅 24-Week Content Calendar
 
 ${analysis.content_calendar?.map((c: any, i: number) => 
-  `### Week ${i + 1}
-- **Title:** ${c.title || 'Untitled'}
-- **Target Keyword:** ${c.keyword || 'N/A'}`
+  `### Week ${c.week || i+1} – ${c.title || 'Untitled'}
+- **Type:** ${c.content_type || 'Blog Post'}
+- **Target Keyword:** ${c.keyword || 'N/A'}
+- **Word Count Target:** ${c.word_count_target || 1000}
+- **Outline:** ${(c.outline || []).join(', ')}`
 ).join('\n') || 'No content calendar available'}
 
 ---
 
 ## 🔗 Backlink Strategy
 
-${analysis.backlink_strategy || 'No strategy provided'}
+### Overview
+${analysis.backlink_strategy?.overview || 'N/A'}
+
+### Target Sites
+${analysis.backlink_strategy?.target_sites?.map((s: any) => 
+  `- **${s.site}** (${s.type}) – Contact via ${s.contact_method}`
+).join('\n') || 'None specified'}
+
+### Guest Post Ideas
+${analysis.backlink_strategy?.guest_post_ideas?.map((i: string) => `- ${i}`).join('\n') || 'None'}
+
+### Resource Page Targets
+${analysis.backlink_strategy?.resource_page_targets?.map((i: string) => `- ${i}`).join('\n') || 'None'}
+
+### Broken Link Opportunities
+${analysis.backlink_strategy?.broken_link_opportunities?.map((i: string) => `- ${i}`).join('\n') || 'None'}
 
 ---
 
 ## ✅ On-Page SEO Checklist
 
-${analysis.onpage_checklist?.map((item: string, i: number) => 
-  `${i + 1}. ${item}`
-).join('\n') || 'No checklist available'}
+${analysis.onpage_checklist?.map((item: string, i: number) => `${i+1}. ${item}`).join('\n') || 'No checklist available'}
 
 ---
 
 ## 📊 Keyword Difficulty Distribution
 
-- 🟢 **Easy (KD 0-30):** ${analysis.chart_data?.keyword_difficulty_distribution?.easy || 0} keywords
-- 🟡 **Medium (KD 31-60):** ${analysis.chart_data?.keyword_difficulty_distribution?.medium || 0} keywords
-- 🔴 **Hard (KD 61-100):** ${analysis.chart_data?.keyword_difficulty_distribution?.hard || 0} keywords
+- 🟢 **Easy (KD 0-30):** ${analysis.chart_data?.keyword_difficulty_distribution?.easy || 0}
+- 🟡 **Medium (KD 31-60):** ${analysis.chart_data?.keyword_difficulty_distribution?.medium || 0}
+- 🔴 **Hard (KD 61-100):** ${analysis.chart_data?.keyword_difficulty_distribution?.hard || 0}
 
 ---
 
@@ -167,14 +190,11 @@ ${analysis.onpage_checklist?.map((item: string, i: number) =>
 *Report generated by MarketMuse AI PRO MAX ULTRA - $99/report*`;
 }
 
-// CREATE SEO Report
 export const createSEOReport = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    // Validate input
     const { niche, country } = seoReportSchema.parse(req.body);
     const countryUpper = country.toUpperCase();
     
-    // Check cache
     const cacheKey = `seo_report_${niche}_${country}`;
     const cached = cacheService.get(cacheKey);
     if (cached) {
@@ -184,14 +204,13 @@ export const createSEOReport = async (req: Request, res: Response, next: NextFun
 
     console.log(`🔍 Starting SEO research: "${niche}" in ${countryUpper}`);
 
-    // Parallel data fetching
     const [searchData, keywordSuggestions, trendsData] = await Promise.all([
       getSearchResults(niche, country),
       getKeywordSuggestions(niche, country),
       getTrends(niche, countryUpper),
     ]);
 
-    // Extract SERP organic results
+    // Slim down SERP data to essential fields only (top 10)
     const serpOrganic = (searchData as any).organic_results?.slice(0, 10).map((r: any) => ({
       position: r.position,
       title: r.title,
@@ -199,26 +218,24 @@ export const createSEOReport = async (req: Request, res: Response, next: NextFun
       snippet: r.snippet || '',
     })) || [];
 
-    // Build user message with real data
+    // Build user message with real data (trimmed)
     const userMessage = `Niche: ${niche}
 Country: ${country} (${countryUpper})
 
-SERP Top 10 Results:
+Real SERP Top 10:
 ${JSON.stringify(serpOrganic, null, 2)}
 
 Related Questions (from SERP):
 ${JSON.stringify(keywordSuggestions.slice(0, 15), null, 2)}
 
-12-Month Google Trends Data:
+12-Month Google Trends:
 ${JSON.stringify(trendsData, null, 2)}
 
-Please analyze this niche and provide a complete SEO report with all required fields.`;
+Please analyze and return a complete JSON. Ensure keywords have realistic volumes (not all the same), content calendar titles are original and engaging, and the backlink strategy lists actual websites where possible.`;
 
-    // Get AI analysis
     console.log('🤖 Requesting Groq SEO analysis...');
     const groqResponse = await runGroqWithRetry(SEO_SYSTEM_PROMPT, userMessage);
     
-    // Parse JSON from Groq
     let analysis;
     try {
       const cleaned = groqResponse.replace(/```json|```/g, '').trim();
@@ -228,27 +245,12 @@ Please analyze this niche and provide a complete SEO report with all required fi
       throw new Error('AI response format invalid. Please try again.');
     }
 
-    // Validate required fields
     if (!analysis.keywords || !analysis.serp_analysis || !analysis.content_calendar) {
       throw new Error('AI response missing required SEO fields');
     }
 
-    // Ensure arrays have correct lengths
-    if (analysis.keywords.length < 30) {
-      console.warn('⚠️ Fewer keywords than expected, padding with related queries');
-      const relatedKeywords = keywordSuggestions.map((q: string) => ({
-        keyword: q,
-        volume: Math.floor(Math.random() * 1000) + 100,
-        kd: Math.floor(Math.random() * 40) + 10,
-        cpc: parseFloat((Math.random() * 5 + 1).toFixed(2)),
-      }));
-      analysis.keywords = [...analysis.keywords, ...relatedKeywords].slice(0, 50);
-    }
-
-    // Generate markdown
     const markdown = generateSEOMarkdown(analysis, niche, country);
 
-    // Build chart data for frontend
     const charts = {
       trends: trendsData,
       trendScore: analysis.trend_score,
@@ -259,7 +261,6 @@ Please analyze this niche and provide a complete SEO report with all required fi
       volumeVsKD: analysis.chart_data?.volume_vs_kd || [],
     };
 
-    // Save to database
     const report = await Report.create({
       type: 'seo',
       niche,
@@ -284,87 +285,30 @@ Please analyze this niche and provide a complete SEO report with all required fi
       createdAt: report.createdAt,
     };
 
-    // Cache for 24 hours
     cacheService.set(cacheKey, result, 86400);
-
     return res.status(201).json(result);
 
   } catch (err) {
-    // Handle validation errors
     if (err instanceof ZodError) {
       return res.status(400).json({ 
         error: 'Validation failed', 
         details: err.errors.map(e => ({ field: e.path.join('.'), message: e.message }))
       });
     }
-    
-    // Pass other errors to error handler
     next(err);
   }
 };
 
-// GET SEO Report by ID
 export const getSEOReport = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const report = await Report.findById(req.params.id);
-    
     if (!report) {
       return res.status(404).json({ error: 'Report not found' });
     }
-    
     if (report.type !== 'seo') {
       return res.status(400).json({ error: 'This is not an SEO report' });
     }
-
     res.json(report);
-  } catch (err) {
-    next(err);
-  }
-};
-
-// DELETE SEO Report
-export const deleteSEOReport = async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const report = await Report.findOneAndDelete({ 
-      _id: req.params.id, 
-      type: 'seo' 
-    });
-    
-    if (!report) {
-      return res.status(404).json({ error: 'SEO report not found' });
-    }
-
-    res.json({ message: 'SEO report deleted successfully', id: report._id });
-  } catch (err) {
-    next(err);
-  }
-};
-
-// GET SEO Reports List
-export const getSEOReports = async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const { country, limit = 10, page = 1 } = req.query;
-    const filter: any = { type: 'seo' };
-    
-    if (country) filter.country = country.toString().toLowerCase();
-
-    const total = await Report.countDocuments(filter);
-    const reports = await Report.find(filter)
-      .sort({ createdAt: -1 })
-      .skip((Number(page) - 1) * Number(limit))
-      .limit(Number(limit))
-      .select('-data -markdown')
-      .lean();
-
-    res.json({
-      reports,
-      pagination: {
-        total,
-        page: Number(page),
-        limit: Number(limit),
-        pages: Math.ceil(total / Number(limit)),
-      },
-    });
   } catch (err) {
     next(err);
   }
