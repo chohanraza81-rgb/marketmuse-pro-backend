@@ -1,9 +1,8 @@
-import SerpApi from 'serpapi';
+import { getJson } from 'serpapi';
 import { env } from '../config/env';
 import { cacheService } from './cache';
 import pLimit from 'p-limit';
 
-const client = new SerpApi.GoogleSearch(env.SERPAPI_KEY);
 const limit = pLimit(5);
 
 const withRetry = async <T>(fn: () => Promise<T>, retries = 3): Promise<T> => {
@@ -20,14 +19,15 @@ const withRetry = async <T>(fn: () => Promise<T>, retries = 3): Promise<T> => {
   throw lastError;
 };
 
-export const getShoppingResults = async (query: string, country: string = 'us') => {
+export const getShoppingResults = async (query: string, country: string = 'us'): Promise<any> => {
   const cacheKey = `shopping_${query}_${country}`;
-  const cached = cacheService.get(cacheKey);
+  const cached = cacheService.get<any>(cacheKey);
   if (cached) return cached;
 
   const data = await limit(() =>
     withRetry(() =>
-      client.json({
+      getJson({
+        api_key: env.SERPAPI_KEY,
         q: query,
         tbm: 'shop',
         gl: country,
@@ -40,14 +40,15 @@ export const getShoppingResults = async (query: string, country: string = 'us') 
   return data;
 };
 
-export const getKeywordSuggestions = async (query: string, country: string = 'us') => {
+export const getKeywordSuggestions = async (query: string, country: string = 'us'): Promise<string[]> => {
   const cacheKey = `keywords_${query}_${country}`;
-  const cached = cacheService.get(cacheKey);
+  const cached = cacheService.get<string[]>(cacheKey);
   if (cached) return cached;
 
-  const data = await limit(() =>
+  const data: any = await limit(() =>
     withRetry(() =>
-      client.json({
+      getJson({
+        api_key: env.SERPAPI_KEY,
         q: query,
         gl: country,
       })
@@ -59,14 +60,15 @@ export const getKeywordSuggestions = async (query: string, country: string = 'us
   return suggestions;
 };
 
-export const getSearchResults = async (query: string, country: string = 'us') => {
+export const getSearchResults = async (query: string, country: string = 'us'): Promise<any> => {
   const cacheKey = `search_${query}_${country}`;
-  const cached = cacheService.get(cacheKey);
+  const cached = cacheService.get<any>(cacheKey);
   if (cached) return cached;
 
   const data = await limit(() =>
     withRetry(() =>
-      client.json({
+      getJson({
+        api_key: env.SERPAPI_KEY,
         q: query,
         gl: country,
         num: 10,
