@@ -1,14 +1,21 @@
 import { env } from '../config/env';
 
-const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${env.GEMINI_API_KEY}`;
-const TIMEOUT_MS = 60000;
+// Primary + Fallback models
+const MODELS = [
+  'gemini-3.5-flash',
+  'gemini-3.1-flash',
+  'gemini-2.0-flash',
+];
 
-export const runGroqPrompt = async (systemPrompt: string, userMessage: string): Promise<string> => {
+const TIMEOUT_MS = 45000;
+
+async function callGemini(model: string, systemPrompt: string, userMessage: string): Promise<string> {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${env.GEMINI_API_KEY}`;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
   try {
-    const response = await fetch(GEMINI_API_URL, {
+    const response = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -23,36 +30,60 @@ export const runGroqPrompt = async (systemPrompt: string, userMessage: string): 
       signal: controller.signal,
     });
 
+    if (response.status === 503) {
+      throw new Error('MODEL_OVERLOADED');
+    }
+
     if (!response.ok) {
       const errData: any = await response.json().catch(() => ({}));
-      throw new Error(`Gemini error ${response.status}: ${JSON.stringify(errData)}`);
+      throw new Error(`HTTP ${response.status}: ${JSON.stringify(errData)}`);
     }
 
     const data: any = await response.json();
     const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
     if (!text) throw new Error('Empty response');
     return text;
-  } catch (error: any) {
-    if (error.name === 'AbortError') throw new Error('Request timed out');
-    throw new Error(`Gemini: ${error.message}`);
   } finally {
     clearTimeout(timeout);
   }
+}
+
+export const runGroqPrompt = async (systemPrompt: string, userMessage: string): Promise<string> => {
+  for (const model of MODELS) {
+    try {
+      console.log(`🔄 Trying model: ${model}`);
+      const result = await callGemini(model, systemPrompt, userMessage);
+      console.log(`✅ Success with ${model}`);
+      return result;
+    } catch (error: any) {
+      if (error.message === 'MODEL_OVERLOADED') {
+        console.warn(`⚠️ ${model} overloaded, trying next...`);
+        continue;
+      }
+      if (error.message?.includes('429') || error.message?.includes('RESOURCE_EXHAUSTED')) {
+        console.warn(`⚠️ ${model} rate limited, trying next...`);
+        continue;
+      }
+      throw error;
+    }
+  }
+  throw new Error('All Gemini models failed — please try again in a few minutes.');
 };
 
-export const runGroqWithRetry = async (sys: string, msg: string, retries = 1): Promise<string> => {
+export const runGroqWithRetry = async (sys: string, msg: string, retries = 2): Promise<string> => {
   let last: any;
   for (let i = 0; i <= retries; i++) {
     try {
-      console.log(`🔄 Gemini ${i + 1}/${retries + 1}`);
+      console.log(`🔄 Attempt ${i + 1}/${retries + 1}`);
       const r = await runGroqPrompt(sys, msg);
-      console.log('✅ Success');
       return r;
     } catch (e: any) {
       last = e;
-      console.error(`❌ ${i + 1}:`, e.message);
+      console.error(`❌ Attempt ${i + 1}:`, e.message);
       if (i === retries) throw last;
-      await new Promise(r => setTimeout(r, 4000));
+      const delay = 5000 * (i + 1);
+      console.log(`⏳ Waiting ${delay / 1000}s...`);
+      await new Promise(r => setTimeout(r, delay));
     }
   }
   throw last;
