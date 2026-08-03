@@ -1,43 +1,51 @@
-import Groq from 'groq-sdk';
 import { env } from '../config/env';
 
-const groq = new Groq({ apiKey: env.GROQ_API_KEY });
+const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
+const MODEL = 'openai/gpt-4o';
+const TIMEOUT_MS = 35000;
 
-const TIMEOUT_MS = 25000;
-
-// Model with higher TPM (20k) to handle large prompts
-const MODEL = 'llama-3.3-70b-versatile';
+interface OpenRouterResponse {
+  choices: { message: { content: string } }[];
+}
 
 export const runGroqPrompt = async (systemPrompt: string, userMessage: string): Promise<string> => {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
   try {
-    const chatCompletion = await groq.chat.completions.create(
-      {
+    const response = await fetch(OPENROUTER_URL, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${env.OPENROUTER_API_KEY}`,
+        'HTTP-Referer': env.ALLOWED_ORIGIN || 'https://market-mus.netlify.app',
+        'X-Title': 'MarketMuse AI PRO MAX ULTRA',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: MODEL,
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userMessage },
         ],
-        model: MODEL,
-        temperature: 0.2,
-        max_tokens: 4096,
-        top_p: 1,
-        stream: false,
-      },
-      { signal: controller.signal }
-    );
+        temperature: 0.3,
+        max_tokens: 8000,
+        response_format: { type: 'json_object' },
+      }),
+      signal: controller.signal,
+    });
 
-    const content = chatCompletion.choices[0]?.message?.content;
-    if (!content) throw new Error('Empty response from Groq');
+    if (!response.ok) {
+      const errData = await response.json().catch(() => ({}));
+      throw new Error(`OpenRouter error ${response.status}: ${JSON.stringify(errData)}`);
+    }
+
+    const data: OpenRouterResponse = await response.json();
+    const content = data.choices[0]?.message?.content;
+    if (!content) throw new Error('Empty AI response');
     return content;
   } catch (error: any) {
-    if (error.name === 'AbortError') throw new Error('Groq request timed out after 25 seconds');
-    if (error.status === 401) throw new Error('Invalid Groq API key');
-    if (error.status === 429) throw new Error('Groq rate limit exceeded');
-    if (error.status === 500) throw new Error('Groq server error');
-    if (error.status === 413) throw new Error('Groq token limit exceeded – prompt too large for free tier. Consider reducing data size.');
-    throw new Error(`Groq API error: ${error.message || 'Unknown error'}`);
+    if (error.name === 'AbortError') throw new Error('AI request timed out after 35s');
+    throw new Error(`AI error: ${error.message}`);
   } finally {
     clearTimeout(timeout);
   }
@@ -46,42 +54,21 @@ export const runGroqPrompt = async (systemPrompt: string, userMessage: string): 
 export const runGroqWithRetry = async (
   systemPrompt: string,
   userMessage: string,
-  retries: number = 2
+  retries: number = 1
 ): Promise<string> => {
   let lastError: any;
-
   for (let i = 0; i <= retries; i++) {
     try {
-      console.log(`🔄 Groq API attempt ${i + 1}/${retries + 1} with model ${MODEL}`);
+      console.log(`🔄 AI attempt ${i + 1}/${retries + 1}`);
       const result = await runGroqPrompt(systemPrompt, userMessage);
-      console.log('✅ Groq API success');
+      console.log('✅ AI success');
       return result;
     } catch (err: any) {
       lastError = err;
-      console.error(`❌ Groq attempt ${i + 1} failed:`, err.message);
-
-      if (i === retries) {
-        console.error('❌ All Groq retries exhausted');
-        throw lastError;
-      }
-
-      const delay = Math.min(2000 * Math.pow(2, i), 10000);
-      console.log(`⏳ Retrying in ${delay / 1000}s...`);
-      await new Promise(r => setTimeout(r, delay));
+      console.error(`❌ Attempt ${i + 1}:`, err.message);
+      if (i === retries) throw lastError;
+      await new Promise(r => setTimeout(r, 3000));
     }
   }
-
   throw lastError;
-};
-
-export const checkGroqHealth = async (): Promise<boolean> => {
-  try {
-    const response = await runGroqPrompt(
-      'Respond with only "OK"',
-      'Health check'
-    );
-    return response.includes('OK');
-  } catch {
-    return false;
-  }
 };
