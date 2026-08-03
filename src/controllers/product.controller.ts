@@ -9,10 +9,32 @@ import { Report } from '../models/Report';
 import { ZodError } from 'zod';
 
 const extractJSON = (raw: string): any => {
-  let c = raw.replace(/```json|```/g, '').trim();
-  const s = c.indexOf('{'), e = c.lastIndexOf('}');
+  let c = raw.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
+  const s = c.indexOf('{');
+  const e = c.lastIndexOf('}');
   if (s !== -1 && e !== -1 && e > s) c = c.substring(s, e + 1);
-  return JSON.parse(c);
+  try {
+    return JSON.parse(c);
+  } catch (err) {
+    try {
+      const fixed = c.replace(/,\s*]/g, ']').replace(/,\s*}/g, '}').replace(/,(\s*[}\]])/g, '$1').replace(/([{,]\s*)(\w+)(\s*:)/g, '$1"$2"$3');
+      return JSON.parse(fixed);
+    } catch (e2) {
+      try {
+        let completed = c;
+        let braceCount = (completed.match(/{/g) || []).length;
+        let closeCount = (completed.match(/}/g) || []).length;
+        while (closeCount < braceCount) { completed += '}'; closeCount++; }
+        let bracketCount = (completed.match(/\[/g) || []).length;
+        let closeBracketCount = (completed.match(/\]/g) || []).length;
+        while (closeBracketCount < bracketCount) { completed += ']'; closeBracketCount++; }
+        return JSON.parse(completed);
+      } catch (e3) {
+        console.error('❌ All JSON fixes failed. Last 500 chars:', c.substring(c.length - 500));
+        throw new Error('AI response is not valid JSON');
+      }
+    }
+  }
 };
 
 const PROMPT = `You are a world-class e-commerce strategist. Analyze real shopping data, trends, and exchange rates. Return ONLY valid JSON:
@@ -26,18 +48,18 @@ const PROMPT = `You are a world-class e-commerce strategist. Analyze real shoppi
       "title": "actual product from data",
       "image_url": "from data if available",
       "selling_price_usd": number,
-      "landed_cost_usd": number (30-60% of price),
+      "landed_cost_usd": number,
       "net_profit_usd": number,
       "profit_margin_percent": number,
-      "monthly_units_potential": realistic_number,
+      "monthly_units_potential": number,
       "monthly_revenue_potential": number,
       "monthly_profit_potential": number,
       "reviews": number,
-      "rating": number (1-5),
+      "rating": number,
       "source": "Amazon/Walmart/Etsy etc.",
       "competitive_advantage": "why this product wins"
     }
-  ] (12 items, sorted by profit potential),
+  ] (12 items),
   "competitor_deep_dive": [
     {
       "name": "real brand/store",
@@ -78,7 +100,7 @@ const PROMPT = `You are a world-class e-commerce strategist. Analyze real shoppi
     {
       "week": 1-12,
       "theme": "Foundation/Sourcing/Branding/Launch/Optimization/Scale",
-      "tasks": ["specific task","specific task","specific task"],
+      "tasks": ["specific","specific","specific"],
       "success_metric": "what defines success this week"
     }
   ] (12 weeks),
@@ -100,9 +122,9 @@ const PROMPT = `You are a world-class e-commerce strategist. Analyze real shoppi
     }
   ] (5 risks),
   "chart_data": {
-    "demand_forecast_12m": [12 numbers based on trends],
-    "competitor_market_share": [{"name":"x","share":number}] (sum 100),
-    "profit_margin_by_product": [{"name":"x","margin":number}] (8 products)
+    "demand_forecast_12m": [12 numbers],
+    "competitor_market_share": [{"name":"x","share":number}],
+    "profit_margin_by_product": [{"name":"x","margin":number}]
   }
 }`;
 
@@ -135,7 +157,6 @@ export const createProductReport = async (req: Request, res: Response, next: Nex
     const ck = `prod_${niche}_${country}`;
     const cached = cacheService.get(ck);
     if (cached) return res.json(cached);
-
     console.log(`🔍 Product: "${niche}" in ${country}`);
     const [shop, trends, fx] = await Promise.all([getShoppingResults(niche, country), getTrends(niche, country.toUpperCase()), getExchangeRates()]);
     const items = (shop as any).shopping_results?.slice(0, 8).map((p: any) => ({ title: p.title, price: p.extracted_price || p.price, source: p.source, reviews: p.rating || 0, image: p.thumbnail || '' })) || [];
@@ -157,4 +178,3 @@ export const getProductReport = async (req: Request, res: Response) => {
   if (!report) return res.status(404).json({ error: 'Not found' });
   res.json(report);
 };
-                                                                           
