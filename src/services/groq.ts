@@ -35,11 +35,11 @@ export const runGroqPrompt = async (systemPrompt: string, userMessage: string): 
     });
 
     if (!response.ok) {
-      const errData = await response.json().catch(() => ({}));
+      const errData: any = await response.json().catch(() => ({}));
       throw new Error(`OpenRouter error ${response.status}: ${JSON.stringify(errData)}`);
     }
 
-    const data: OpenRouterResponse = await response.json();
+    const data: OpenRouterResponse = await response.json() as OpenRouterResponse;
     const content = data.choices[0]?.message?.content;
     if (!content) throw new Error('Empty AI response');
     return content;
