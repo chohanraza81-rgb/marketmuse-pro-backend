@@ -1,6 +1,6 @@
 import { env } from '../config/env';
 
-const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${env.GEMINI_API_KEY}`;
+const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${env.GEMINI_API_KEY}`;
 const TIMEOUT_MS = 50000;
 
 export const runGroqPrompt = async (systemPrompt: string, userMessage: string): Promise<string> => {
@@ -40,7 +40,7 @@ export const runGroqWithRetry = async (sys: string, msg: string, retries = 1): P
   let last: any;
   for (let i = 0; i <= retries; i++) {
     try {
-      console.log(`🔄 Gemini ${i + 1}/${retries + 1}`);
+      console.log(`🔄 Gemini ${i + 1}/${retries + 1} with gemini-3.5-flash`);
       const r = await runGroqPrompt(sys, msg);
       console.log('✅ Success');
       return r;
