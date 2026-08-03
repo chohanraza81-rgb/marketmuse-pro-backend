@@ -1,159 +1,245 @@
 import { Request, Response, NextFunction } from 'express';
-import { productResearchSchema } from '../validators/report';
-import { cacheService } from '../services/cache';
-import { getShoppingResults } from '../services/serpapi';
-import { getTrends } from '../services/trends';
-import { getExchangeRates } from '../services/exchange';
-import { runGroqWithRetry } from '../services/groq';
 import { Report } from '../models/Report';
+import { reportQuerySchema } from '../validators/report';
 import { ZodError } from 'zod';
 
-const extractJSON = (raw: string): any => {
-  let c = raw.replace(/```json|```/g, '').trim();
-  const s = c.indexOf('{'), e = c.lastIndexOf('}');
-  if (s !== -1 && e !== -1 && e > s) c = c.substring(s, e + 1);
-  return JSON.parse(c);
-};
-
-const PROMPT = `You are a world-class e-commerce strategist. Analyze real shopping data, trends, and exchange rates. Return ONLY valid JSON:
-
-{
-  "market_score": number (0-100),
-  "market_verdict": "Hot Buy 🔥" | "Stable Earner 💰" | "Risky ⚠️" | "Avoid 🚫",
-  "executive_summary": "3 detailed sentences covering opportunity size, ideal customer, and competitive edge",
-  "pricing_engine": [
-    {
-      "title": "actual product from data",
-      "image_url": "from data if available",
-      "selling_price_usd": number,
-      "landed_cost_usd": number (30-60% of price),
-      "net_profit_usd": number,
-      "profit_margin_percent": number,
-      "monthly_units_potential": realistic_number,
-      "monthly_revenue_potential": number,
-      "monthly_profit_potential": number,
-      "reviews": number,
-      "rating": number (1-5),
-      "source": "Amazon/Walmart/Etsy etc.",
-      "competitive_advantage": "why this product wins"
-    }
-  ] (12 items, sorted by profit potential),
-  "competitor_deep_dive": [
-    {
-      "name": "real brand/store",
-      "market_position": "Market Leader/Challenger/Niche/New",
-      "estimated_monthly_sales": number,
-      "avg_price_point": number,
-      "strengths": ["specific","specific","specific"],
-      "weaknesses": ["specific","specific","specific"],
-      "their_best_seller": "product name",
-      "customer_complaints": ["complaint","complaint"],
-      "how_to_outcompete": "specific strategy"
-    }
-  ] (6 real competitors),
-  "market_gaps": [
-    {
-      "gap_title": "title",
-      "description": "detailed paragraph",
-      "potential_revenue_impact": "$5k-10k/mo or $10k-25k/mo or $25k+/mo",
-      "difficulty": "Easy/Moderate/Hard",
-      "first_step": "concrete action",
-      "icon": "emoji"
-    }
-  ] (3 gaps),
-  "customer_personas": [
-    {
-      "name": "name",
-      "avatar": "emoji",
-      "age_range": "25-34",
-      "income_level": "$40k-60k",
-      "location_hint": "urban US",
-      "core_problem": "what keeps them up at night",
-      "buying_trigger": "what makes them buy NOW",
-      "where_they_hang_out": ["platform","platform","platform"],
-      "marketing_message": "exact ad copy that converts them"
-    }
-  ] (3 personas),
-  "launch_playbook": [
-    {
-      "week": 1-12,
-      "theme": "Foundation/Sourcing/Branding/Launch/Optimization/Scale",
-      "tasks": ["specific task","specific task","specific task"],
-      "success_metric": "what defines success this week"
-    }
-  ] (12 weeks),
-  "financial_projections": {
-    "startup_cost_estimate": number,
-    "monthly_fixed_costs": number,
-    "avg_profit_per_unit": number,
-    "units_to_breakeven": number,
-    "estimated_months_to_profitability": number,
-    "conservative_monthly_profit_month6": number,
-    "optimistic_monthly_profit_month6": number
-  },
-  "risk_radar": [
-    {
-      "risk": "specific risk",
-      "probability": "Low/Medium/High",
-      "impact": "Low/Medium/High",
-      "mitigation": "specific action"
-    }
-  ] (5 risks),
-  "chart_data": {
-    "demand_forecast_12m": [12 numbers based on trends],
-    "competitor_market_share": [{"name":"x","share":number}] (sum 100),
-    "profit_margin_by_product": [{"name":"x","margin":number}] (8 products)
-  }
-}`;
-
-function md(a: any, niche: string, country: string): string {
-  const f: any = { us:'🇺🇸', pk:'🇵🇰', gb:'🇬🇧', ae:'🇦🇪', sa:'🇸🇦' };
-  const n: any = { us:'United States', pk:'Pakistan', gb:'United Kingdom', ae:'UAE', sa:'Saudi Arabia' };
-  let m = `# 🚀 Product Research: ${niche}\n## Target: ${f[country]} ${n[country]}\n\n`;
-  m += `## 📊 Market Score: **${a.market_score}/100** — ${a.market_verdict}\n\n${a.executive_summary}\n\n`;
-  m += `## 💰 12-Product Pricing Engine\n| # | Product | Sell | Cost | Profit | Margin | Mo. Revenue | Reviews | Edge |\n|---|---------|------|------|--------|--------|------------|---------|------|\n`;
-  a.pricing_engine?.forEach((p: any, i: number) => m += `| ${i+1} | ${p.title} | $${p.selling_price_usd} | $${p.landed_cost_usd} | $${p.net_profit_usd} | ${p.profit_margin_percent}% | $${p.monthly_revenue_potential?.toLocaleString()} | ${p.reviews}⭐ | ${p.competitive_advantage} |\n`);
-  m += `\n## 🏆 6 Competitor Deep Dives\n`;
-  a.competitor_deep_dive?.forEach((c: any) => m += `### ${c.name} (${c.market_position})\n- Sales: $${c.estimated_monthly_sales?.toLocaleString()}/mo | Price: $${c.avg_price_point}\n- ✅ ${c.strengths?.join(', ')}\n- ❌ ${c.weaknesses?.join(', ')}\n- 🏷️ Best Seller: ${c.their_best_seller}\n- 😤 Complaints: ${c.customer_complaints?.join(', ')}\n- 🎯 Beat Them: ${c.how_to_outcompete}\n\n`);
-  m += `## 🎯 Market Gaps\n`;
-  a.market_gaps?.forEach((g: any) => m += `### ${g.icon} ${g.gap_title}\n${g.description}\n- 💵 Revenue: ${g.potential_revenue_impact} | Difficulty: ${g.difficulty}\n- ⚡ First Step: ${g.first_step}\n\n`);
-  m += `## 👥 Customer Personas\n`;
-  a.customer_personas?.forEach((p: any) => m += `### ${p.avatar} ${p.name}\n- ${p.age_range} | ${p.income_level} | ${p.location_hint}\n- Problem: ${p.core_problem}\n- Trigger: ${p.buying_trigger}\n- Hangouts: ${p.where_they_hang_out?.join(', ')}\n- 📢 Ad: "${p.marketing_message}"\n\n`);
-  m += `## 📅 12-Week Launch Playbook\n`;
-  a.launch_playbook?.forEach((w: any) => m += `### Week ${w.week}: ${w.theme}\n${w.tasks?.map((t: string) => `- ${t}`).join('\n')}\n- 📏 Success: ${w.success_metric}\n\n`);
-  const fp = a.financial_projections;
-  m += `## 💸 Financials\n- Startup: $${fp?.startup_cost_estimate?.toLocaleString()} | Fixed: $${fp?.monthly_fixed_costs?.toLocaleString()}/mo\n- Profit/Unit: $${fp?.avg_profit_per_unit} | Breakeven: ${fp?.units_to_breakeven} units\n- Profitable in: ${fp?.estimated_months_to_profitability}mo\n- Month 6 Profit: $${fp?.conservative_monthly_profit_month6?.toLocaleString()} (conservative) | $${fp?.optimistic_monthly_profit_month6?.toLocaleString()} (optimistic)\n\n`;
-  m += `## ⚠️ Risk Radar\n| Risk | Prob | Impact | Mitigation |\n|------|------|--------|------------|\n`;
-  a.risk_radar?.forEach((r: any) => m += `| ${r.risk} | ${r.probability} | ${r.impact} | ${r.mitigation} |\n`);
-  m += `\n---\n*MarketMuse AI PRO MAX ULTRA – $99 Report*`;
-  return m;
-}
-
-export const createProductReport = async (req: Request, res: Response, next: NextFunction) => {
+// GET /api/reports - List reports with pagination & filters
+export const getReports = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { niche, country } = productResearchSchema.parse(req.body);
-    const ck = `prod_${niche}_${country}`;
-    const cached = cacheService.get(ck);
-    if (cached) return res.json(cached);
+    const query = reportQuerySchema.parse(req.query);
+    const filter: any = {};
 
-    console.log(`🔍 Product: "${niche}" in ${country}`);
-    const [shop, trends, fx] = await Promise.all([getShoppingResults(niche, country), getTrends(niche, country.toUpperCase()), getExchangeRates()]);
-    const items = (shop as any).shopping_results?.slice(0, 8).map((p: any) => ({ title: p.title, price: p.extracted_price || p.price, source: p.source, reviews: p.rating || 0, image: p.thumbnail || '' })) || [];
-    const ai = await runGroqWithRetry(PROMPT, `${niche}\n${country}\nFX:${JSON.stringify(fx)}\nProducts:${JSON.stringify(items)}\nTrends:${JSON.stringify(trends.slice(0,6))}`);
-    const analysis = extractJSON(ai);
-    const markdown = md(analysis, niche, country);
-    const report = await Report.create({ type:'product', niche, country, value:'$99', data:analysis, markdown, charts:{trends,fx} });
-    const result = { id:report._id, ...report.toObject() };
-    cacheService.set(ck, result, 86400);
-    return res.status(201).json(result);
+    // Only fetch valid types
+    filter.type = { $in: ['product', 'seo'] };
+
+    if (query.type) filter.type = query.type;
+    if (query.country) filter.country = query.country.toLowerCase();
+
+    if (query.startDate || query.endDate) {
+      filter.createdAt = {};
+      if (query.startDate) filter.createdAt.$gte = new Date(query.startDate);
+      if (query.endDate) filter.createdAt.$lte = new Date(query.endDate);
+    }
+
+    const total = await Report.countDocuments(filter);
+    const reports = await Report.find(filter)
+      .sort({ createdAt: -1 })
+      .skip((query.page - 1) * query.limit)
+      .limit(query.limit)
+      .select('-data -markdown -charts')
+      .lean();
+
+    const result = {
+      reports: reports.map((r: any) => ({
+        _id: r._id,
+        type: r.type,
+        niche: r.niche,
+        country: r.country,
+        value: '$99',
+        createdAt: r.createdAt,
+      })),
+      pagination: {
+        total,
+        page: query.page,
+        limit: query.limit,
+        pages: Math.ceil(total / query.limit),
+      },
+    };
+
+    res.json(result);
   } catch (err) {
-    if (err instanceof ZodError) return res.status(400).json({ error: err.errors });
+    if (err instanceof ZodError) {
+      return res.status(400).json({ error: 'Invalid query parameters', details: err.errors });
+    }
     next(err);
   }
 };
 
-export const getProductReport = async (req: Request, res: Response) => {
-  const report = await Report.findById(req.params.id);
-  if (!report) return res.status(404).json({ error: 'Not found' });
-  res.json(report);
+// GET /api/reports/stats - Get report statistics
+export const getReportStats = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const filter = { type: { $in: ['product', 'seo'] } };
+
+    const [totalReports, productReports, seoReports, countryStats, recentReports] = await Promise.all([
+      Report.countDocuments(filter),
+      Report.countDocuments({ ...filter, type: 'product' }),
+      Report.countDocuments({ ...filter, type: 'seo' }),
+      Report.aggregate([
+        { $match: filter },
+        { $group: { _id: '$country', count: { $sum: 1 } } },
+      ]),
+      Report.find(filter).sort({ createdAt: -1 }).limit(5).select('niche type country createdAt').lean(),
+    ]);
+
+    res.json({
+      totalReports,
+      totalValue: `$${totalReports * 99}`,
+      byType: { product: productReports, seo: seoReports },
+      byCountry: countryStats.reduce((acc: any, curr: any) => {
+        acc[curr._id] = curr.count;
+        return acc;
+      }, {}),
+      recentReports,
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// GET /api/reports/:id - Get single report by ID
+export const getReportById = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const report = await Report.findById(req.params.id);
+
+    if (!report) {
+      return res.status(404).json({ error: 'Report not found' });
+    }
+
+    // Validate report type
+    if (!['product', 'seo'].includes(report.type)) {
+      await Report.findByIdAndDelete(report._id);
+      return res.status(404).json({ error: 'Invalid report found and removed' });
+    }
+
+    res.json(report);
+  } catch (err) {
+    next(err);
+  }
+};
+
+// DELETE /api/reports/:id - Delete single report
+export const deleteReport = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const report = await Report.findByIdAndDelete(req.params.id);
+
+    if (!report) {
+      return res.status(404).json({ error: 'Report not found' });
+    }
+
+    res.json({ message: 'Report deleted successfully', id: report._id });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// POST /api/reports/export-zip - Bulk export as ZIP
+export const bulkExportZip = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { ids } = req.body;
+
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: 'Provide array of report IDs' });
+    }
+
+    if (ids.length > 50) {
+      return res.status(400).json({ error: 'Maximum 50 reports per export' });
+    }
+
+    const reports = await Report.find({
+      _id: { $in: ids },
+      type: { $in: ['product', 'seo'] }
+    }).lean();
+
+    if (reports.length === 0) {
+      return res.status(404).json({ error: 'No valid reports found' });
+    }
+
+    const JSZip = require('jszip');
+    const zip = new JSZip();
+
+    reports.forEach((report: any) => {
+      const content = report.markdown || JSON.stringify(report.data, null, 2);
+      zip.file(`report_${report.niche}_${report.country}_${report._id}.md`, content);
+    });
+
+    const zipBuffer = await zip.generateAsync({ type: 'nodebuffer' });
+
+    res.set({
+      'Content-Type': 'application/zip',
+      'Content-Disposition': `attachment; filename=marketmuse_reports_${Date.now()}.zip`,
+    });
+
+    res.send(zipBuffer);
+  } catch (err) {
+    next(err);
+  }
+};
+
+// DELETE /api/reports/cleanup - Clean invalid/old reports
+export const cleanupOldReports = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const result = await (Report as any).cleanupInvalid();
+
+    res.json({
+      success: true,
+      message: 'Database cleaned successfully',
+      deletedCount: result.deletedCount || 0,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// DELETE /api/reports/bulk-delete - Delete multiple reports
+export const bulkDeleteReports = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { ids } = req.body;
+
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: 'Provide array of report IDs' });
+    }
+
+    if (ids.length > 100) {
+      return res.status(400).json({ error: 'Maximum 100 reports per bulk delete' });
+    }
+
+    const result = await Report.deleteMany({
+      _id: { $in: ids },
+      type: { $in: ['product', 'seo'] }
+    });
+
+    res.json({
+      success: true,
+      message: `${result.deletedCount} reports deleted successfully`,
+      deletedCount: result.deletedCount,
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// GET /api/reports/search - Search reports by niche
+export const searchReports = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { q, limit = 20 } = req.query;
+
+    if (!q || typeof q !== 'string' || q.length < 2) {
+      return res.status(400).json({ error: 'Search query must be at least 2 characters' });
+    }
+
+    const reports = await Report.find({
+      niche: { $regex: q, $options: 'i' },
+      type: { $in: ['product', 'seo'] }
+    })
+      .sort({ createdAt: -1 })
+      .limit(Number(limit))
+      .select('-data -markdown -charts')
+      .lean();
+
+    res.json({
+      query: q,
+      results: reports.length,
+      reports: reports.map((r: any) => ({
+        _id: r._id,
+        type: r.type,
+        niche: r.niche,
+        country: r.country,
+        value: '$99',
+        createdAt: r.createdAt,
+      })),
+    });
+  } catch (err) {
+    next(err);
+  }
 };
