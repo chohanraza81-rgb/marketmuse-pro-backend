@@ -18,82 +18,68 @@ const extractJSON = (raw: string): any => {
   try {
     return JSON.parse(cleaned);
   } catch (err) {
-    console.error('❌ extractJSON failed. Cleaned string:', cleaned.substring(0, 300));
+    console.error('❌ extractJSON failed. Cleaned string length:', cleaned.length);
+    console.error('First 300 chars:', cleaned.substring(0, 300));
+    console.error('Last 300 chars:', cleaned.substring(cleaned.length - 300));
     throw new Error('AI response is not valid JSON');
   }
 };
 
-const SEO_SYSTEM_PROMPT = `You are a world‑class SEO consultant hired by a Fortune 500 company. Your reputation is on the line. You are paid $99 per report and must deliver **exceptional, specific, actionable** insights that the client can execute immediately.
+const SEO_SYSTEM_PROMPT = `You are an expert SEO consultant. Given a niche, country, SERP data, and trends, create a specific, actionable SEO strategy.
 
-You have access to real SERP data, related questions, and Google Trends. Use it to create a hyper‑detailed, non‑generic strategy.
-
-Respond ONLY with a valid JSON object (no markdown, no code fences). Every array must have the exact number of items specified. Every field must be filled.
+Respond ONLY with valid JSON (no markdown). Keep responses concise to fit within token limits.
 
 {
   "trend_score": "Seasonal" or "Evergreen",
-  "trend_insight": string (one sharp sentence about what the trend data means for the client),
+  "trend_insight": string (one sentence about the trend),
   "keywords": [
     {
       "keyword": string,
-      "volume": number (realistic, never below 10 unless genuinely low‑volume, vary from high to low),
-      "kd": number (realistic difficulty 0‑100),
+      "volume": number,
+      "kd": number,
       "cpc": number,
-      "intent": string ("informational", "commercial", "transactional", "navigational")
+      "intent": string ("informational", "commercial", "transactional")
     }
-  ] (exactly 50, with a natural distribution: 5‑10 high volume, 15‑20 medium, rest long‑tail but still useful),
+  ] (exactly 30, sorted by volume descending, realistic numbers),
   "serp_analysis": [
     {
       "position": number,
       "title": string (from real SERP),
       "url": string (from real SERP),
-      "da": number (realistic estimate),
-      "pa": number (realistic estimate),
+      "da": number,
       "word_count": number,
       "backlinks": number,
-      "ranking_keywords": number,
-      "traffic_estimate": number,
-      "strengths": string (specific, e.g., "Has original research with downloadable statistics"),
-      "weaknesses": string (specific, e.g., "Thin content below the fold, no video")
+      "strengths": string (one specific strength),
+      "weaknesses": string (one specific weakness)
     }
-  ] (exactly 10, based on the real results provided),
+  ] (exactly 5, from the real data),
   "content_calendar": [
     {
-      "week": number (1‑24),
-      "title": string (a compelling, click‑worthy headline that is completely original, not just a keyword stuffed title),
-      "keyword": string (primary keyword),
-      "content_type": string (e.g., "Pillar Page", "Listicle", "How‑to Guide", "Case Study", "Expert Roundup"),
-      "word_count_target": number,
-      "outline": [string] (3‑5 detailed bullet points that form a skeleton for the article)
+      "week": number (1-12),
+      "title": string (creative, click-worthy title),
+      "keyword": string,
+      "content_type": string (e.g., "Pillar Page", "Listicle", "How-to Guide"),
+      "outline": [string] (3 bullet points)
     }
-  ] (exactly 24 weeks, each title and outline must be unique and high‑value),
+  ] (exactly 12 weeks),
   "backlink_strategy": {
-    "overview": string (a strategic paragraph explaining the tiered approach),
+    "overview": string (one strategic paragraph),
     "target_sites": [
       {
-        "site": string (real website name + URL, e.g., "https://www.oxfordhomestudy.com/blog"),
-        "type": string (e.g., "Blog", "Resource Page", "Roundup", "Newsletter"),
-        "contact_method": string (e.g., "Email editor@site.com", "Contact form at /contact", "Twitter DM to @handle"),
-        "reason": string (why this site is ideal – audience overlap, domain authority, relevance)
+        "site": string (real website URL),
+        "type": string,
+        "contact_method": string,
+        "reason": string
       }
-    ] (exactly 10, no fake sites. Use real platforms in the skill‑development/education niche),
-    "guest_post_topics": [string] (5 original, high‑value guest post titles that would be accepted by those sites),
-    "broken_link_opportunities": [
-      {
-        "site": string (real site likely to have 404s, with a description of a missing resource),
-        "suggested_replacement": string (your content idea that would replace the broken link)
-      }
-    ] (exactly 3, realistic scenarios, not example.com),
-    "resource_page_targets": [string] (5 specific resource page URLs or descriptions where you could be listed),
-    "outreach_email_template": string (a complete, personalized email that is NOT generic. It must show you researched their site, mention something specific, and offer unique value. Use placeholders like {{FirstName}}, {{Website}}.)
+    ] (exactly 5 real sites),
+    "guest_post_topics": [string] (3 topics),
+    "broken_link_opportunities": [string] (2 realistic examples),
+    "outreach_email_template": string (a complete, personalized email template)
   },
-  "onpage_checklist": [string] (15 extremely specific on‑page SEO actions. Avoid generic advice. Example: "Add video schema to the pillar page 'best learning skill in 2026' and a downloadable checklist to increase time‑on‑page")
+  "onpage_checklist": [string] (10 specific, actionable items),
   "chart_data": {
-    "trend_12m": number[] (12 values 0‑100 based on the provided trends),
-    "related_queries": [string] (top 10 from the real data),
-    "keyword_difficulty_distribution": { "easy": number, "medium": number, "hard": number },
-    "volume_vs_kd": [
-      { "keyword": string, "volume": number, "kd": number, "cpc": number }
-    ] (top 20)
+    "trend_12m": number[] (12 values),
+    "keyword_difficulty_distribution": { "easy": number, "medium": number, "hard": number }
   }
 }`;
 
@@ -114,15 +100,14 @@ function generateSEOMarkdown(analysis: any, niche: string, country: string): str
 
   const backlinkSection = () => {
     const bs = analysis.backlink_strategy;
-    if (!bs) return 'No backlink strategy provided.';
+    if (!bs) return '';
 
-    let md = `### Overview\n${bs.overview || 'N/A'}\n\n`;
+    let md = `### Overview\n${bs.overview}\n\n`;
 
     if (bs.target_sites?.length) {
-      md += `### 10 High‑Value Target Websites\n\n| # | Site | Type | Contact | Why |\n|---|------|------|---------|-----|\n`;
+      md += `### 5 Target Websites\n\n| # | Site | Type | Contact | Why |\n|---|------|------|---------|-----|\n`;
       bs.target_sites.forEach((s: any, i: number) => {
-        const siteUrl = s.site.startsWith('http') ? s.site : `https://${s.site}`;
-        md += `| ${i+1} | [${s.site}](${siteUrl}) | ${s.type} | ${s.contact_method} | ${s.reason} |\n`;
+        md += `| ${i+1} | ${s.site} | ${s.type} | ${s.contact_method} | ${s.reason} |\n`;
       });
       md += '\n';
     }
@@ -132,13 +117,7 @@ function generateSEOMarkdown(analysis: any, niche: string, country: string): str
     }
 
     if (bs.broken_link_opportunities?.length) {
-      md += `### Broken Link Opportunities\n${bs.broken_link_opportunities.map((b: any) => 
-        `- **${b.site}:** ${b.suggested_replacement}`
-      ).join('\n')}\n\n`;
-    }
-
-    if (bs.resource_page_targets?.length) {
-      md += `### Resource Page Targets\n${bs.resource_page_targets.map((r: string) => `- ${r}`).join('\n')}\n\n`;
+      md += `### Broken Link Opportunities\n${bs.broken_link_opportunities.map((b: string) => `- ${b}`).join('\n')}\n\n`;
     }
 
     if (bs.outreach_email_template) {
@@ -157,80 +136,58 @@ function generateSEOMarkdown(analysis: any, niche: string, country: string): str
 
 ${analysis.trend_insight || ''}
 
-This niche shows **${analysis.trend_score.toLowerCase()}** patterns. ${
-    analysis.trend_score === 'Seasonal' 
-      ? 'Plan content calendar around peak seasons for maximum traffic.' 
-      : 'Consistent content publishing will yield steady traffic growth.'
-  }
-
 ---
 
-## 🏆 Top 50 Golden Keywords
+## 🏆 Top 30 Keywords
 
 | # | Keyword | Volume | KD | CPC | Intent | Difficulty |
 |---|---------|--------|----|-----|--------|------------|
-${analysis.keywords?.slice(0, 50).map((k: any, i: number) => 
+${analysis.keywords?.slice(0, 30).map((k: any, i: number) => 
   `| ${i + 1} | ${k.keyword} | ${k.volume?.toLocaleString() || 0} | ${k.kd || 0} | $${k.cpc?.toFixed(2) || '0.00'} | ${k.intent || 'informational'} | ${difficultyLabel(k.kd || 0)} |`
-).join('\n') || 'No keywords available'}
+).join('\n') || ''}
 
 ---
 
-## 📈 SERP Analysis (Top 10 Competitors)
+## 📈 SERP Analysis
 
-${analysis.serp_analysis?.map((s: any, i: number) => 
-  `### #${s.position} - ${s.title || 'Unknown'}
-- **URL:** ${s.url || 'N/A'}
-- **DA:** ${s.da || 0} | **PA:** ${s.pa || 0}
-- **Word Count:** ${s.word_count?.toLocaleString() || 0}
-- **Backlinks:** ${s.backlinks?.toLocaleString() || 0}
-- **Ranking Keywords:** ${s.ranking_keywords?.toLocaleString() || 0}
-- **Est. Traffic:** ${s.traffic_estimate?.toLocaleString() || 0}
-- **Strengths:** ${s.strengths || 'N/A'}
-- **Weaknesses:** ${s.weaknesses || 'N/A'}
-- **Difficulty to Beat:** ${s.da > 70 ? '🔴 Very Hard' : s.da > 50 ? '🟡 Moderate' : '🟢 Achievable'}`
-).join('\n\n') || 'No SERP data available'}
+${analysis.serp_analysis?.map((s: any) => 
+  `### #${s.position} - ${s.title}
+- **URL:** ${s.url}
+- **DA:** ${s.da} | **Words:** ${s.word_count} | **Backlinks:** ${s.backlinks}
+- **Strength:** ${s.strengths}
+- **Weakness:** ${s.weaknesses}`
+).join('\n\n') || ''}
 
 ---
 
-## 📅 24-Week Content Calendar
+## 📅 12-Week Content Calendar
 
-${analysis.content_calendar?.map((c: any, i: number) => 
-  `### Week ${c.week || i+1} – ${c.title || 'Untitled'}
-- **Type:** ${c.content_type || 'Blog Post'}
-- **Target Keyword:** ${c.keyword || 'N/A'}
-- **Word Count:** ${c.word_count_target || 1000}
+${analysis.content_calendar?.map((c: any) => 
+  `### Week ${c.week} – ${c.title}
+- **Type:** ${c.content_type}
+- **Keyword:** ${c.keyword}
 - **Outline:** ${(c.outline || []).join(' | ')}`
-).join('\n') || 'No content calendar available'}
+).join('\n') || ''}
 
 ---
 
-## 🔗 Backlink Strategy (Execution‑Ready)
+## 🔗 Backlink Strategy
 
 ${backlinkSection()}
 
 ---
 
-## ✅ On‑Page SEO Checklist
+## ✅ On-Page Checklist
 
-${analysis.onpage_checklist?.map((item: string, i: number) => `${i+1}. ${item}`).join('\n') || 'No checklist available'}
-
----
-
-## 📊 Keyword Difficulty Distribution
-
-- 🟢 **Easy (KD 0‑30):** ${analysis.chart_data?.keyword_difficulty_distribution?.easy || 0}
-- 🟡 **Medium (KD 31‑60):** ${analysis.chart_data?.keyword_difficulty_distribution?.medium || 0}
-- 🔴 **Hard (KD 61‑100):** ${analysis.chart_data?.keyword_difficulty_distribution?.hard || 0}
+${analysis.onpage_checklist?.map((item: string, i: number) => `${i+1}. ${item}`).join('\n') || ''}
 
 ---
 
-## 🎯 Priority Actions
+## 📊 Keyword Difficulty
 
-1. Target easy keywords first for quick wins.
-2. Create pillar content for medium difficulty keywords.
-3. Build backlinks gradually for hard keywords.
-4. Update content regularly based on trend patterns.
-5. Monitor SERP changes monthly.
+- 🟢 Easy (KD 0-30): ${analysis.chart_data?.keyword_difficulty_distribution?.easy || 0}
+- 🟡 Medium (KD 31-60): ${analysis.chart_data?.keyword_difficulty_distribution?.medium || 0}
+- 🔴 Hard (KD 61-100): ${analysis.chart_data?.keyword_difficulty_distribution?.hard || 0}
 
 ---
 
@@ -257,7 +214,7 @@ export const createSEOReport = async (req: Request, res: Response, next: NextFun
       getTrends(niche, countryUpper),
     ]);
 
-    const serpOrganic = (searchData as any).organic_results?.slice(0, 10).map((r: any) => ({
+    const serpOrganic = (searchData as any).organic_results?.slice(0, 5).map((r: any) => ({
       position: r.position,
       title: r.title,
       url: r.link,
@@ -265,26 +222,26 @@ export const createSEOReport = async (req: Request, res: Response, next: NextFun
     })) || [];
 
     const userMessage = `Niche: ${niche}
-Country: ${country} (${countryUpper})
+Country: ${country}
 
-Real SERP Top 10:
-${JSON.stringify(serpOrganic, null, 2)}
+SERP Top 5:
+${JSON.stringify(serpOrganic)}
 
-Related Questions (from SERP):
-${JSON.stringify(keywordSuggestions.slice(0, 15), null, 2)}
+Related Questions:
+${JSON.stringify(keywordSuggestions.slice(0, 10))}
 
-12-Month Google Trends:
-${JSON.stringify(trendsData, null, 2)}
+12-Month Trends:
+${JSON.stringify(trendsData.slice(0, 6))}
 
-Create a detailed, specific, and immediately actionable SEO strategy. Every element must be unique and tailored. Especially the backlink strategy: provide real, plausible websites, a compelling outreach email, and genuine broken link opportunities.`;
+Create a complete JSON response. Keep backlink sites realistic. Make the outreach email ready to send.`;
 
-    console.log('🤖 Requesting Groq SEO analysis...');
+    console.log('🤖 Requesting Groq analysis...');
     const groqResponse = await runGroqWithRetry(SEO_SYSTEM_PROMPT, userMessage);
     
     const analysis = extractJSON(groqResponse);
 
-    if (!analysis.keywords || !analysis.serp_analysis || !analysis.content_calendar) {
-      throw new Error('AI response missing required SEO fields');
+    if (!analysis.keywords || !analysis.content_calendar) {
+      throw new Error('AI response missing required fields');
     }
 
     const markdown = generateSEOMarkdown(analysis, niche, country);
@@ -296,7 +253,6 @@ Create a detailed, specific, and immediately actionable SEO strategy. Every elem
       keywords: analysis.keywords || [],
       contentCalendar: analysis.content_calendar || [],
       keywordDistribution: analysis.chart_data?.keyword_difficulty_distribution || {},
-      volumeVsKD: analysis.chart_data?.volume_vs_kd || [],
     };
 
     const report = await Report.create({
