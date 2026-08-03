@@ -1,8 +1,9 @@
 import { Request, Response, NextFunction } from 'express';
-import { seoReportSchema } from '../validators/report';
+import { productResearchSchema } from '../validators/report';
 import { cacheService } from '../services/cache';
-import { getSearchResults, getKeywordSuggestions } from '../services/serpapi';
+import { getShoppingResults } from '../services/serpapi';
 import { getTrends } from '../services/trends';
+import { getExchangeRates } from '../services/exchange';
 import { runGroqWithRetry } from '../services/groq';
 import { Report } from '../models/Report';
 import { ZodError } from 'zod';
@@ -23,81 +24,79 @@ const extractJSON = (raw: string): any => {
   }
 };
 
-const SEO_SYSTEM_PROMPT = `You are a world‑class SEO consultant hired by a Fortune 500 company. Your reputation is on the line. You are paid $99 per report and must deliver **exceptional, specific, actionable** insights that the client can execute immediately.
+const PRODUCT_SYSTEM_PROMPT = `You are a senior e‑commerce product strategist at a top‑tier agency. 
+Given a niche, country, real shopping results, and Google Trends data, produce a detailed, actionable JSON analysis.
 
-You have access to real SERP data, related questions, and Google Trends. Use it to create a hyper‑detailed, non‑generic strategy.
+Use the provided real data to extract genuine product titles, prices, and competitor names. **Do not invent vague names** – refer to actual stores/sources from the data.
 
-Respond ONLY with a valid JSON object (no markdown, no code fences). Every array must have the exact number of items specified. Every field must be filled.
+Respond ONLY with a valid JSON object (no markdown, no code fences) exactly following this structure:
 
 {
-  "trend_score": "Seasonal" or "Evergreen",
-  "trend_insight": string (one sharp sentence about what the trend data means for the client),
-  "keywords": [
+  "market_score": number (0–100, realistic, justified by demand vs competition),
+  "market_summary": string (2-3 sentences summarizing opportunity, target audience, and key insight),
+  "pricing_engine": [
     {
-      "keyword": string,
-      "volume": number (realistic, never below 10 unless genuinely low‑volume, vary from high to low),
-      "kd": number (realistic difficulty 0‑100),
-      "cpc": number,
-      "intent": string ("informational", "commercial", "transactional", "navigational")
+      "title": string (exact product name from the shopping data),
+      "image": string (URL from the data, if available),
+      "price": number (in USD),
+      "estimated_cost": number (realistic landed cost, typically 30-60% of price),
+      "estimated_profit": number (price - estimated_cost),
+      "profit_margin_percent": number,
+      "reviews": number,
+      "rating": number (1-5),
+      "source": string (store name, e.g., "Amazon", "Walmart")
     }
-  ] (exactly 50, with a natural distribution: 5‑10 high volume, 15‑20 medium, rest long‑tail but still useful),
-  "serp_analysis": [
+  ] (exactly 10 products, sorted by profit margin descending),
+  "competitors": [
     {
-      "position": number,
-      "title": string (from real SERP),
-      "url": string (from real SERP),
-      "da": number (realistic estimate),
-      "pa": number (realistic estimate),
-      "word_count": number,
-      "backlinks": number,
-      "ranking_keywords": number,
-      "traffic_estimate": number,
-      "strengths": string (specific, e.g., "Has original research with downloadable statistics"),
-      "weaknesses": string (specific, e.g., "Thin content below the fold, no video")
+      "name": string (actual competitor brand/store from data or known players),
+      "market_share_estimate": string (e.g., "High", "Medium", "Low"),
+      "strengths": [string, string],
+      "weaknesses": [string, string],
+      "pricing_strategy": string,
+      "target_audience": string
     }
-  ] (exactly 10, based on the real results provided),
-  "content_calendar": [
+  ] (5-7 detailed competitors),
+  "market_gaps": [
     {
-      "week": number (1‑24),
-      "title": string (a compelling, click‑worthy headline that is completely original, not just a keyword stuffed title),
-      "keyword": string (primary keyword),
-      "content_type": string (e.g., "Pillar Page", "Listicle", "How‑to Guide", "Case Study", "Expert Roundup"),
-      "word_count_target": number,
-      "outline": [string] (3‑5 detailed bullet points that form a skeleton for the article)
+      "insight": string (specific, actionable gap with a concrete suggestion),
+      "icon": string (relevant emoji)
     }
-  ] (exactly 24 weeks, each title and outline must be unique and high‑value),
-  "backlink_strategy": {
-    "overview": string (a strategic paragraph explaining the tiered approach),
-    "target_sites": [
-      {
-        "site": string (real website name + URL, e.g., "https://www.oxfordhomestudy.com/blog"),
-        "type": string (e.g., "Blog", "Resource Page", "Roundup", "Newsletter"),
-        "contact_method": string (e.g., "Email editor@site.com", "Contact form at /contact", "Twitter DM to @handle"),
-        "reason": string (why this site is ideal – audience overlap, domain authority, relevance)
-      }
-    ] (exactly 10, no fake sites. Use real platforms in the skill‑development/education niche),
-    "guest_post_topics": [string] (5 original, high‑value guest post titles that would be accepted by those sites),
-    "broken_link_opportunities": [
-      {
-        "site": string (real site likely to have 404s, with a description of a missing resource),
-        "suggested_replacement": string (your content idea that would replace the broken link)
-      }
-    ] (exactly 3, realistic scenarios, not example.com),
-    "resource_page_targets": [string] (5 specific resource page URLs or descriptions where you could be listed),
-    "outreach_email_template": string (a complete, personalized email that is NOT generic. It must show you researched their site, mention something specific, and offer unique value. Use placeholders like {{FirstName}}, {{Website}}.)
+  ] (exactly 3),
+  "personas": [
+    {
+      "name": string,
+      "avatar": string (emoji),
+      "demographics": string (age, income, location),
+      "goals": string,
+      "pain_points": string,
+      "buying_triggers": string,
+      "preferred_channels": [string, string]
+    }
+  ] (exactly 3),
+  "launch_plan": [
+    {
+      "day": number (1-30),
+      "task": string (specific, niche‑related action, e.g., "Source 3 suppliers on Alibaba for bamboo toothbrushes"),
+      "category": string (e.g., "Sourcing", "Marketing", "Content", "Operations")
+    }
+  ] (exactly 30 items, covering sourcing, branding, listing optimization, ads, influencer outreach, etc.),
+  "profit_forecast": {
+    "monthly_revenue_estimate": number,
+    "monthly_profit_estimate": number,
+    "break_even_months": number,
+    "assumptions": string
   },
-  "onpage_checklist": [string] (15 extremely specific on‑page SEO actions. Avoid generic advice. Example: "Add video schema to the pillar page 'best learning skill in 2026' and a downloadable checklist to increase time‑on‑page")
+  "risks": [string] (3-5 specific risks with mitigation tips),
   "chart_data": {
-    "trend_12m": number[] (12 values 0‑100 based on the provided trends),
-    "related_queries": [string] (top 10 from the real data),
-    "keyword_difficulty_distribution": { "easy": number, "medium": number, "hard": number },
-    "volume_vs_kd": [
-      { "keyword": string, "volume": number, "kd": number, "cpc": number }
-    ] (top 20)
+    "demand_forecast": number[] (12 monthly trend values 0-100 based on Google Trends),
+    "competitor_market_share": [
+      { "name": string, "value": number }
+    ] (sum to 100)
   }
 }`;
 
-function generateSEOMarkdown(analysis: any, niche: string, country: string): string {
+function generateProductMarkdown(analysis: any, niche: string, country: string): string {
   const countryNames: Record<string, string> = {
     us: 'United States 🇺🇸',
     pk: 'Pakistan 🇵🇰',
@@ -106,201 +105,143 @@ function generateSEOMarkdown(analysis: any, niche: string, country: string): str
     sa: 'Saudi Arabia 🇸🇦',
   };
 
-  const difficultyLabel = (kd: number) => {
-    if (kd <= 30) return '🟢 Easy';
-    if (kd <= 60) return '🟡 Medium';
-    return '🔴 Hard';
-  };
-
-  const backlinkSection = () => {
-    const bs = analysis.backlink_strategy;
-    if (!bs) return 'No backlink strategy provided.';
-
-    let md = `### Overview\n${bs.overview || 'N/A'}\n\n`;
-
-    if (bs.target_sites?.length) {
-      md += `### 10 High‑Value Target Websites\n\n| # | Site | Type | Contact | Why |\n|---|------|------|---------|-----|\n`;
-      bs.target_sites.forEach((s: any, i: number) => {
-        const siteUrl = s.site.startsWith('http') ? s.site : `https://${s.site}`;
-        md += `| ${i+1} | [${s.site}](${siteUrl}) | ${s.type} | ${s.contact_method} | ${s.reason} |\n`;
-      });
-      md += '\n';
-    }
-
-    if (bs.guest_post_topics?.length) {
-      md += `### Guest Post Topics\n${bs.guest_post_topics.map((t: string, i: number) => `${i+1}. ${t}`).join('\n')}\n\n`;
-    }
-
-    if (bs.broken_link_opportunities?.length) {
-      md += `### Broken Link Opportunities\n${bs.broken_link_opportunities.map((b: any) => 
-        `- **${b.site}:** ${b.suggested_replacement}`
-      ).join('\n')}\n\n`;
-    }
-
-    if (bs.resource_page_targets?.length) {
-      md += `### Resource Page Targets\n${bs.resource_page_targets.map((r: string) => `- ${r}`).join('\n')}\n\n`;
-    }
-
-    if (bs.outreach_email_template) {
-      md += `### 📧 Outreach Email Template\n\`\`\`\n${bs.outreach_email_template}\n\`\`\`\n\n`;
-    }
-
-    return md;
-  };
-
-  return `# 🔍 SEO Report: ${niche}
+  return `# 🚀 Product Research Report: ${niche}
 ## Target Market: ${countryNames[country] || country.toUpperCase()}
 
 ---
 
-## 📊 Trend Analysis: **${analysis.trend_score}**
+## 📊 Market Score: **${analysis.market_score}/100**
 
-${analysis.trend_insight || ''}
-
-This niche shows **${analysis.trend_score.toLowerCase()}** patterns. ${
-    analysis.trend_score === 'Seasonal' 
-      ? 'Plan content calendar around peak seasons for maximum traffic.' 
-      : 'Consistent content publishing will yield steady traffic growth.'
-  }
+${analysis.market_score >= 80 ? '🔥 **HIGH POTENTIAL** - This niche shows strong signals for profitability.' : 
+  analysis.market_score >= 60 ? '📈 **MODERATE POTENTIAL** - Good opportunity with manageable competition.' : 
+  '⚠️ **CAUTIOUS** - High competition or low demand detected.'}
 
 ---
 
-## 🏆 Top 50 Golden Keywords
-
-| # | Keyword | Volume | KD | CPC | Intent | Difficulty |
-|---|---------|--------|----|-----|--------|------------|
-${analysis.keywords?.slice(0, 50).map((k: any, i: number) => 
-  `| ${i + 1} | ${k.keyword} | ${k.volume?.toLocaleString() || 0} | ${k.kd || 0} | $${k.cpc?.toFixed(2) || '0.00'} | ${k.intent || 'informational'} | ${difficultyLabel(k.kd || 0)} |`
-).join('\n') || 'No keywords available'}
-
----
-
-## 📈 SERP Analysis (Top 10 Competitors)
-
-${analysis.serp_analysis?.map((s: any, i: number) => 
-  `### #${s.position} - ${s.title || 'Unknown'}
-- **URL:** ${s.url || 'N/A'}
-- **DA:** ${s.da || 0} | **PA:** ${s.pa || 0}
-- **Word Count:** ${s.word_count?.toLocaleString() || 0}
-- **Backlinks:** ${s.backlinks?.toLocaleString() || 0}
-- **Ranking Keywords:** ${s.ranking_keywords?.toLocaleString() || 0}
-- **Est. Traffic:** ${s.traffic_estimate?.toLocaleString() || 0}
-- **Strengths:** ${s.strengths || 'N/A'}
-- **Weaknesses:** ${s.weaknesses || 'N/A'}
-- **Difficulty to Beat:** ${s.da > 70 ? '🔴 Very Hard' : s.da > 50 ? '🟡 Moderate' : '🟢 Achievable'}`
-).join('\n\n') || 'No SERP data available'}
+## 💰 Pricing Engine
+${analysis.pricing_engine?.map((p: any, i: number) => 
+  `### ${i + 1}. ${p.title}
+- **Price:** $${p.price} | **Est. Cost:** $${p.estimated_cost} | **Est. Profit:** $${p.estimated_profit}
+- **Reviews:** ${p.reviews} ⭐`
+).join('\n\n') || 'No pricing data available'}
 
 ---
 
-## 📅 24-Week Content Calendar
-
-${analysis.content_calendar?.map((c: any, i: number) => 
-  `### Week ${c.week || i+1} – ${c.title || 'Untitled'}
-- **Type:** ${c.content_type || 'Blog Post'}
-- **Target Keyword:** ${c.keyword || 'N/A'}
-- **Word Count:** ${c.word_count_target || 1000}
-- **Outline:** ${(c.outline || []).join(' | ')}`
-).join('\n') || 'No content calendar available'}
+## 🏆 Top Competitors
+${analysis.competitors?.map((c: any, i: number) => 
+  `### ${i + 1}. ${c.name}
+- **Strengths:** ${c.strengths?.join(', ')}
+- **Weaknesses:** ${c.weaknesses?.join(', ')}`
+).join('\n\n') || 'No competitor data available'}
 
 ---
 
-## 🔗 Backlink Strategy (Execution‑Ready)
-
-${backlinkSection()}
-
----
-
-## ✅ On‑Page SEO Checklist
-
-${analysis.onpage_checklist?.map((item: string, i: number) => `${i+1}. ${item}`).join('\n') || 'No checklist available'}
+## 🎯 Market Gaps (Opportunities)
+${analysis.market_gap?.map((g: any, i: number) => 
+  `### ${g.icon} Gap ${i + 1}
+${g.insight}`
+).join('\n\n') || 'No market gap data available'}
 
 ---
 
-## 📊 Keyword Difficulty Distribution
-
-- 🟢 **Easy (KD 0‑30):** ${analysis.chart_data?.keyword_difficulty_distribution?.easy || 0}
-- 🟡 **Medium (KD 31‑60):** ${analysis.chart_data?.keyword_difficulty_distribution?.medium || 0}
-- 🔴 **Hard (KD 61‑100):** ${analysis.chart_data?.keyword_difficulty_distribution?.hard || 0}
-
----
-
-## 🎯 Priority Actions
-
-1. Target easy keywords first for quick wins.
-2. Create pillar content for medium difficulty keywords.
-3. Build backlinks gradually for hard keywords.
-4. Update content regularly based on trend patterns.
-5. Monitor SERP changes monthly.
+## 👥 Customer Personas
+${analysis.personas?.map((p: any, i: number) => 
+  `### ${p.avatar} Persona ${i + 1}: ${p.name}
+- **Demographics:** ${p.demographics}
+- **Goals:** ${p.goals}
+- **Pain Points:** ${p.pain_points}
+- **Buying Triggers:** ${p.buying_triggers}
+- **Best Channels:** ${p.preferred_channels?.join(', ')}`
+).join('\n\n') || 'No persona data available'}
 
 ---
 
-*Report generated by MarketMuse AI PRO MAX ULTRA – $99/report*`;
+## 📅 30-Day Launch Plan
+${analysis.launch_plan?.map((d: any) => 
+  `### Day ${d.day} (${d.category})
+${d.task}`
+).join('\n') || 'No launch plan available'}
+
+---
+
+## 💸 Profit Forecast
+- **Monthly Revenue Estimate:** $${analysis.profit_forecast?.monthly_revenue_estimate || 0}
+- **Monthly Profit Estimate:** $${analysis.profit_forecast?.monthly_profit_estimate || 0}
+- **Break-Even:** ${analysis.profit_forecast?.break_even_months || 'N/A'} months
+- **Assumptions:** ${analysis.profit_forecast?.assumptions || 'N/A'}
+
+---
+
+## ⚠️ Risks & Mitigations
+${analysis.risks?.map((r: string) => `- ${r}`).join('\n') || 'No risks identified'}
+
+---
+
+*Report generated by MarketMuse AI PRO MAX ULTRA - $99/report*`;
 }
 
-export const createSEOReport = async (req: Request, res: Response, next: NextFunction) => {
+export const createProductReport = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { niche, country } = seoReportSchema.parse(req.body);
+    const { niche, country } = productResearchSchema.parse(req.body);
     const countryUpper = country.toUpperCase();
     
-    const cacheKey = `seo_report_${niche}_${country}`;
+    const cacheKey = `product_report_${niche}_${country}`;
     const cached = cacheService.get(cacheKey);
     if (cached) {
-      console.log('📦 Returning cached SEO report');
+      console.log('📦 Returning cached product report');
       return res.json(cached);
     }
 
-    console.log(`🔍 Starting SEO research: "${niche}" in ${countryUpper}`);
+    console.log(`🔍 Starting product research: "${niche}" in ${countryUpper}`);
 
-    const [searchData, keywordSuggestions, trendsData] = await Promise.all([
-      getSearchResults(niche, country),
-      getKeywordSuggestions(niche, country),
+    const [shoppingData, trendsData, exchangeRates] = await Promise.all([
+      getShoppingResults(niche, country),
       getTrends(niche, countryUpper),
+      getExchangeRates(),
     ]);
 
-    const serpOrganic = (searchData as any).organic_results?.slice(0, 10).map((r: any) => ({
-      position: r.position,
-      title: r.title,
-      url: r.link,
-      snippet: r.snippet || '',
+    // Slim down the shopping data to avoid token limit (max 5 products, only essential fields)
+    const products = (shoppingData as any).shopping_results?.slice(0, 5).map((p: any) => ({
+      title: p.title || 'Unknown Product',
+      price: p.extracted_price || p.price || 0,
+      source: p.source || 'Unknown',
+      reviews: p.rating || 0,
+      image: p.thumbnail || '',
     })) || [];
 
     const userMessage = `Niche: ${niche}
 Country: ${country} (${countryUpper})
+Exchange Rates: ${JSON.stringify(exchangeRates)}
 
-Real SERP Top 10:
-${JSON.stringify(serpOrganic, null, 2)}
+Real Shopping Data (top 5 products):
+${JSON.stringify(products, null, 2)}
 
-Related Questions (from SERP):
-${JSON.stringify(keywordSuggestions.slice(0, 15), null, 2)}
+12-Month Google Trends (first 6 months):
+${JSON.stringify(trendsData.slice(0, 6), null, 2)}
 
-12-Month Google Trends:
-${JSON.stringify(trendsData, null, 2)}
+Please analyze and return a complete JSON with ALL required fields. Be specific, use real product titles from the data, and suggest a realistic 30-day launch plan with niche-specific tasks.`;
 
-Create a detailed, specific, and immediately actionable SEO strategy. Every element must be unique and tailored. Especially the backlink strategy: provide real, plausible websites, a compelling outreach email, and genuine broken link opportunities.`;
-
-    console.log('🤖 Requesting Groq SEO analysis...');
-    const groqResponse = await runGroqWithRetry(SEO_SYSTEM_PROMPT, userMessage);
+    console.log('🤖 Requesting Groq analysis...');
+    const groqResponse = await runGroqWithRetry(PRODUCT_SYSTEM_PROMPT, userMessage);
     
     const analysis = extractJSON(groqResponse);
 
-    if (!analysis.keywords || !analysis.serp_analysis || !analysis.content_calendar) {
-      throw new Error('AI response missing required SEO fields');
+    if (!analysis.market_score || !analysis.pricing_engine || !analysis.competitors) {
+      throw new Error('AI response missing required fields');
     }
 
-    const markdown = generateSEOMarkdown(analysis, niche, country);
+    const markdown = generateProductMarkdown(analysis, niche, country);
 
     const charts = {
       trends: trendsData,
-      trendScore: analysis.trend_score,
-      serp: analysis.serp_analysis || [],
-      keywords: analysis.keywords || [],
-      contentCalendar: analysis.content_calendar || [],
-      keywordDistribution: analysis.chart_data?.keyword_difficulty_distribution || {},
-      volumeVsKD: analysis.chart_data?.volume_vs_kd || [],
+      marketScore: analysis.market_score,
+      demandForecast: analysis.chart_data?.demand_forecast || [],
+      competitorShare: analysis.chart_data?.competitor_market_share || [],
+      pricing: analysis.pricing_engine || [],
     };
 
     const report = await Report.create({
-      type: 'seo',
+      type: 'product',
       niche,
       country,
       value: '$99',
@@ -309,7 +250,7 @@ Create a detailed, specific, and immediately actionable SEO strategy. Every elem
       charts,
     });
 
-    console.log('✅ SEO report generated:', report._id);
+    console.log('✅ Product report generated:', report._id);
 
     const result = {
       id: report._id,
@@ -337,14 +278,14 @@ Create a detailed, specific, and immediately actionable SEO strategy. Every elem
   }
 };
 
-export const getSEOReport = async (req: Request, res: Response, next: NextFunction) => {
+export const getProductReport = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const report = await Report.findById(req.params.id);
     if (!report) {
       return res.status(404).json({ error: 'Report not found' });
     }
-    if (report.type !== 'seo') {
-      return res.status(400).json({ error: 'This is not an SEO report' });
+    if (report.type !== 'product') {
+      return res.status(400).json({ error: 'This is not a product report' });
     }
     res.json(report);
   } catch (err) {
