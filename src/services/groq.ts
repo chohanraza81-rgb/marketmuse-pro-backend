@@ -1,13 +1,12 @@
 import { env } from '../config/env';
 
-// Only models confirmed working with v1beta API
 const MODELS = [
   'gemini-3.5-flash',
   'gemini-2.5-flash',
   'gemini-2.5-pro',
 ];
 
-const TIMEOUT_MS = 90000;
+const TIMEOUT_MS = 60000; // 60 secs
 
 async function callGemini(model: string, systemPrompt: string, userMessage: string): Promise<string> {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${env.GEMINI_API_KEY}`;
@@ -32,6 +31,7 @@ async function callGemini(model: string, systemPrompt: string, userMessage: stri
 
     if (response.status === 503) throw new Error('MODEL_OVERLOADED');
     if (response.status === 404) throw new Error('MODEL_NOT_FOUND');
+    if (response.status === 429) throw new Error('RATE_LIMITED');
 
     if (!response.ok) {
       const errData: any = await response.json().catch(() => ({}));
@@ -48,24 +48,31 @@ async function callGemini(model: string, systemPrompt: string, userMessage: stri
 }
 
 export const runGroqPrompt = async (systemPrompt: string, userMessage: string): Promise<string> => {
-  for (const model of MODELS) {
+  // Try each model in order, with longer pauses on overload
+  for (let i = 0; i < MODELS.length; i++) {
+    const model = MODELS[i];
     try {
       console.log(`🔄 Trying: ${model}`);
       const result = await callGemini(model, systemPrompt, userMessage);
       console.log(`✅ Success: ${model}`);
       return result;
     } catch (error: any) {
-      if (error.message === 'MODEL_OVERLOADED') { console.warn(`⚠️ ${model} overloaded`); continue; }
-      if (error.message === 'MODEL_NOT_FOUND') { console.warn(`⚠️ ${model} not found`); continue; }
-      if (error.name === 'AbortError') { console.warn(`⚠️ ${model} timeout`); continue; }
-      if (error.message?.includes('429')) { console.warn(`⚠️ ${model} rate limited`); continue; }
-      throw error;
+      if (error.message === 'MODEL_OVERLOADED' || error.message === 'RATE_LIMITED') {
+        console.warn(`⚠️ ${model} busy/limited, waiting 8s before next...`);
+        await new Promise(r => setTimeout(r, 8000));
+        // continue to next model
+      } else if (error.message === 'MODEL_NOT_FOUND') {
+        console.warn(`⚠️ ${model} not found, skipping`);
+      } else {
+        // unknown error: throw immediately, no retry
+        throw error;
+      }
     }
   }
   throw new Error('All models failed. Please try again in 2 minutes.');
 };
 
-export const runGroqWithRetry = async (sys: string, msg: string, retries = 2): Promise<string> => {
+export const runGroqWithRetry = async (sys: string, msg: string, retries = 3): Promise<string> => {
   let last: any;
   for (let i = 0; i <= retries; i++) {
     try {
@@ -76,7 +83,7 @@ export const runGroqWithRetry = async (sys: string, msg: string, retries = 2): P
       last = e;
       console.error(`❌ Attempt ${i + 1}:`, e.message);
       if (i === retries) throw last;
-      const delay = 6000;
+      const delay = 7000 * (i + 1); // 7s, 14s, 21s
       console.log(`⏳ Waiting ${delay / 1000}s...`);
       await new Promise(r => setTimeout(r, delay));
     }
