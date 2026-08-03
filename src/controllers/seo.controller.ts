@@ -8,10 +8,32 @@ import { Report } from '../models/Report';
 import { ZodError } from 'zod';
 
 const extractJSON = (raw: string): any => {
-  let c = raw.replace(/```json|```/g, '').trim();
-  const s = c.indexOf('{'), e = c.lastIndexOf('}');
+  let c = raw.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
+  const s = c.indexOf('{');
+  const e = c.lastIndexOf('}');
   if (s !== -1 && e !== -1 && e > s) c = c.substring(s, e + 1);
-  return JSON.parse(c);
+  try {
+    return JSON.parse(c);
+  } catch (err) {
+    try {
+      const fixed = c.replace(/,\s*]/g, ']').replace(/,\s*}/g, '}').replace(/,(\s*[}\]])/g, '$1').replace(/([{,]\s*)(\w+)(\s*:)/g, '$1"$2"$3');
+      return JSON.parse(fixed);
+    } catch (e2) {
+      try {
+        let completed = c;
+        let braceCount = (completed.match(/{/g) || []).length;
+        let closeCount = (completed.match(/}/g) || []).length;
+        while (closeCount < braceCount) { completed += '}'; closeCount++; }
+        let bracketCount = (completed.match(/\[/g) || []).length;
+        let closeBracketCount = (completed.match(/\]/g) || []).length;
+        while (closeBracketCount < bracketCount) { completed += ']'; closeBracketCount++; }
+        return JSON.parse(completed);
+      } catch (e3) {
+        console.error('❌ All JSON fixes failed. Last 500 chars:', c.substring(c.length - 500));
+        throw new Error('AI response is not valid JSON');
+      }
+    }
+  }
 };
 
 const PROMPT = `You are an elite SEO consultant. Analyze real SERP data, questions, and trends. Return ONLY valid JSON:
@@ -22,14 +44,14 @@ const PROMPT = `You are an elite SEO consultant. Analyze real SERP data, questio
   "keywords": [
     {
       "keyword": "keyword",
-      "volume": realistic_number,
+      "volume": number,
       "kd": 0-100,
       "cpc": number,
       "intent": "informational"|"commercial"|"transactional",
       "serp_features": ["Featured Snippet","Video","PAA"],
       "ranking_opportunity": "Easy Win"|"Moderate"|"Long Game"
     }
-  ] (50 items, sorted by volume, realistic distribution),
+  ] (50 items, varied realistic volumes),
   "serp_analysis": [
     {
       "position": 1-8,
@@ -68,9 +90,9 @@ const PROMPT = `You are an elite SEO consultant. Analyze real SERP data, questio
       {"site":"site","dead_page":"description","your_replacement":"your content"}
     ] (3),
     "haro_queries": ["query1","query2","query3"],
-    "outreach_email": "complete personalized email template with {{placeholders}}"
+    "outreach_email": "complete personalized email with {{placeholders}}"
   },
-  "onpage_checklist": ["specific item"] (15 items),
+  "onpage_checklist": ["specific"] (15 items),
   "chart_data": {
     "trend_12m": [12 numbers],
     "keyword_difficulty": {"easy":N,"medium":N,"hard":N},
@@ -111,7 +133,6 @@ export const createSEOReport = async (req: Request, res: Response, next: NextFun
     const ck = `seo_${niche}_${country}`;
     const cached = cacheService.get(ck);
     if (cached) return res.json(cached);
-
     console.log(`🔍 SEO: "${niche}" in ${country}`);
     const [search, questions, trends] = await Promise.all([getSearchResults(niche, country), getKeywordSuggestions(niche, country), getTrends(niche, country.toUpperCase())]);
     const serp = (search as any).organic_results?.slice(0, 8).map((r: any) => ({ position: r.position, title: r.title, url: r.link, snippet: r.snippet || '' })) || [];
