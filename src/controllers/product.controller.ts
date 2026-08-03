@@ -8,287 +8,179 @@ import { runGroqWithRetry } from '../services/groq';
 import { Report } from '../models/Report';
 import { ZodError } from 'zod';
 
-// Bulletproof JSON extraction
-const extractJSON = (raw: string): any => {
-  let cleaned = raw.replace(/```json|```/g, '').trim();
-  const startIdx = cleaned.indexOf('{');
-  const endIdx = cleaned.lastIndexOf('}');
-  if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
-    cleaned = cleaned.substring(startIdx, endIdx + 1);
-  }
-  try {
-    return JSON.parse(cleaned);
-  } catch (err) {
-    console.error('❌ extractJSON failed. Cleaned string:', cleaned.substring(0, 300));
-    throw new Error('AI response is not valid JSON');
-  }
-};
-
-const PRODUCT_SYSTEM_PROMPT = `You are a senior e‑commerce product strategist at a top‑tier agency. 
-Given a niche, country, real shopping results, and Google Trends data, produce a detailed, actionable JSON analysis.
-
-Use the provided real data to extract genuine product titles, prices, and competitor names. **Do not invent vague names** – refer to actual stores/sources from the data.
-
-Respond ONLY with a valid JSON object (no markdown, no code fences) exactly following this structure:
+const PRODUCT_PROMPT = `You are a top e-commerce product strategist. Analyze real shopping data, trends, and exchange rates. Return ONLY valid JSON.
 
 {
-  "market_score": number (0–100, realistic, justified by demand vs competition),
-  "market_summary": string (2-3 sentences summarizing opportunity, target audience, and key insight),
+  "market_score": number (0-100, based on demand vs competition),
+  "market_verdict": string (one powerful sentence: "Hot Buy 🔥", "Stable Earner 💰", "Risky ⚠️", or "Avoid 🚫"),
+  "executive_summary": string (3 sentences: opportunity size, target customer, key advantage),
   "pricing_engine": [
     {
-      "title": string (exact product name from the shopping data),
-      "image": string (URL from the data, if available),
-      "price": number (in USD),
-      "estimated_cost": number (realistic landed cost, typically 30-60% of price),
-      "estimated_profit": number (price - estimated_cost),
+      "title": string (actual product title from data),
+      "image_url": string (from data if available),
+      "selling_price_usd": number,
+      "landed_cost_usd": number (30-60% of price),
+      "net_profit_usd": number,
       "profit_margin_percent": number,
+      "monthly_units_potential": number (realistic estimate),
+      "monthly_revenue_potential": number,
+      "monthly_profit_potential": number,
       "reviews": number,
       "rating": number (1-5),
-      "source": string (store name, e.g., "Amazon", "Walmart")
+      "source": string ("Amazon", "Walmart", "Etsy", etc.),
+      "competitive_advantage": string (why this product can win)
     }
-  ] (exactly 10 products, sorted by profit margin descending),
-  "competitors": [
+  ] (exactly 12 products, sorted by profit potential descending),
+  "competitor_deep_dive": [
     {
-      "name": string (actual competitor brand/store from data or known players),
-      "market_share_estimate": string (e.g., "High", "Medium", "Low"),
-      "strengths": [string, string],
-      "weaknesses": [string, string],
-      "pricing_strategy": string,
-      "target_audience": string
+      "name": string (actual brand/store from data or known player),
+      "market_position": string ("Market Leader", "Challenger", "Niche Player", "New Entrant"),
+      "estimated_monthly_sales": number,
+      "avg_price_point": number,
+      "strengths": [string, string, string],
+      "weaknesses": [string, string, string],
+      "their_best_seller": string,
+      "customer_complaints": [string] (from reviews analysis),
+      "how_to_outcompete": string (specific strategy)
     }
-  ] (5-7 detailed competitors),
+  ] (exactly 6 real competitors),
   "market_gaps": [
     {
-      "insight": string (specific, actionable gap with a concrete suggestion),
-      "icon": string (relevant emoji)
+      "gap_title": string,
+      "description": string (specific, actionable),
+      "potential_revenue_impact": string ("$5k-10k/mo", "$10k-25k/mo", "$25k+/mo"),
+      "difficulty_to_capture": string ("Easy", "Moderate", "Hard"),
+      "first_step": string (concrete action to capture this gap),
+      "icon": string (emoji)
     }
   ] (exactly 3),
-  "personas": [
+  "customer_personas": [
     {
       "name": string,
       "avatar": string (emoji),
-      "demographics": string (age, income, location),
-      "goals": string,
-      "pain_points": string,
-      "buying_triggers": string,
-      "preferred_channels": [string, string]
+      "age_range": string,
+      "income_level": string,
+      "location_hint": string,
+      "core_problem": string,
+      "buying_trigger": string,
+      "where_they_hang_out": [string, string, string],
+      "marketing_message": string (exact ad copy that would convert them)
     }
   ] (exactly 3),
-  "launch_plan": [
+  "launch_playbook": [
     {
-      "day": number (1-30),
-      "task": string (specific, niche‑related action, e.g., "Source 3 suppliers on Alibaba for bamboo toothbrushes"),
-      "category": string (e.g., "Sourcing", "Marketing", "Content", "Operations")
+      "week": number (1-12),
+      "theme": string ("Foundation", "Sourcing", "Branding", "Launch Prep", "Go Live", "Optimization"),
+      "tasks": [string, string, string] (3 specific, niche-related tasks per week),
+      "success_metric": string (what defines success this week)
     }
-  ] (exactly 30 items, covering sourcing, branding, listing optimization, ads, influencer outreach, etc.),
-  "profit_forecast": {
-    "monthly_revenue_estimate": number,
-    "monthly_profit_estimate": number,
-    "break_even_months": number,
-    "assumptions": string
+  ] (exactly 12 weeks, each week has 3 concrete tasks),
+  "financial_projections": {
+    "startup_cost_estimate": number,
+    "monthly_fixed_costs": number,
+    "avg_profit_per_unit": number,
+    "units_to_breakeven": number,
+    "estimated_months_to_profitability": number,
+    "conservative_monthly_profit_month6": number,
+    "optimistic_monthly_profit_month6": number
   },
-  "risks": [string] (3-5 specific risks with mitigation tips),
+  "risk_radar": [
+    {
+      "risk": string,
+      "probability": string ("Low", "Medium", "High"),
+      "impact": string ("Low", "Medium", "High"),
+      "mitigation": string
+    }
+  ] (5 risks),
   "chart_data": {
-    "demand_forecast": number[] (12 monthly trend values 0-100 based on Google Trends),
-    "competitor_market_share": [
-      { "name": string, "value": number }
-    ] (sum to 100)
+    "demand_forecast_12m": number[] (12 values based on trends),
+    "competitor_market_share": [{"name":string,"share":number}] (sums to 100),
+    "profit_margin_by_product": [{"name":string,"margin":number}] (top 8 products)
   }
 }`;
 
-function generateProductMarkdown(analysis: any, niche: string, country: string): string {
-  const countryNames: Record<string, string> = {
-    us: 'United States 🇺🇸',
-    pk: 'Pakistan 🇵🇰',
-    gb: 'United Kingdom 🇬🇧',
-    ae: 'United Arab Emirates 🇦🇪',
-    sa: 'Saudi Arabia 🇸🇦',
-  };
-
-  return `# 🚀 Product Research Report: ${niche}
-## Target Market: ${countryNames[country] || country.toUpperCase()}
-
----
-
-## 📊 Market Score: **${analysis.market_score}/100**
-
-${analysis.market_score >= 80 ? '🔥 **HIGH POTENTIAL** - This niche shows strong signals for profitability.' : 
-  analysis.market_score >= 60 ? '📈 **MODERATE POTENTIAL** - Good opportunity with manageable competition.' : 
-  '⚠️ **CAUTIOUS** - High competition or low demand detected.'}
-
----
-
-## 💰 Pricing Engine
-${analysis.pricing_engine?.map((p: any, i: number) => 
-  `### ${i + 1}. ${p.title}
-- **Price:** $${p.price} | **Est. Cost:** $${p.estimated_cost} | **Est. Profit:** $${p.estimated_profit}
-- **Reviews:** ${p.reviews} ⭐`
-).join('\n\n') || 'No pricing data available'}
-
----
-
-## 🏆 Top Competitors
-${analysis.competitors?.map((c: any, i: number) => 
-  `### ${i + 1}. ${c.name}
-- **Strengths:** ${c.strengths?.join(', ')}
-- **Weaknesses:** ${c.weaknesses?.join(', ')}`
-).join('\n\n') || 'No competitor data available'}
-
----
-
-## 🎯 Market Gaps (Opportunities)
-${analysis.market_gap?.map((g: any, i: number) => 
-  `### ${g.icon} Gap ${i + 1}
-${g.insight}`
-).join('\n\n') || 'No market gap data available'}
-
----
-
-## 👥 Customer Personas
-${analysis.personas?.map((p: any, i: number) => 
-  `### ${p.avatar} Persona ${i + 1}: ${p.name}
-- **Demographics:** ${p.demographics}
-- **Goals:** ${p.goals}
-- **Pain Points:** ${p.pain_points}
-- **Buying Triggers:** ${p.buying_triggers}
-- **Best Channels:** ${p.preferred_channels?.join(', ')}`
-).join('\n\n') || 'No persona data available'}
-
----
-
-## 📅 30-Day Launch Plan
-${analysis.launch_plan?.map((d: any) => 
-  `### Day ${d.day} (${d.category})
-${d.task}`
-).join('\n') || 'No launch plan available'}
-
----
-
-## 💸 Profit Forecast
-- **Monthly Revenue Estimate:** $${analysis.profit_forecast?.monthly_revenue_estimate || 0}
-- **Monthly Profit Estimate:** $${analysis.profit_forecast?.monthly_profit_estimate || 0}
-- **Break-Even:** ${analysis.profit_forecast?.break_even_months || 'N/A'} months
-- **Assumptions:** ${analysis.profit_forecast?.assumptions || 'N/A'}
-
----
-
-## ⚠️ Risks & Mitigations
-${analysis.risks?.map((r: string) => `- ${r}`).join('\n') || 'No risks identified'}
-
----
-
-*Report generated by MarketMuse AI PRO MAX ULTRA - $99/report*`;
+function generateMarkdown(a: any, niche: string, country: string): string {
+  const flags: Record<string, string> = { us: '🇺🇸', pk: '🇵🇰', gb: '🇬🇧', ae: '🇦🇪', sa: '🇸🇦' };
+  const names: Record<string, string> = { us: 'United States', pk: 'Pakistan', gb: 'United Kingdom', ae: 'UAE', sa: 'Saudi Arabia' };
+  
+  let m = `# 🚀 Product Research: ${niche}\n## Target Market: ${flags[country]} ${names[country]}\n\n`;
+  m += `## 📊 Market Score: **${a.market_score}/100** — ${a.market_verdict}\n\n${a.executive_summary}\n\n`;
+  
+  m += `## 💰 12-Product Pricing Engine\n| # | Product | Sell Price | Cost | Profit | Margin | Monthly Potential | Reviews |\n|---|---------|-----------|------|--------|--------|-------------------|--------|\n`;
+  a.pricing_engine?.forEach((p: any, i: number) => {
+    m += `| ${i+1} | ${p.title} | $${p.selling_price_usd} | $${p.landed_cost_usd} | $${p.net_profit_usd} | ${p.profit_margin_percent}% | $${p.monthly_revenue_potential?.toLocaleString()} | ${p.reviews}⭐ |\n`;
+  });
+  
+  m += `\n## 🏆 6 Competitor Deep Dive\n`;
+  a.competitor_deep_dive?.forEach((c: any) => {
+    m += `### ${c.name} (${c.market_position})\n- Est. Monthly Sales: $${c.estimated_monthly_sales?.toLocaleString()}\n- Avg Price: $${c.avg_price_point}\n- ✅ Strengths: ${c.strengths?.join(', ')}\n- ❌ Weaknesses: ${c.weaknesses?.join(', ')}\n- 🏷️ Best Seller: ${c.their_best_seller}\n- 😤 Complaints: ${c.customer_complaints?.join(', ')}\n- 🎯 How to Beat: ${c.how_to_outcompete}\n\n`;
+  });
+  
+  m += `## 🎯 3 Market Gaps\n`;
+  a.market_gaps?.forEach((g: any) => {
+    m += `### ${g.icon} ${g.gap_title}\n${g.description}\n- Revenue: ${g.potential_revenue_impact}\n- Difficulty: ${g.difficulty_to_capture}\n- First Step: ${g.first_step}\n\n`;
+  });
+  
+  m += `## 👥 Customer Personas\n`;
+  a.customer_personas?.forEach((p: any) => {
+    m += `### ${p.avatar} ${p.name}\n- ${p.age_range} | ${p.income_level} | ${p.location_hint}\n- Problem: ${p.core_problem}\n- Trigger: ${p.buying_trigger}\n- Hangouts: ${p.where_they_hang_out?.join(', ')}\n- 📢 Ad Copy: "${p.marketing_message}"\n\n`;
+  });
+  
+  m += `## 📅 12-Week Launch Playbook\n`;
+  a.launch_playbook?.forEach((w: any) => {
+    m += `### Week ${w.week}: ${w.theme}\n${w.tasks?.map((t: string, i: number) => `- Day ${i*2+1}: ${t}`).join('\n')}\n- 📏 Success Metric: ${w.success_metric}\n\n`;
+  });
+  
+  m += `## 💸 Financial Projections\n- Startup Cost: $${a.financial_projections?.startup_cost_estimate?.toLocaleString()}\n- Monthly Fixed Costs: $${a.financial_projections?.monthly_fixed_costs?.toLocaleString()}\n- Avg Profit/Unit: $${a.financial_projections?.avg_profit_per_unit}\n- Units to Breakeven: ${a.financial_projections?.units_to_breakeven}\n- Time to Profit: ${a.financial_projections?.estimated_months_to_profitability} months\n- Month 6 Profit (Conservative): $${a.financial_projections?.conservative_monthly_profit_month6?.toLocaleString()}\n- Month 6 Profit (Optimistic): $${a.financial_projections?.optimistic_monthly_profit_month6?.toLocaleString()}\n\n`;
+  
+  m += `## ⚠️ Risk Radar\n| Risk | Probability | Impact | Mitigation |\n|------|------------|--------|------------|\n`;
+  a.risk_radar?.forEach((r: any) => m += `| ${r.risk} | ${r.probability} | ${r.impact} | ${r.mitigation} |\n`);
+  
+  m += `\n---\n*MarketMuse AI PRO MAX ULTRA – $99 Report*`;
+  return m;
 }
 
 export const createProductReport = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { niche, country } = productResearchSchema.parse(req.body);
-    const countryUpper = country.toUpperCase();
-    
-    const cacheKey = `product_report_${niche}_${country}`;
-    const cached = cacheService.get(cacheKey);
-    if (cached) {
-      console.log('📦 Returning cached product report');
-      return res.json(cached);
-    }
+    const cKey = `product_${niche}_${country}`;
+    const cached = cacheService.get(cKey);
+    if (cached) return res.json(cached);
 
-    console.log(`🔍 Starting product research: "${niche}" in ${countryUpper}`);
-
-    const [shoppingData, trendsData, exchangeRates] = await Promise.all([
+    console.log(`🔍 Product: "${niche}" in ${country}`);
+    const [shop, trends, fx] = await Promise.all([
       getShoppingResults(niche, country),
-      getTrends(niche, countryUpper),
+      getTrends(niche, country.toUpperCase()),
       getExchangeRates(),
     ]);
 
-    // Slim down the shopping data to avoid token limit (max 5 products, only essential fields)
-    const products = (shoppingData as any).shopping_results?.slice(0, 5).map((p: any) => ({
-      title: p.title || 'Unknown Product',
-      price: p.extracted_price || p.price || 0,
-      source: p.source || 'Unknown',
-      reviews: p.rating || 0,
-      image: p.thumbnail || '',
+    const items = (shop as any).shopping_results?.slice(0, 8).map((p: any) => ({
+      title: p.title, price: p.extracted_price || p.price, source: p.source,
+      reviews: p.rating || 0, image: p.thumbnail || ''
     })) || [];
 
-    const userMessage = `Niche: ${niche}
-Country: ${country} (${countryUpper})
-Exchange Rates: ${JSON.stringify(exchangeRates)}
+    const userMsg = `Niche: ${niche}\nCountry: ${country}\nExchange: ${JSON.stringify(fx)}\n\nProducts:\n${JSON.stringify(items)}\n\nTrends:\n${JSON.stringify(trends.slice(0,6))}`;
 
-Real Shopping Data (top 5 products):
-${JSON.stringify(products, null, 2)}
-
-12-Month Google Trends (first 6 months):
-${JSON.stringify(trendsData.slice(0, 6), null, 2)}
-
-Please analyze and return a complete JSON with ALL required fields. Be specific, use real product titles from the data, and suggest a realistic 30-day launch plan with niche-specific tasks.`;
-
-    console.log('🤖 Requesting Groq analysis...');
-    const groqResponse = await runGroqWithRetry(PRODUCT_SYSTEM_PROMPT, userMessage);
-    
-    const analysis = extractJSON(groqResponse);
-
-    if (!analysis.market_score || !analysis.pricing_engine || !analysis.competitors) {
-      throw new Error('AI response missing required fields');
-    }
-
-    const markdown = generateProductMarkdown(analysis, niche, country);
-
-    const charts = {
-      trends: trendsData,
-      marketScore: analysis.market_score,
-      demandForecast: analysis.chart_data?.demand_forecast || [],
-      competitorShare: analysis.chart_data?.competitor_market_share || [],
-      pricing: analysis.pricing_engine || [],
-    };
+    const ai = await runGroqWithRetry(PRODUCT_PROMPT, userMsg);
+    const analysis = JSON.parse(ai);
+    const markdown = generateMarkdown(analysis, niche, country);
 
     const report = await Report.create({
-      type: 'product',
-      niche,
-      country,
-      value: '$99',
-      data: analysis,
-      markdown,
-      charts,
+      type: 'product', niche, country, value: '$99',
+      data: analysis, markdown, charts: { trends, fx }
     });
 
-    console.log('✅ Product report generated:', report._id);
-
-    const result = {
-      id: report._id,
-      type: report.type,
-      niche: report.niche,
-      country: report.country,
-      value: report.value,
-      data: analysis,
-      markdown: report.markdown,
-      charts: charts,
-      createdAt: report.createdAt,
-    };
-
-    cacheService.set(cacheKey, result, 86400);
+    const result = { id: report._id, ...report.toObject() };
+    cacheService.set(cKey, result, 86400);
     return res.status(201).json(result);
-
   } catch (err) {
-    if (err instanceof ZodError) {
-      return res.status(400).json({ 
-        error: 'Validation failed', 
-        details: err.errors.map(e => ({ field: e.path.join('.'), message: e.message }))
-      });
-    }
+    if (err instanceof ZodError) return res.status(400).json({ error: err.errors });
     next(err);
   }
 };
 
 export const getProductReport = async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const report = await Report.findById(req.params.id);
-    if (!report) {
-      return res.status(404).json({ error: 'Report not found' });
-    }
-    if (report.type !== 'product') {
-      return res.status(400).json({ error: 'This is not a product report' });
-    }
-    res.json(report);
-  } catch (err) {
-    next(err);
-  }
+  const report = await Report.findById(req.params.id);
+  if (!report) return res.status(404).json({ error: 'Not found' });
+  res.json(report);
 };
