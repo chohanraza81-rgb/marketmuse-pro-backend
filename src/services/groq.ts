@@ -24,7 +24,7 @@ export const runGroqPrompt = async (systemPrompt: string, userMessage: string): 
           { role: 'user', content: userMessage },
         ],
         temperature: 0.3,
-        max_tokens: 8000,
+        max_tokens: 4000, // ✅ Reduced from 8000
         response_format: { type: 'json_object' },
       }),
       signal: controller.signal,
