@@ -36,7 +36,7 @@ async function callGemini(model: string, systemPrompt: string, userMessage: stri
         contents: [{ parts: [{ text: userMessage }] }],
         generationConfig: {
           temperature: 0.3,
-          maxOutputTokens: 8192,
+          maxOutputTokens: 65536, // ✅ Maximum allowed — no truncation
           topP: 0.95,
         }
       }),
