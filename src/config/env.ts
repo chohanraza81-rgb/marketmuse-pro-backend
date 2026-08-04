@@ -4,7 +4,8 @@ dotenv.config();
 export const env = {
   PORT: parseInt(process.env.PORT || '3001', 10),
   MONGODB_URI: process.env.MONGODB_URI || 'mongodb://localhost:27017/marketmuse',
-  GEMINI_API_KEY: process.env.GEMINI_API_KEY || '',
+  OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY || '',
+  KEYWORDS_EVERYWHERE_API_KEY: process.env.KEYWORDS_EVERYWHERE_API_KEY || '',
   SERPAPI_KEY: process.env.SERPAPI_KEY || '',
   ALLOWED_ORIGIN: process.env.ALLOWED_ORIGIN || 'http://localhost:3000',
   NODE_ENV: process.env.NODE_ENV || 'development',
