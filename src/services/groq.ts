@@ -1,65 +1,103 @@
 import { env } from '../config/env';
 
-const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
-const MODEL = 'openai/gpt-4o';
-const TIMEOUT_MS = 50000;
+const MODELS = [
+  'gemini-3.5-flash',
+  'gemini-2.5-flash',
+  'gemini-2.5-pro',
+];
 
-export const runGroqPrompt = async (systemPrompt: string, userMessage: string): Promise<string> => {
+const TIMEOUT_MS = 60000;
+
+// Track last request time globally to avoid rate limits
+let lastRequestTime = 0;
+const MIN_GAP_MS = 10000; // 10 seconds between requests
+
+async function callGemini(model: string, systemPrompt: string, userMessage: string): Promise<string> {
+  // Ensure minimum gap between requests
+  const now = Date.now();
+  const timeSinceLastRequest = now - lastRequestTime;
+  if (timeSinceLastRequest < MIN_GAP_MS) {
+    const waitMs = MIN_GAP_MS - timeSinceLastRequest;
+    console.log(`⏳ Rate limit protection: waiting ${waitMs / 1000}s...`);
+    await new Promise(r => setTimeout(r, waitMs));
+  }
+  lastRequestTime = Date.now();
+
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${env.GEMINI_API_KEY}`;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
   try {
-    const response = await fetch(OPENROUTER_URL, {
+    const response = await fetch(url, {
       method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${env.OPENROUTER_API_KEY}`,
-        'HTTP-Referer': env.ALLOWED_ORIGIN || 'https://market-mus.netlify.app',
-        'X-Title': 'MarketMuse PRO',
-        'Content-Type': 'application/json',
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: MODEL,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userMessage },
-        ],
-        temperature: 0.3,
-        max_tokens: 4000, // ✅ Reduced from 8000
-        response_format: { type: 'json_object' },
+        system_instruction: { parts: [{ text: systemPrompt }] },
+        contents: [{ parts: [{ text: userMessage }] }],
+        generationConfig: {
+          temperature: 0.3,
+          maxOutputTokens: 8192,
+          topP: 0.95,
+        }
       }),
       signal: controller.signal,
     });
 
+    if (response.status === 503) throw new Error('MODEL_OVERLOADED');
+    if (response.status === 429) throw new Error('RATE_LIMITED');
+
     if (!response.ok) {
       const errData: any = await response.json().catch(() => ({}));
-      throw new Error(`OpenRouter error ${response.status}: ${JSON.stringify(errData)}`);
+      throw new Error(`HTTP ${response.status}: ${JSON.stringify(errData)}`);
     }
 
     const data: any = await response.json();
-    const content = data.choices?.[0]?.message?.content;
-    if (!content) throw new Error('Empty response');
-    return content;
-  } catch (error: any) {
-    if (error.name === 'AbortError') throw new Error('Request timed out');
-    throw new Error(`AI error: ${error.message}`);
+    const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!text) throw new Error('Empty response');
+    return text;
   } finally {
     clearTimeout(timeout);
   }
+}
+
+export const runGroqPrompt = async (systemPrompt: string, userMessage: string): Promise<string> => {
+  for (const model of MODELS) {
+    try {
+      console.log(`🔄 Trying: ${model}`);
+      const result = await callGemini(model, systemPrompt, userMessage);
+      console.log(`✅ Success: ${model}`);
+      return result;
+    } catch (error: any) {
+      if (error.message === 'MODEL_OVERLOADED') {
+        console.warn(`⚠️ ${model} overloaded, trying next...`);
+        await new Promise(r => setTimeout(r, 5000));
+        continue;
+      }
+      if (error.message === 'RATE_LIMITED') {
+        console.warn(`⚠️ ${model} rate limited, waiting 15s...`);
+        await new Promise(r => setTimeout(r, 15000));
+        continue;
+      }
+      throw error;
+    }
+  }
+  throw new Error('All models failed. Try again in 2 minutes.');
 };
 
-export const runGroqWithRetry = async (sys: string, msg: string, retries = 1): Promise<string> => {
+export const runGroqWithRetry = async (sys: string, msg: string, retries = 2): Promise<string> => {
   let last: any;
   for (let i = 0; i <= retries; i++) {
     try {
-      console.log(`🔄 Attempt ${i + 1}/${retries + 1} with ${MODEL}`);
-      const result = await runGroqPrompt(sys, msg);
-      console.log('✅ Success');
-      return result;
+      console.log(`🔄 Attempt ${i + 1}/${retries + 1}`);
+      const r = await runGroqPrompt(sys, msg);
+      return r;
     } catch (e: any) {
       last = e;
       console.error(`❌ Attempt ${i + 1}:`, e.message);
       if (i === retries) throw last;
-      await new Promise(r => setTimeout(r, 3000));
+      const delay = 10000 * (i + 1);
+      console.log(`⏳ Waiting ${delay / 1000}s...`);
+      await new Promise(r => setTimeout(r, delay));
     }
   }
   throw last;
