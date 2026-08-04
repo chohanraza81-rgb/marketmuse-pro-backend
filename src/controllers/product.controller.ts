@@ -2,13 +2,13 @@ import { Request, Response, NextFunction } from 'express';
 import { productResearchSchema } from '../validators/report';
 import { cacheService } from '../services/cache';
 import { getShoppingResults } from '../services/serpapi';
-import { getTrends, getRelatedKeywords, getKeywordMetrics } from '../services/keywordseverywhere';
+import { getTrends, getKeywordMetrics } from '../services/keywordseverywhere';
 import { getExchangeRates } from '../services/exchange';
 import { runGroqWithRetry } from '../services/groq';
 import { Report } from '../models/Report';
 import { ZodError } from 'zod';
 
-// GPT‑4o returns clean JSON – no need for complex extraction
+// GPT‑4o with json_object mode always returns clean JSON – simple extraction
 const extractJSON = (raw: string): any => {
   let c = raw.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
   const s = c.indexOf('{'), e = c.lastIndexOf('}');
@@ -107,25 +107,54 @@ const PROMPT = `You are a world‑class e‑commerce product strategist. Analyze
   }
 }`;
 
-function md(a: any, niche: string, country: string): string {
-  const f: any = { us:'🇺🇸', pk:'🇵🇰', gb:'🇬🇧', ae:'🇦🇪', sa:'🇸🇦' };
-  const n: any = { us:'United States', pk:'Pakistan', gb:'United Kingdom', ae:'UAE', sa:'Saudi Arabia' };
-  let m = `# 🚀 Product Research: ${niche}\n## Target: ${f[country]} ${n[country]}\n\n`;
+// Markdown generator – always returns a string
+function generateMarkdown(a: any, niche: string, country: string): string {
+  const flags: Record<string, string> = {
+    us: '🇺🇸', gb: '🇬🇧', ca: '🇨🇦', au: '🇦🇺', de: '🇩🇪', sg: '🇸🇬',
+    sa: '🇸🇦', ae: '🇦🇪', pk: '🇵🇰', in: '🇮🇳', tr: '🇹🇷', my: '🇲🇾'
+  };
+  const names: Record<string, string> = {
+    us: 'United States', gb: 'United Kingdom', ca: 'Canada', au: 'Australia',
+    de: 'Germany', sg: 'Singapore', sa: 'Saudi Arabia', ae: 'UAE',
+    pk: 'Pakistan', in: 'India', tr: 'Turkey', my: 'Malaysia'
+  };
+
+  let m = `# 🚀 Product Research: ${niche}\n## Target: ${flags[country]} ${names[country]}\n\n`;
   m += `## 📊 Market Score: **${a.market_score}/100** — ${a.market_verdict}\n\n${a.executive_summary}\n\n`;
+
   m += `## 💰 12-Product Pricing Engine\n| # | Product | Sell | Cost | Profit | Margin | Mo. Revenue | Reviews | Edge |\n|---|---------|------|------|--------|--------|------------|---------|------|\n`;
-  a.pricing_engine?.forEach((p: any, i: number) => m += `| ${i+1} | ${p.title} | $${p.selling_price_usd} | $${p.landed_cost_usd} | $${p.net_profit_usd} | ${p.profit_margin_percent}% | $${p.monthly_revenue_potential?.toLocaleString()} | ${p.reviews}⭐ | ${p.competitive_advantage} |\n`);
+  a.pricing_engine?.forEach((p: any, i: number) => {
+    m += `| ${i+1} | ${p.title} | $${p.selling_price_usd} | $${p.landed_cost_usd} | $${p.net_profit_usd} | ${p.profit_margin_percent}% | $${p.monthly_revenue_potential?.toLocaleString()} | ${p.reviews}⭐ | ${p.competitive_advantage} |\n`;
+  });
+
   m += `\n## 🏆 6 Competitor Deep Dives\n`;
-  a.competitor_deep_dive?.forEach((c: any) => m += `### ${c.name} (${c.market_position})\n- Sales: $${c.estimated_monthly_sales?.toLocaleString()}/mo | Price: $${c.avg_price_point}\n- ✅ ${c.strengths?.join(', ')}\n- ❌ ${c.weaknesses?.join(', ')}\n- 🏷️ Best Seller: ${c.their_best_seller}\n- 😤 Complaints: ${c.customer_complaints?.join(', ')}\n- 🎯 Beat Them: ${c.how_to_outcompete}\n\n`);
+  a.competitor_deep_dive?.forEach((c: any) => {
+    m += `### ${c.name} (${c.market_position})\n- Sales: $${c.estimated_monthly_sales?.toLocaleString()}/mo | Price: $${c.avg_price_point}\n- ✅ ${c.strengths?.join(', ')}\n- ❌ ${c.weaknesses?.join(', ')}\n- 🏷️ Best Seller: ${c.their_best_seller}\n- 😤 Complaints: ${c.customer_complaints?.join(', ')}\n- 🎯 Beat Them: ${c.how_to_outcompete}\n\n`;
+  });
+
   m += `## 🎯 Market Gaps\n`;
-  a.market_gaps?.forEach((g: any) => m += `### ${g.icon} ${g.gap_title}\n${g.description}\n- 💵 Revenue: ${g.potential_revenue_impact} | Difficulty: ${g.difficulty}\n- ⚡ First Step: ${g.first_step}\n\n`);
+  a.market_gaps?.forEach((g: any) => {
+    m += `### ${g.icon} ${g.gap_title}\n${g.description}\n- 💵 Revenue: ${g.potential_revenue_impact} | Difficulty: ${g.difficulty}\n- ⚡ First Step: ${g.first_step}\n\n`;
+  });
+
   m += `## 👥 Customer Personas\n`;
-  a.customer_personas?.forEach((p: any) => m += `### ${p.avatar} ${p.name}\n- ${p.age_range} | ${p.income_level} | ${p.location_hint}\n- Problem: ${p.core_problem}\n- Trigger: ${p.buying_trigger}\n- Hangouts: ${p.where_they_hang_out?.join(', ')}\n- 📢 Ad: "${p.marketing_message}"\n\n`);
+  a.customer_personas?.forEach((p: any) => {
+    m += `### ${p.avatar} ${p.name}\n- ${p.age_range} | ${p.income_level} | ${p.location_hint}\n- Problem: ${p.core_problem}\n- Trigger: ${p.buying_trigger}\n- Hangouts: ${p.where_they_hang_out?.join(', ')}\n- 📢 Ad: "${p.marketing_message}"\n\n`;
+  });
+
   m += `## 📅 12-Week Launch Playbook\n`;
-  a.launch_playbook?.forEach((w: any) => m += `### Week ${w.week}: ${w.theme}\n${w.tasks?.map((t: string) => `- ${t}`).join('\n')}\n- 📏 Success: ${w.success_metric}\n\n`);
+  a.launch_playbook?.forEach((w: any) => {
+    m += `### Week ${w.week}: ${w.theme}\n${w.tasks?.map((t: string) => `- ${t}`).join('\n')}\n- 📏 Success: ${w.success_metric}\n\n`;
+  });
+
   const fp = a.financial_projections;
   m += `## 💸 Financials\n- Startup: $${fp?.startup_cost_estimate?.toLocaleString()} | Fixed: $${fp?.monthly_fixed_costs?.toLocaleString()}/mo\n- Profit/Unit: $${fp?.avg_profit_per_unit} | Breakeven: ${fp?.units_to_breakeven} units\n- Profitable in: ${fp?.estimated_months_to_profitability}mo\n- Month 6 Profit: $${fp?.conservative_monthly_profit_month6?.toLocaleString()} (conservative) | $${fp?.optimistic_monthly_profit_month6?.toLocaleString()} (optimistic)\n\n`;
+
   m += `## ⚠️ Risk Radar\n| Risk | Prob | Impact | Mitigation |\n|------|------|--------|------------|\n`;
-  a.risk_radar?.forEach((r: any) => m += `| ${r.risk} | ${r.probability} | ${r.impact} | ${r.mitigation} |\n`);
+  a.risk_radar?.forEach((r: any) => {
+    m += `| ${r.risk} | ${r.probability} | ${r.impact} | ${r.mitigation} |\n`;
+  });
+
   m += `\n---\n*MarketMuse AI PRO MAX ULTRA – $99 Report*`;
   return m;
 }
@@ -139,7 +168,7 @@ export const createProductReport = async (req: Request, res: Response, next: Nex
 
     console.log(`🔍 Product: "${niche}" in ${country}`);
 
-    // Parallel real data: shopping, exchange rates, trends (KWE), and keyword metrics
+    // Real data: shopping, exchange, trends, keyword metrics
     const [shoppingData, fx, trendsArr, keywordMetrics] = await Promise.all([
       getShoppingResults(niche, country).catch(() => null),
       getExchangeRates(),
@@ -160,25 +189,17 @@ export const createProductReport = async (req: Request, res: Response, next: Nex
       trends: trendsArr || null,
     };
 
-    const userMsg = `Niche: ${niche}
-Country: ${country}
-Exchange Rates: ${JSON.stringify(fx)}
-Real Shopping Results: ${JSON.stringify(items)}
-Market Keyword Data: ${JSON.stringify(marketData)}
-12-Month Trend: ${trendsArr ? JSON.stringify(trendsArr) : 'Not available'}
-
-Provide a complete, hyper‑detailed JSON analysis. Use real numbers and specific insights.`;
+    const userMsg = `Niche: ${niche}\nCountry: ${country}\nExchange Rates: ${JSON.stringify(fx)}\nReal Shopping Results: ${JSON.stringify(items)}\nMarket Keyword Data: ${JSON.stringify(marketData)}\n12-Month Trend: ${trendsArr ? JSON.stringify(trendsArr) : 'Not available'}\n\nProvide a complete, hyper‑detailed JSON analysis. Use real numbers and specific insights.`;
 
     const ai = await runGroqWithRetry(PROMPT, userMsg);
     const analysis = extractJSON(ai);
 
-    // Overwrite trend data with real KWE trends if available
     if (trendsArr && Array.isArray(trendsArr)) {
       analysis.chart_data = analysis.chart_data || {};
       analysis.chart_data.demand_forecast_12m = trendsArr;
     }
 
-    const markdown = md(analysis, niche, country);
+    const markdown = generateMarkdown(analysis, niche, country);
     const report = await Report.create({
       type: 'product', niche, country, value: '$99',
       data: analysis, markdown, charts: { trends: trendsArr, fx }
