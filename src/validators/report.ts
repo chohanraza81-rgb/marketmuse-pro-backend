@@ -2,12 +2,18 @@ import { z } from 'zod';
 
 export const productResearchSchema = z.object({
   niche: z.string().min(2).max(100),
-  country: z.enum(['us', 'pk', 'gb', 'ae', 'sa']),
+  country: z.enum([
+    'us', 'gb', 'ca', 'au', 'de', 'sg',  // Tier 1 – High Ticket
+    'sa', 'ae', 'pk', 'in', 'tr', 'my'   // Tier 2 – Growth + Volume
+  ]),
 });
 
 export const seoReportSchema = z.object({
   niche: z.string().min(2).max(100),
-  country: z.enum(['us', 'pk', 'gb', 'ae', 'sa']),
+  country: z.enum([
+    'us', 'gb', 'ca', 'au', 'de', 'sg',
+    'sa', 'ae', 'pk', 'in', 'tr', 'my'
+  ]),
 });
 
 export const reportQuerySchema = z.object({
