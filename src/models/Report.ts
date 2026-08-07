@@ -9,7 +9,7 @@ export interface IReport extends Document {
   markdown: string;
   charts: any;
   createdAt: Date;
-  __v?: number; // Add this line to make __v optional
+  __v?: number;
 }
 
 interface IReportModel extends Model<IReport> {
@@ -37,7 +37,7 @@ const ReportSchema = new Schema<IReport, IReportModel>(
       type: String,
       required: [true, 'Country is required'],
       enum: {
-        values: ['us', 'pk', 'gb', 'ae', 'sa'],
+        values: ['us', 'gb', 'ca', 'au', 'de', 'sg', 'sa', 'ae', 'pk', 'in', 'tr', 'my'],
         message: '{VALUE} is not a supported country'
       },
       lowercase: true,
@@ -69,7 +69,7 @@ const ReportSchema = new Schema<IReport, IReportModel>(
     toJSON: {
       virtuals: true,
       transform: function(_doc, ret) {
-        delete ret.__v; // Now works because __v is optional in interface
+        delete ret.__v;
         return ret;
       }
     },
@@ -77,13 +77,11 @@ const ReportSchema = new Schema<IReport, IReportModel>(
   }
 );
 
-// Indexes for better query performance
 ReportSchema.index({ type: 1, createdAt: -1 });
 ReportSchema.index({ country: 1 });
 ReportSchema.index({ niche: 1 });
 ReportSchema.index({ type: 1, country: 1 });
 
-// Pre-save hook to ensure data integrity
 ReportSchema.pre('save', function(next) {
   const doc = this as unknown as IReport;
   
@@ -91,7 +89,7 @@ ReportSchema.pre('save', function(next) {
     return next(new Error(`Invalid report type: ${doc.type}. Must be "product" or "seo"`));
   }
 
-  if (!['us', 'pk', 'gb', 'ae', 'sa'].includes(doc.country)) {
+  if (!['us', 'gb', 'ca', 'au', 'de', 'sg', 'sa', 'ae', 'pk', 'in', 'tr', 'my'].includes(doc.country)) {
     return next(new Error(`Invalid country: ${doc.country}`));
   }
 
@@ -99,14 +97,13 @@ ReportSchema.pre('save', function(next) {
   next();
 });
 
-// Static method to cleanup invalid reports
 ReportSchema.statics.cleanupInvalid = async function(): Promise<{ deletedCount: number }> {
   const result = await this.deleteMany({
     $or: [
       { type: { $nin: ['product', 'seo'] } },
       { niche: { $exists: false } },
       { data: { $exists: false } },
-      { country: { $nin: ['us', 'pk', 'gb', 'ae', 'sa'] } },
+      { country: { $nin: ['us', 'gb', 'ca', 'au', 'de', 'sg', 'sa', 'ae', 'pk', 'in', 'tr', 'my'] } },
       { markdown: { $exists: false } },
       { value: { $ne: '$99' } }
     ]
