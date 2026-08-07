@@ -3,12 +3,11 @@ import { productResearchSchema } from '../validators/report';
 import { cacheService } from '../services/cache';
 import { getShoppingResults } from '../services/serpapi';
 import { getTrends, getKeywordMetrics } from '../services/keywordseverywhere';
-import { getExchangeRates } from '../services/exchange';
+import { getExchangeRates, convertPrice } from '../services/exchange';
 import { runGroqWithRetry } from '../services/groq';
 import { Report } from '../models/Report';
 import { ZodError } from 'zod';
 
-// GPT‑4o with json_object mode always returns clean JSON – simple extraction
 const extractJSON = (raw: string): any => {
   let c = raw.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
   const s = c.indexOf('{'), e = c.lastIndexOf('}');
@@ -16,16 +15,16 @@ const extractJSON = (raw: string): any => {
   return JSON.parse(c);
 };
 
-const PROMPT = `You are a world‑class e‑commerce product strategist. Analyze the provided real shopping data, keyword metrics (volume, CPC), exchange rates, and 12‑month trend values. Return ONLY valid JSON.
+const PROMPT = `You are a world‑class e‑commerce product strategist. Analyze real shopping data, keyword metrics, exchange rates, and trends. Return ONLY valid JSON.
 
 {
-  "market_score": number (0-100, based on demand trends and competition),
+  "market_score": number (0-100),
   "market_verdict": "Hot Buy 🔥" | "Stable Earner 💰" | "Risky ⚠️" | "Avoid 🚫",
-  "executive_summary": "3 detailed sentences covering opportunity size, target customer, and competitive edge",
+  "executive_summary": "3 detailed sentences",
   "pricing_engine": [
     {
-      "title": "actual product from shopping data",
-      "image_url": "from data if available",
+      "title": "actual product name",
+      "image_url": "from data",
       "selling_price_usd": number,
       "landed_cost_usd": number,
       "net_profit_usd": number,
@@ -35,30 +34,30 @@ const PROMPT = `You are a world‑class e‑commerce product strategist. Analyze
       "monthly_profit_potential": number,
       "reviews": number,
       "rating": number (1-5),
-      "source": "Amazon/Walmart/etc.",
-      "competitive_advantage": "why this product wins"
+      "source": "store name",
+      "competitive_advantage": "why this wins"
     }
-  ] (exactly 12 items, sorted by profit potential),
+  ] (12 items, sorted by profit),
   "competitor_deep_dive": [
     {
-      "name": "real brand/store",
-      "market_position": "Market Leader/Challenger/Niche/New",
+      "name": "brand",
+      "market_position": "Leader/Challenger/Niche/New",
       "estimated_monthly_sales": number,
       "avg_price_point": number,
-      "strengths": ["specific","specific","specific"],
-      "weaknesses": ["specific","specific","specific"],
-      "their_best_seller": "product name",
-      "customer_complaints": ["complaint","complaint"],
-      "how_to_outcompete": "specific strategy"
+      "strengths": ["s1","s2","s3"],
+      "weaknesses": ["w1","w2","w3"],
+      "their_best_seller": "product",
+      "customer_complaints": ["c1","c2"],
+      "how_to_outcompete": "strategy"
     }
-  ] (6 real competitors),
+  ] (6 competitors),
   "market_gaps": [
     {
       "gap_title": "title",
-      "description": "detailed paragraph",
+      "description": "detailed",
       "potential_revenue_impact": "$5k-10k/mo or $10k-25k/mo or $25k+/mo",
       "difficulty": "Easy/Moderate/Hard",
-      "first_step": "concrete action",
+      "first_step": "action",
       "icon": "emoji"
     }
   ] (3 gaps),
@@ -68,19 +67,19 @@ const PROMPT = `You are a world‑class e‑commerce product strategist. Analyze
       "avatar": "emoji",
       "age_range": "25-34",
       "income_level": "$40k-60k",
-      "location_hint": "urban US",
-      "core_problem": "what keeps them up at night",
-      "buying_trigger": "what makes them buy NOW",
-      "where_they_hang_out": ["platform","platform","platform"],
-      "marketing_message": "exact ad copy that converts them"
+      "location_hint": "urban",
+      "core_problem": "pain",
+      "buying_trigger": "trigger",
+      "where_they_hang_out": ["p1","p2","p3"],
+      "marketing_message": "ad copy"
     }
   ] (3 personas),
   "launch_playbook": [
     {
       "week": 1-12,
       "theme": "Foundation/Sourcing/Branding/Launch/Optimization/Scale",
-      "tasks": ["specific","specific","specific"],
-      "success_metric": "what defines success this week"
+      "tasks": ["t1","t2","t3"],
+      "success_metric": "metric"
     }
   ] (12 weeks),
   "financial_projections": {
@@ -94,68 +93,119 @@ const PROMPT = `You are a world‑class e‑commerce product strategist. Analyze
   },
   "risk_radar": [
     {
-      "risk": "specific risk",
+      "risk": "risk",
       "probability": "Low/Medium/High",
       "impact": "Low/Medium/High",
-      "mitigation": "specific action"
+      "mitigation": "action"
     }
   ] (5 risks),
   "chart_data": {
-    "demand_forecast_12m": [12 numbers based on real trend data],
+    "demand_forecast_12m": [12 numbers],
     "competitor_market_share": [{"name":"x","share":number}],
     "profit_margin_by_product": [{"name":"x","margin":number}]
   }
 }`;
 
-// Markdown generator – always returns a string
-function generateMarkdown(a: any, niche: string, country: string): string {
+// Currency symbols
+const currencySymbols: Record<string, string> = {
+  us: '$', gb: '£', ca: 'CA$', au: 'AU$', de: '€', sg: 'S$',
+  sa: '﷼', ae: 'د.إ', pk: '₨', in: '₹', tr: '₺', my: 'RM',
+};
+
+function generateMarkdown(a: any, niche: string, country: string, rates: any): string {
   const flags: Record<string, string> = {
     us: '🇺🇸', gb: '🇬🇧', ca: '🇨🇦', au: '🇦🇺', de: '🇩🇪', sg: '🇸🇬',
-    sa: '🇸🇦', ae: '🇦🇪', pk: '🇵🇰', in: '🇮🇳', tr: '🇹🇷', my: '🇲🇾'
+    sa: '🇸🇦', ae: '🇦🇪', pk: '🇵🇰', in: '🇮🇳', tr: '🇹🇷', my: '🇲🇾',
   };
   const names: Record<string, string> = {
     us: 'United States', gb: 'United Kingdom', ca: 'Canada', au: 'Australia',
     de: 'Germany', sg: 'Singapore', sa: 'Saudi Arabia', ae: 'UAE',
-    pk: 'Pakistan', in: 'India', tr: 'Turkey', my: 'Malaysia'
+    pk: 'Pakistan', in: 'India', tr: 'Turkey', my: 'Malaysia',
+  };
+  const sym = currencySymbols[country] || '$';
+  const targetCurrency = country === 'us' ? 'USD' : country === 'gb' ? 'GBP' : country === 'ca' ? 'CAD' : country === 'au' ? 'AUD' : country === 'de' ? 'EUR' : country === 'sg' ? 'SGD' : country === 'sa' ? 'SAR' : country === 'ae' ? 'AED' : country === 'pk' ? 'PKR' : country === 'in' ? 'INR' : country === 'tr' ? 'TRY' : 'MYR';
+
+  const localPrice = (usd: number) => {
+    const converted = convertPrice(usd, targetCurrency, rates);
+    return `${sym}${converted.toLocaleString()}`;
   };
 
-  let m = `# 🚀 Product Research: ${niche}\n## Target: ${flags[country]} ${names[country]}\n\n`;
-  m += `## 📊 Market Score: **${a.market_score}/100** — ${a.market_verdict}\n\n${a.executive_summary}\n\n`;
+  let m = `# 🚀 Product Research: ${niche}\n## 📍 Target Market: ${flags[country]} ${names[country]}\n\n`;
+  m += `> ${a.executive_summary}\n\n`;
+  m += `## 📊 Market Score: **${a.market_score}/100** — ${a.market_verdict}\n\n`;
 
-  m += `## 💰 12-Product Pricing Engine\n| # | Product | Sell | Cost | Profit | Margin | Mo. Revenue | Reviews | Edge |\n|---|---------|------|------|--------|--------|------------|---------|------|\n`;
+  // Pricing Engine with local currency
+  m += `## 💰 Product Pricing Analysis\n\n`;
+  m += `| # | Product | Price | Cost | Profit | Margin | Monthly Est. | Reviews |\n`;
+  m += `|---|---------|-------|------|--------|--------|-------------|--------|\n`;
   a.pricing_engine?.forEach((p: any, i: number) => {
-    m += `| ${i+1} | ${p.title} | $${p.selling_price_usd} | $${p.landed_cost_usd} | $${p.net_profit_usd} | ${p.profit_margin_percent}% | $${p.monthly_revenue_potential?.toLocaleString()} | ${p.reviews}⭐ | ${p.competitive_advantage} |\n`;
+    m += `| ${i+1} | ${p.title} | ${localPrice(p.selling_price_usd)} | ${localPrice(p.landed_cost_usd)} | ${localPrice(p.net_profit_usd)} | ${p.profit_margin_percent}% | ${localPrice(p.monthly_revenue_potential)} | ${p.reviews}⭐ |\n`;
   });
 
-  m += `\n## 🏆 6 Competitor Deep Dives\n`;
+  // Competitors
+  m += `\n## 🏆 Competitor Deep Dive\n\n`;
   a.competitor_deep_dive?.forEach((c: any) => {
-    m += `### ${c.name} (${c.market_position})\n- Sales: $${c.estimated_monthly_sales?.toLocaleString()}/mo | Price: $${c.avg_price_point}\n- ✅ ${c.strengths?.join(', ')}\n- ❌ ${c.weaknesses?.join(', ')}\n- 🏷️ Best Seller: ${c.their_best_seller}\n- 😤 Complaints: ${c.customer_complaints?.join(', ')}\n- 🎯 Beat Them: ${c.how_to_outcompete}\n\n`;
+    m += `### ${c.name} (${c.market_position})\n`;
+    m += `- **Est. Monthly Sales:** ${localPrice(c.estimated_monthly_sales)}\n`;
+    m += `- **Avg Price Point:** ${localPrice(c.avg_price_point)}\n`;
+    m += `- ✅ **Strengths:** ${c.strengths?.join(', ')}\n`;
+    m += `- ❌ **Weaknesses:** ${c.weaknesses?.join(', ')}\n`;
+    m += `- 🏷️ **Best Seller:** ${c.their_best_seller}\n`;
+    m += `- 😤 **Complaints:** ${c.customer_complaints?.join(', ')}\n`;
+    m += `- 🎯 **How to Beat:** ${c.how_to_outcompete}\n\n`;
   });
 
-  m += `## 🎯 Market Gaps\n`;
+  // Market Gaps
+  m += `## 🎯 Market Gaps & Opportunities\n\n`;
   a.market_gaps?.forEach((g: any) => {
-    m += `### ${g.icon} ${g.gap_title}\n${g.description}\n- 💵 Revenue: ${g.potential_revenue_impact} | Difficulty: ${g.difficulty}\n- ⚡ First Step: ${g.first_step}\n\n`;
+    m += `### ${g.icon} ${g.gap_title}\n`;
+    m += `${g.description}\n`;
+    m += `- 💵 **Revenue Potential:** ${g.potential_revenue_impact}\n`;
+    m += `- ⚡ **Difficulty:** ${g.difficulty}\n`;
+    m += `- 🚀 **First Step:** ${g.first_step}\n\n`;
   });
 
-  m += `## 👥 Customer Personas\n`;
+  // Personas
+  m += `## 👥 Target Customer Personas\n\n`;
   a.customer_personas?.forEach((p: any) => {
-    m += `### ${p.avatar} ${p.name}\n- ${p.age_range} | ${p.income_level} | ${p.location_hint}\n- Problem: ${p.core_problem}\n- Trigger: ${p.buying_trigger}\n- Hangouts: ${p.where_they_hang_out?.join(', ')}\n- 📢 Ad: "${p.marketing_message}"\n\n`;
+    m += `### ${p.avatar} ${p.name}\n`;
+    m += `- ${p.age_range} | ${p.income_level} | ${p.location_hint}\n`;
+    m += `- **Problem:** ${p.core_problem}\n`;
+    m += `- **Trigger:** ${p.buying_trigger}\n`;
+    m += `- **Channels:** ${p.where_they_hang_out?.join(', ')}\n`;
+    m += `- 📢 **Ad Copy:** "${p.marketing_message}"\n\n`;
   });
 
-  m += `## 📅 12-Week Launch Playbook\n`;
+  // Launch Playbook
+  m += `## 📅 12-Week Launch Playbook\n\n`;
   a.launch_playbook?.forEach((w: any) => {
-    m += `### Week ${w.week}: ${w.theme}\n${w.tasks?.map((t: string) => `- ${t}`).join('\n')}\n- 📏 Success: ${w.success_metric}\n\n`;
+    m += `### Week ${w.week}: ${w.theme}\n`;
+    w.tasks?.forEach((t: string) => { m += `- ${t}\n`; });
+    m += `- 📏 **Success Metric:** ${w.success_metric}\n\n`;
   });
 
+  // Financials with local currency
   const fp = a.financial_projections;
-  m += `## 💸 Financials\n- Startup: $${fp?.startup_cost_estimate?.toLocaleString()} | Fixed: $${fp?.monthly_fixed_costs?.toLocaleString()}/mo\n- Profit/Unit: $${fp?.avg_profit_per_unit} | Breakeven: ${fp?.units_to_breakeven} units\n- Profitable in: ${fp?.estimated_months_to_profitability}mo\n- Month 6 Profit: $${fp?.conservative_monthly_profit_month6?.toLocaleString()} (conservative) | $${fp?.optimistic_monthly_profit_month6?.toLocaleString()} (optimistic)\n\n`;
+  m += `## 💸 Financial Projections\n\n`;
+  m += `| Metric | Value |\n`;
+  m += `|--------|-------|\n`;
+  m += `| Startup Cost | ${localPrice(fp?.startup_cost_estimate)} |\n`;
+  m += `| Monthly Fixed Costs | ${localPrice(fp?.monthly_fixed_costs)} |\n`;
+  m += `| Avg Profit Per Unit | ${localPrice(fp?.avg_profit_per_unit)} |\n`;
+  m += `| Units to Breakeven | ${fp?.units_to_breakeven} |\n`;
+  m += `| Time to Profitability | ${fp?.estimated_months_to_profitability} months |\n`;
+  m += `| Month 6 Profit (Conservative) | ${localPrice(fp?.conservative_monthly_profit_month6)} |\n`;
+  m += `| Month 6 Profit (Optimistic) | ${localPrice(fp?.optimistic_monthly_profit_month6)} |\n\n`;
 
-  m += `## ⚠️ Risk Radar\n| Risk | Prob | Impact | Mitigation |\n|------|------|--------|------------|\n`;
+  // Risks
+  m += `## ⚠️ Risk Assessment\n\n`;
+  m += `| Risk | Probability | Impact | Mitigation |\n`;
+  m += `|------|------------|--------|------------|\n`;
   a.risk_radar?.forEach((r: any) => {
     m += `| ${r.risk} | ${r.probability} | ${r.impact} | ${r.mitigation} |\n`;
   });
 
-  m += `\n---\n*MarketMuse AI PRO MAX ULTRA – $99 Report*`;
+  m += `\n---\n*Powered by MarketMuse PRO — Real-time Market Intelligence*`;
   return m;
 }
 
@@ -168,7 +218,6 @@ export const createProductReport = async (req: Request, res: Response, next: Nex
 
     console.log(`🔍 Product: "${niche}" in ${country}`);
 
-    // Real data: shopping, exchange, trends, keyword metrics
     const [shoppingData, fx, trendsArr, keywordMetrics] = await Promise.all([
       getShoppingResults(niche, country).catch(() => null),
       getExchangeRates(),
@@ -176,7 +225,7 @@ export const createProductReport = async (req: Request, res: Response, next: Nex
       getKeywordMetrics([niche], country).catch(() => null),
     ]);
 
-    if (!shoppingData) throw new Error('Failed to fetch shopping data. Please try again later.');
+    if (!shoppingData) throw new Error('Failed to fetch shopping data.');
 
     const items = shoppingData.shopping_results?.slice(0, 8).map((p: any) => ({
       title: p.title, price: p.extracted_price || p.price, source: p.source,
@@ -189,7 +238,7 @@ export const createProductReport = async (req: Request, res: Response, next: Nex
       trends: trendsArr || null,
     };
 
-    const userMsg = `Niche: ${niche}\nCountry: ${country}\nExchange Rates: ${JSON.stringify(fx)}\nReal Shopping Results: ${JSON.stringify(items)}\nMarket Keyword Data: ${JSON.stringify(marketData)}\n12-Month Trend: ${trendsArr ? JSON.stringify(trendsArr) : 'Not available'}\n\nProvide a complete, hyper‑detailed JSON analysis. Use real numbers and specific insights.`;
+    const userMsg = `Niche: ${niche}\nCountry: ${country}\nExchange Rates: ${JSON.stringify(fx)}\nShopping Results: ${JSON.stringify(items)}\nMarket Data: ${JSON.stringify(marketData)}\nTrends: ${trendsArr ? JSON.stringify(trendsArr) : 'N/A'}\n\nProvide complete JSON analysis.`;
 
     const ai = await runGroqWithRetry(PROMPT, userMsg);
     const analysis = extractJSON(ai);
@@ -199,7 +248,7 @@ export const createProductReport = async (req: Request, res: Response, next: Nex
       analysis.chart_data.demand_forecast_12m = trendsArr;
     }
 
-    const markdown = generateMarkdown(analysis, niche, country);
+    const markdown = generateMarkdown(analysis, niche, country, fx);
     const report = await Report.create({
       type: 'product', niche, country, value: '$99',
       data: analysis, markdown, charts: { trends: trendsArr, fx }
