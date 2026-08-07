@@ -7,10 +7,17 @@ import { apiLimiter } from './middleware/rateLimiter';
 
 const app = express();
 
-// ✅ Trust proxy for rate-limit behind Railway
+// ✅ Trust proxy for Railway
 app.set('trust proxy', 1);
 
-app.use(cors({ origin: env.ALLOWED_ORIGIN }));
+// ✅ CORS — allow all origins temporarily (debug)
+app.use(cors({
+  origin: '*',
+  methods: ['GET', 'POST', 'DELETE', 'PUT', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: false,
+}));
+
 app.use(express.json({ limit: '1mb' }));
 app.use('/api', apiLimiter);
 app.use('/api', routes);
