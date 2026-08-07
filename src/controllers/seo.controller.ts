@@ -7,7 +7,6 @@ import { runGroqWithRetry } from '../services/groq';
 import { Report } from '../models/Report';
 import { ZodError } from 'zod';
 
-// GPT‑4o with json_object mode always returns clean JSON – simple extraction
 const extractJSON = (raw: string): any => {
   let c = raw.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
   const s = c.indexOf('{'), e = c.lastIndexOf('}');
@@ -15,72 +14,70 @@ const extractJSON = (raw: string): any => {
   return JSON.parse(c);
 };
 
-const PROMPT = `You are an elite SEO consultant. Analyze the REAL keyword data, SERP results, and trends provided. Return ONLY valid JSON:
+const PROMPT = `You are an elite SEO consultant. Analyze REAL keyword data, SERP results, and trends. Return ONLY valid JSON:
 
 {
   "trend_score": "Seasonal" | "Evergreen",
-  "trend_insight": "2 sentences explaining the trend",
+  "trend_insight": "2 sentences explaining the trend and how to exploit it",
   "keywords": [
     {
-      "keyword": "string",
+      "keyword": "keyword",
       "volume": number,
-      "kd": number (0-100, computed from competition level),
+      "kd": number (0-100),
       "cpc": number,
       "intent": "informational"|"commercial"|"transactional",
       "serp_features": ["Featured Snippet","Video","PAA"],
       "ranking_opportunity": "Easy Win"|"Moderate"|"Long Game"
     }
-  ] (exactly 50, based on real data provided, sorted by volume),
+  ] (exactly 50, based on real data, sorted by volume),
   "serp_analysis": [
     {
       "position": number,
-      "title": "string",
-      "url": "string",
-      "da": number,
-      "pa": number,
+      "title": "actual title from data",
+      "url": "actual url from data",
+      "da": number, "pa": number,
       "word_count": number,
       "backlinks": number,
       "estimated_monthly_traffic": number,
       "content_type": "Pillar/Blog/Product/Forum",
       "strengths": ["specific","specific"],
       "weaknesses": ["specific","specific"],
-      "content_gap_opportunity": "string"
+      "content_gap_opportunity": "what they miss that you can capture"
     }
-  ] (exactly 8, based on real SERP data),
+  ] (exactly 8, from real SERP data),
   "content_calendar": [
     {
       "week": 1-12,
       "title": "click-worthy unique headline",
-      "primary_keyword": "string",
-      "secondary_keywords": ["string","string"],
-      "content_type": "string",
+      "primary_keyword": "keyword",
+      "secondary_keywords": ["kw1","kw2"],
+      "content_type": "Pillar/Listicle/How-to/Case Study",
       "word_count_target": number,
       "outline": ["point","point","point","point","point"],
-      "internal_linking_targets": ["string","string"],
+      "internal_linking_targets": ["page1","page2"],
       "expected_traffic_3mo": number
     }
   ] (exactly 12 weeks),
   "backlink_strategy": {
-    "overview": "detailed paragraph",
+    "overview": "detailed strategic paragraph",
     "target_sites": [
-      {"site":"url","type":"string","da":number,"contact":"string","pitch":"string"}
-    ] (8 sites),
-    "guest_post_titles": ["string","string","string","string","string"],
+      {"site":"real url","type":"blog","da":number,"contact":"email","pitch":"exact pitch"}
+    ] (8 real sites),
+    "guest_post_titles": ["title1","title2","title3","title4","title5"],
     "broken_link_opportunities": [
-      {"site":"string","dead_page":"string","your_replacement":"string"}
-    ] (3),
-    "haro_queries": ["string","string","string"],
-    "outreach_email": "complete personalized email template"
+      {"site":"site","dead_page":"description","your_replacement":"your content"}
+    ] (3 realistic),
+    "haro_queries": ["query1","query2","query3"],
+    "outreach_email": "complete personalized email template with {{placeholders}}"
   },
-  "onpage_checklist": ["string"] (15 items),
+  "onpage_checklist": ["specific item"] (15 specific, actionable items),
   "chart_data": {
-    "trend_12m": [12 numbers],
+    "trend_12m": [12 numbers from real trend data],
     "keyword_difficulty": {"easy":N,"medium":N,"hard":N},
     "traffic_growth_6m": [6 numbers]
   }
 }`;
 
-// Markdown generator – returns a string
 function generateMarkdown(a: any, niche: string, country: string): string {
   const flags: Record<string, string> = {
     us: '🇺🇸', gb: '🇬🇧', ca: '🇨🇦', au: '🇦🇺', de: '🇩🇪', sg: '🇸🇬',
@@ -93,15 +90,16 @@ function generateMarkdown(a: any, niche: string, country: string): string {
   };
   const dl = (kd: number): string => kd <= 30 ? '🟢 Easy' : kd <= 60 ? '🟡 Medium' : '🔴 Hard';
 
-  // Backlink section helper – always returns a string
   const backlinkSection = (): string => {
     const bs = a.backlink_strategy;
     if (!bs) return '';
 
-    let md = `### Overview\n${bs.overview}\n\n`;
+    let md = `### 📋 Overview\n${bs.overview}\n\n`;
 
     if (bs.target_sites?.length) {
-      md += `### 8 Target Sites\n| # | Site | DA | Type | Contact | Pitch |\n|---|------|----|------|---------|-------|\n`;
+      md += `### 🎯 Target Websites (8)\n\n`;
+      md += `| # | Site | DA | Type | Contact | Pitch |\n`;
+      md += `|---|------|-----|------|---------|-------|\n`;
       bs.target_sites.forEach((s: any, i: number) => {
         md += `| ${i+1} | ${s.site} | ${s.da} | ${s.type} | ${s.contact} | ${s.pitch} |\n`;
       });
@@ -109,49 +107,87 @@ function generateMarkdown(a: any, niche: string, country: string): string {
     }
 
     if (bs.guest_post_titles?.length) {
-      md += `### Guest Post Titles\n${bs.guest_post_titles.map((t: string, i: number) => `${i+1}. ${t}`).join('\n')}\n\n`;
+      md += `### ✍️ Guest Post Topics\n`;
+      bs.guest_post_titles.forEach((t: string, i: number) => { md += `${i+1}. ${t}\n`; });
+      md += '\n';
     }
 
     if (bs.broken_link_opportunities?.length) {
-      md += `### Broken Link Opps\n${bs.broken_link_opportunities.map((b: any) => `- ${b.site}: ${b.dead_page} → ${b.your_replacement}`).join('\n')}\n\n`;
+      md += `### 🔗 Broken Link Opportunities\n`;
+      bs.broken_link_opportunities.forEach((b: any) => {
+        md += `- **${b.site}**: ${b.dead_page} → *${b.your_replacement}*\n`;
+      });
+      md += '\n';
     }
 
     if (bs.haro_queries?.length) {
-      md += `### HARO Queries\n${bs.haro_queries.map((h: string) => `- ${h}`).join('\n')}\n\n`;
+      md += `### 📡 HARO Queries to Monitor\n`;
+      bs.haro_queries.forEach((h: string) => { md += `- ${h}\n`; });
+      md += '\n';
     }
 
     if (bs.outreach_email) {
-      md += `### 📧 Outreach Email\n\`\`\`\n${bs.outreach_email}\n\`\`\`\n\n`;
+      md += `### 📧 Outreach Email Template\n\`\`\`\n${bs.outreach_email}\n\`\`\`\n\n`;
     }
 
-    return md; // <-- always returns a string
+    return md;
   };
 
-  let m = `# 🔍 SEO Report: ${niche}\n## Target: ${flags[country]} ${names[country]}\n\n`;
-  m += `## 📊 Trend: ${a.trend_score}\n${a.trend_insight}\n\n`;
+  let m = `# 🔍 SEO Analysis: ${niche}\n`;
+  m += `## 📍 Target Market: ${flags[country]} ${names[country]}\n\n`;
+  m += `## 📊 Trend Analysis: **${a.trend_score}**\n\n`;
+  m += `> ${a.trend_insight}\n\n`;
 
-  m += `## 🏆 50 Keywords\n| # | Keyword | Vol | KD | CPC | Intent | Features | Oppty |\n|---|---------|-----|----|-----|--------|----------|-------|\n`;
+  // Keywords
+  m += `## 🏆 Top 50 Keywords\n\n`;
+  m += `| # | Keyword | Volume | KD | CPC | Intent | Features | Opportunity |\n`;
+  m += `|---|---------|--------|-----|-----|--------|----------|-------------|\n`;
   a.keywords?.forEach((k: any, i: number) => {
-    m += `| ${i+1} | ${k.keyword} | ${k.volume?.toLocaleString()} | ${k.kd}${dl(k.kd)} | $${k.cpc} | ${k.intent} | ${k.serp_features?.join(',')} | ${k.ranking_opportunity} |\n`;
+    m += `| ${i+1} | ${k.keyword} | ${k.volume?.toLocaleString()} | ${k.kd} ${dl(k.kd)} | $${k.cpc} | ${k.intent} | ${k.serp_features?.join(', ')} | ${k.ranking_opportunity} |\n`;
   });
 
-  m += `\n## 📈 SERP Analysis\n`;
+  // SERP Analysis
+  m += `\n## 📈 SERP Competitor Analysis\n\n`;
   a.serp_analysis?.forEach((s: any) => {
-    m += `### #${s.position} ${s.title}\n- URL: ${s.url}\n- DA:${s.da} PA:${s.pa} | Words:${s.word_count} | Backlinks:${s.backlinks} | Traffic:${s.estimated_monthly_traffic?.toLocaleString()}\n- ✅ ${s.strengths?.join(', ')}\n- ❌ ${s.weaknesses?.join(', ')}\n- 🎯 Gap: ${s.content_gap_opportunity}\n\n`;
+    m += `### #${s.position} — ${s.title}\n`;
+    m += `- **URL:** ${s.url}\n`;
+    m += `- **DA:** ${s.da} | **PA:** ${s.pa}\n`;
+    m += `- **Word Count:** ${s.word_count?.toLocaleString()} | **Backlinks:** ${s.backlinks?.toLocaleString()}\n`;
+    m += `- **Est. Monthly Traffic:** ${s.estimated_monthly_traffic?.toLocaleString()}\n`;
+    m += `- **Content Type:** ${s.content_type}\n`;
+    m += `- ✅ **Strengths:** ${s.strengths?.join(', ')}\n`;
+    m += `- ❌ **Weaknesses:** ${s.weaknesses?.join(', ')}\n`;
+    m += `- 🎯 **Content Gap:** ${s.content_gap_opportunity}\n\n`;
   });
 
-  m += `## 📅 12-Week Content Calendar\n`;
+  // Content Calendar
+  m += `## 📅 12-Week Content Calendar\n\n`;
   a.content_calendar?.forEach((c: any) => {
-    m += `### Week ${c.week}: ${c.title}\n- Keyword: ${c.primary_keyword} | Secondary: ${c.secondary_keywords?.join(', ')}\n- Type: ${c.content_type} | Words: ${c.word_count_target}\n- Outline: ${c.outline?.join(' → ')}\n- Internal Links: ${c.internal_linking_targets?.join(', ')}\n- Traffic Est: ${c.expected_traffic_3mo?.toLocaleString()}/mo\n\n`;
+    m += `### Week ${c.week}: ${c.title}\n`;
+    m += `- **Primary Keyword:** ${c.primary_keyword}\n`;
+    m += `- **Secondary:** ${c.secondary_keywords?.join(', ')}\n`;
+    m += `- **Type:** ${c.content_type} | **Target Words:** ${c.word_count_target}\n`;
+    m += `- **Outline:** ${c.outline?.join(' → ')}\n`;
+    m += `- **Internal Links:** ${c.internal_linking_targets?.join(', ')}\n`;
+    m += `- **Expected 3-Month Traffic:** ${c.expected_traffic_3mo?.toLocaleString()}/mo\n\n`;
   });
 
-  m += `## 🔗 Backlink Strategy\n${backlinkSection()}`;
+  // Backlink Strategy
+  m += `## 🔗 Backlink Acquisition Strategy\n\n`;
+  m += backlinkSection();
 
-  m += `\n## ✅ On-Page Checklist\n${a.onpage_checklist?.map((item: string, i: number) => `${i+1}. ${item}`).join('\n')}`;
-  m += `\n\n## 📊 6-Mo Traffic Forecast\n${a.chart_data?.traffic_growth_6m?.map((v: number, i: number) => `Mo${i+1}: ${v?.toLocaleString()}`).join(' → ')}`;
-  m += `\n\n---\n*MarketMuse AI PRO MAX ULTRA – $99 Report*`;
+  // On-Page Checklist
+  m += `## ✅ On-Page SEO Checklist\n\n`;
+  a.onpage_checklist?.forEach((item: string, i: number) => {
+    m += `${i+1}. ${item}\n`;
+  });
 
-  return m;  // <-- explicit return
+  // Traffic Forecast
+  m += `\n## 📊 6-Month Traffic Forecast\n\n`;
+  m += a.chart_data?.traffic_growth_6m?.map((v: number, i: number) => `**Month ${i+1}:** ${v?.toLocaleString()} visits`).join(' → ');
+
+  m += `\n\n---\n*Powered by MarketMuse PRO — Real-time SEO Intelligence*`;
+  return m;
 }
 
 export const createSEOReport = async (req: Request, res: Response, next: NextFunction) => {
@@ -163,14 +199,13 @@ export const createSEOReport = async (req: Request, res: Response, next: NextFun
 
     console.log(`🔍 SEO: "${niche}" in ${country}`);
 
-    // Real data: SERP from SerpAPI, related keywords & trends from KWE
-    const [serpData, relatedKwData, trendsArr] = await Promise.all([
+    const [searchData, relatedKwData, trendsArr] = await Promise.all([
       getSearchResults(niche, country),
       getRelatedKeywords(niche, country).catch(() => null),
       getTrends(niche, country).catch(() => null),
     ]);
 
-    const serp = serpData.organic_results?.slice(0, 8).map((r: any) => ({
+    const serp = searchData.organic_results?.slice(0, 8).map((r: any) => ({
       position: r.position, title: r.title, url: r.link, snippet: r.snippet || ''
     })) || [];
 
@@ -194,7 +229,7 @@ export const createSEOReport = async (req: Request, res: Response, next: NextFun
       ...relatedList,
     ].slice(0, 55);
 
-    const userMsg = `Niche: ${niche}\nCountry: ${country}\n\nReal SERP Top 8:\n${JSON.stringify(serp)}\n\nReal Keyword Data (volume, CPC, competition):\n${JSON.stringify(allKeywords)}\n\n12-Month Trend Values: ${trendsArr ? JSON.stringify(trendsArr) : 'Not available'}`;
+    const userMsg = `Niche: ${niche}\nCountry: ${country}\n\nSERP Top 8:\n${JSON.stringify(serp)}\n\nKeyword Data:\n${JSON.stringify(allKeywords)}\n\n12-Month Trends: ${trendsArr ? JSON.stringify(trendsArr) : 'Not available'}`;
 
     const ai = await runGroqWithRetry(PROMPT, userMsg);
     const analysis = extractJSON(ai);
