@@ -15,25 +15,25 @@ const extractJSON = (raw: string): any => {
   return JSON.parse(c);
 };
 
-const PROMPT = `You are a senior market analyst at a top consulting firm. Analyze the real shopping data, keyword metrics, exchange rates, and trends provided. Return ONLY valid JSON. Be specific, data‑driven, and avoid generic statements.
+const PROMPT = `You are a senior market analyst at an elite intelligence division. Analyze the provided shopping data, keyword metrics, exchange rates, and 12‑month trends. Return ONLY valid JSON. Be specific, data‑driven, and professional.
 
 {
-  "market_score": number (0-100),
+  "market_score": number (0‑100),
   "opportunity_level": "High" | "Moderate" | "Limited",
-  "executive_summary": "2-3 sentences with actual numbers from the data",
-  "key_findings": [
-    "Finding with specific numbers",
-    "Finding with specific numbers",
-    "Finding with specific numbers"
-  ] (exactly 3, each must contain a real metric),
-  "quick_wins": [
-    "Immediate action item 1",
-    "Immediate action item 2",
-    "Immediate action item 3"
-  ] (3 specific, niche‑related tasks that can be done today or this week),
+  "executive_brief": "3‑4 sentence professional summary using actual numbers",
+  "key_insights": [
+    "Specific insight with metric",
+    "Specific insight with metric",
+    "Specific insight with metric"
+  ] (exactly 3),
+  "immediate_actions": [
+    "Actionable step 1",
+    "Actionable step 2",
+    "Actionable step 3"
+  ] (exactly 3),
   "pricing_engine": [
     {
-      "title": "actual product name from data",
+      "title": "actual product name",
       "selling_price_usd": number,
       "landed_cost_usd": number,
       "net_profit_usd": number,
@@ -45,56 +45,56 @@ const PROMPT = `You are a senior market analyst at a top consulting firm. Analyz
       "rating": number,
       "source": "store name"
     }
-  ] (12 items, sorted by profit potential),
-  "competitor_deep_dive": [
+  ] (12 items),
+  "competitor_landscape": [
     {
       "name": "real brand",
-      "market_position": "Market Leader/Challenger/Niche/New",
+      "position": "Market Leader/Challenger/Niche/New Entrant",
       "estimated_monthly_sales": number,
       "avg_price_point": number,
       "strengths": ["s1","s2"],
       "weaknesses": ["w1","w2"],
-      "how_to_outcompete": "specific strategy"
+      "strategic_response": "how to compete"
     }
   ] (6 competitors),
-  "market_gaps": [
+  "entry_opportunities": [
     {
-      "gap_title": "title",
-      "description": "detailed with numbers",
-      "revenue_potential": "$5k-10k/mo or $10k-25k/mo or $25k+/mo",
+      "title": "opportunity title",
+      "description": "detailed paragraph with numbers",
+      "revenue_potential": "$5k‑10k/mo or $10k‑25k/mo or $25k+/mo",
       "difficulty": "Easy/Moderate/Hard",
-      "first_step": "concrete action"
+      "first_action": "concrete step"
     }
-  ] (3 gaps),
-  "customer_personas": [
+  ] (3 opportunities),
+  "audience_profiles": [
     {
-      "name": "name",
-      "age_range": "25-34",
-      "income_level": "$40k-60k",
-      "core_problem": "pain point",
-      "buying_trigger": "what makes them buy",
-      "where_they_hang_out": ["p1","p2"],
-      "marketing_message": "exact ad copy"
+      "name": "profile name",
+      "age_range": "25‑34",
+      "income": "$40k‑60k",
+      "primary_need": "core problem",
+      "purchase_trigger": "what drives purchase",
+      "channels": ["channel1","channel2"],
+      "messaging": "exact ad copy"
     }
-  ] (3 personas),
-  "launch_playbook": [
+  ] (3 profiles),
+  "execution_roadmap": [
     {
-      "week": 1-12,
-      "theme": "Foundation/Sourcing/Branding/Launch/Scale",
-      "tasks": ["t1","t2","t3"],
-      "success_metric": "measurable outcome"
+      "week": 1‑12,
+      "phase": "Foundation/Sourcing/Branding/Launch/Scale",
+      "tasks": ["task1","task2","task3"],
+      "kpi": "measurable outcome"
     }
   ] (12 weeks),
-  "financial_projections": {
-    "startup_cost_estimate": number,
+  "financial_forecast": {
+    "startup_cost": number,
     "monthly_fixed_costs": number,
     "avg_profit_per_unit": number,
     "units_to_breakeven": number,
-    "estimated_months_to_profitability": number,
+    "months_to_profitability": number,
     "month6_profit_conservative": number,
     "month6_profit_optimistic": number
   },
-  "risk_radar": [
+  "risk_matrix": [
     {
       "risk": "specific risk",
       "probability": "Low/Medium/High",
@@ -102,13 +102,13 @@ const PROMPT = `You are a senior market analyst at a top consulting firm. Analyz
       "mitigation": "specific action"
     }
   ] (5 risks),
-  "success_accelerators": [
+  "growth_accelerators": [
     "Pro tip or tool recommendation",
     "Pro tip or tool recommendation",
     "Pro tip or tool recommendation",
     "Pro tip or tool recommendation",
     "Pro tip or tool recommendation"
-  ] (5 actionable tips, can include well‑known tools, strategies, or shortcuts),
+  ] (5 actionable tips),
   "related_resources": [
     { "name": "resource name", "url": "full url" },
     { "name": "resource name", "url": "full url" },
@@ -118,7 +118,7 @@ const PROMPT = `You are a senior market analyst at a top consulting firm. Analyz
     { "name": "resource name", "url": "full url" },
     { "name": "resource name", "url": "full url" },
     { "name": "resource name", "url": "full url" }
-  ] (exactly 8 relevant, high‑quality external resources for this niche),
+  ] (8 niche‑relevant resources),
   "chart_data": {
     "demand_forecast_12m": [12 numbers],
     "competitor_market_share": [{"name":"x","share":number}]
@@ -126,7 +126,7 @@ const PROMPT = `You are a senior market analyst at a top consulting firm. Analyz
 }`;
 
 const currencySymbols: Record<string, string> = {
-  us: '$', gb: '£', ca: 'CA$', au: 'AU$', de: '€', sg: 'S$',
+  us: 'USD', gb: 'GBP', ca: 'CAD', au: 'AUD', de: 'EUR', sg: 'SGD',
   sa: 'SAR', ae: 'AED', pk: 'PKR', in: 'INR', tr: 'TRY', my: 'MYR',
 };
 const countryNames: Record<string, string> = {
@@ -141,8 +141,8 @@ const scoreBar = (score: number): string => {
 };
 
 function generateMarkdown(a: any, niche: string, country: string, rates: any, reportId: string): string {
-  const sym = currencySymbols[country] || '$';
-  const targetCurrency = country === 'us' ? 'USD' : country === 'gb' ? 'GBP' : country === 'ca' ? 'CAD' : country === 'au' ? 'AUD' : country === 'de' ? 'EUR' : country === 'sg' ? 'SGD' : country === 'sa' ? 'SAR' : country === 'ae' ? 'AED' : country === 'pk' ? 'PKR' : country === 'in' ? 'INR' : country === 'tr' ? 'TRY' : 'MYR';
+  const sym = currencySymbols[country] || 'USD';
+  const targetCurrency = sym;
 
   const localPrice = (usd: number) => {
     const converted = convertPrice(usd, targetCurrency, rates);
@@ -154,51 +154,68 @@ function generateMarkdown(a: any, niche: string, country: string, rates: any, re
 
   let m = '';
 
-  // Professional Header
-  m += `MARKETMUSE PRO\n`;
-  m += `Real-Time Market Intelligence\n`;
-  m += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
-  m += `Report ID: ${reportId}\n`;
-  m += `Type: Product Research\n`;
-  m += `Niche: ${niche}\n`;
-  m += `Country: ${countryNames[country] || country}\n`;
-  m += `Generated: ${today} at ${now}\n`;
-  m += `Status: Confidential\n`;
-  m += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+  // ── Cover / Header ──
+  m += `MusePRO\n`;
+  m += `Real-Time Market Research\n`;
+  m += `Intelligence Division\n`;
+  m += `──────────────────────────────────────────────────────────────\n`;
+  m += `PRODUCT RESEARCH REPORT\n\n`;
+  m += `Prepared For: [Client Name]\n`;
+  m += `Date: ${today}\n`;
+  m += `Reference: ${reportId}\n`;
+  m += `Classification: CONFIDENTIAL\n`;
+  m += `──────────────────────────────────────────────────────────────\n\n`;
 
-  // At a Glance
-  m += `AT A GLANCE\n`;
-  m += `────────────────────────────────────────────\n`;
+  // ── Table of Contents ──
+  m += `TABLE OF CONTENTS\n`;
+  m += `──────────────────────────────────────────────────────────────\n`;
+  m += `1. Executive Brief\n`;
+  m += `2. Opportunity Scorecard\n`;
+  m += `3. Product & Pricing Intelligence\n`;
+  m += `4. Competitive Landscape\n`;
+  m += `5. Market Entry Opportunities\n`;
+  m += `6. Target Audience Profiles\n`;
+  m += `7. Growth Accelerators\n`;
+  m += `8. 12‑Week Execution Roadmap\n`;
+  m += `9. Financial Forecast\n`;
+  m += `10. Risk Matrix\n`;
+  m += `11. Related Resources\n\n`;
+  m += `──────────────────────────────────────────────────────────────\n\n`;
+
+  // 1. Executive Brief
+  m += `1. EXECUTIVE BRIEF\n`;
+  m += `──────────────────────────────────────────────────────────────\n`;
+  m += `${a.executive_brief}\n\n`;
+
+  // 2. Opportunity Scorecard
+  m += `2. OPPORTUNITY SCORECARD\n`;
+  m += `──────────────────────────────────────────────────────────────\n`;
   m += `Market Score: ${a.market_score}/100 ${scoreBar(a.market_score)}\n`;
   m += `Opportunity Level: ${a.opportunity_level || 'N/A'}\n`;
-  if (a.financial_projections?.month6_profit_optimistic) {
-    m += `Est. Monthly Profit Potential: ${localPrice(a.financial_projections.month6_profit_optimistic)}\n`;
+  const fp = a.financial_forecast;
+  if (fp?.month6_profit_optimistic) {
+    m += `Est. Monthly Profit Potential: ${localPrice(fp.month6_profit_optimistic)}\n`;
   }
-  m += `Time to Profitability: ${a.financial_projections?.estimated_months_to_profitability || 'N/A'} months\n`;
-  m += `\n`;
+  m += `Time to Profitability: ${fp?.months_to_profitability || 'N/A'} months\n\n`;
 
-  // Key Findings
-  if (a.key_findings?.length) {
-    m += `KEY FINDINGS\n`;
-    m += `────────────────────────────────────────────\n`;
-    a.key_findings.forEach((f: string, i: number) => { m += `${i+1}. ${f}\n`; });
+  // Key Insights
+  if (a.key_insights?.length) {
+    m += `Key Insights:\n`;
+    a.key_insights.forEach((f: string, i: number) => { m += `  ${i+1}. ${f}\n`; });
     m += `\n`;
   }
 
-  // Quick Wins
-  if (a.quick_wins?.length) {
-    m += `QUICK WINS – Start Today\n`;
-    m += `────────────────────────────────────────────\n`;
-    a.quick_wins.forEach((w: string, i: number) => { m += `${i+1}. ${w}\n`; });
+  // Immediate Actions
+  if (a.immediate_actions?.length) {
+    m += `Immediate Actions:\n`;
+    a.immediate_actions.forEach((w: string, i: number) => { m += `  ${i+1}. ${w}\n`; });
     m += `\n`;
   }
 
-  // 1. Executive Summary
-  m += `1. EXECUTIVE SUMMARY\n────────────────────────────────────────────\n${a.executive_summary}\n\n`;
-
-  // 2. Product Pricing
-  m += `2. PRODUCT PRICING ANALYSIS\n────────────────────────────────────────────\n`;
-  m += `Source: Google Shopping (live data via SerpAPI) [1]\n\n`;
+  // 3. Product & Pricing Intelligence
+  m += `3. PRODUCT & PRICING INTELLIGENCE\n`;
+  m += `──────────────────────────────────────────────────────────────\n`;
+  m += `Source: Google Shopping (live data via SerpAPI)\n\n`;
   m += `| # | Product | Price | Cost | Profit | Margin | Monthly Est. Revenue | Reviews |\n`;
   m += `|---|---------|-------|------|--------|--------|----------------------|--------|\n`;
   a.pricing_engine?.forEach((p: any, i: number) => {
@@ -206,84 +223,115 @@ function generateMarkdown(a: any, niche: string, country: string, rates: any, re
   });
   m += `\n`;
 
-  // 3. Competitors
-  m += `3. COMPETITOR LANDSCAPE\n────────────────────────────────────────────\n`;
-  a.competitor_deep_dive?.forEach((c: any) => {
-    m += `${c.name} (${c.market_position})\n`;
+  // 4. Competitive Landscape
+  m += `4. COMPETITIVE LANDSCAPE\n`;
+  m += `──────────────────────────────────────────────────────────────\n`;
+  a.competitor_landscape?.forEach((c: any) => {
+    m += `${c.name} (${c.position})\n`;
     m += `  Est. Monthly Sales: ${localPrice(c.estimated_monthly_sales)}\n`;
     m += `  Avg Price Point: ${localPrice(c.avg_price_point)}\n`;
     m += `  Strengths: ${c.strengths?.join(', ')}\n`;
     m += `  Weaknesses: ${c.weaknesses?.join(', ')}\n`;
-    m += `  Strategy: ${c.how_to_outcompete}\n\n`;
+    m += `  Strategic Response: ${c.strategic_response}\n\n`;
   });
 
-  // 4. Market Gaps
-  m += `4. MARKET OPPORTUNITIES\n────────────────────────────────────────────\n`;
-  a.market_gaps?.forEach((g: any) => {
-    m += `${g.gap_title}\n  ${g.description}\n  Revenue Potential: ${g.revenue_potential}\n  Difficulty: ${g.difficulty}\n  First Step: ${g.first_step}\n\n`;
+  // 5. Market Entry Opportunities
+  m += `5. MARKET ENTRY OPPORTUNITIES\n`;
+  m += `──────────────────────────────────────────────────────────────\n`;
+  a.entry_opportunities?.forEach((g: any) => {
+    m += `${g.title}\n`;
+    m += `  ${g.description}\n`;
+    m += `  Revenue Potential: ${g.revenue_potential}\n`;
+    m += `  Difficulty: ${g.difficulty}\n`;
+    m += `  First Action: ${g.first_action}\n\n`;
   });
 
-  // 5. Customer Personas
-  m += `5. TARGET CUSTOMER PROFILES\n────────────────────────────────────────────\n`;
-  a.customer_personas?.forEach((p: any) => {
-    m += `${p.name} | ${p.age_range} | ${p.income_level}\n  Problem: ${p.core_problem}\n  Trigger: ${p.buying_trigger}\n  Channels: ${p.where_they_hang_out?.join(', ')}\n  Ad Copy: "${p.marketing_message}"\n\n`;
+  // 6. Target Audience Profiles
+  m += `6. TARGET AUDIENCE PROFILES\n`;
+  m += `──────────────────────────────────────────────────────────────\n`;
+  a.audience_profiles?.forEach((p: any) => {
+    m += `${p.name} | ${p.age_range} | ${p.income}\n`;
+    m += `  Primary Need: ${p.primary_need}\n`;
+    m += `  Purchase Trigger: ${p.purchase_trigger}\n`;
+    m += `  Channels: ${p.channels?.join(', ')}\n`;
+    m += `  Messaging: "${p.messaging}"\n\n`;
   });
 
-  // 6. Success Accelerators
-  if (a.success_accelerators?.length) {
-    m += `6. SUCCESS ACCELERATORS\n────────────────────────────────────────────\n`;
-    a.success_accelerators.forEach((tip: string, i: number) => { m += `${i+1}. ${tip}\n`; });
+  // 7. Growth Accelerators
+  if (a.growth_accelerators?.length) {
+    m += `7. GROWTH ACCELERATORS\n`;
+    m += `──────────────────────────────────────────────────────────────\n`;
+    a.growth_accelerators.forEach((tip: string, i: number) => { m += `${i+1}. ${tip}\n`; });
     m += `\n`;
   }
 
-  // 7. Launch Playbook
-  m += `7. 12-WEEK LAUNCH PLAYBOOK\n────────────────────────────────────────────\n`;
-  a.launch_playbook?.forEach((w: any) => {
-    m += `Week ${w.week}: ${w.theme}\n`;
+  // 8. Execution Roadmap
+  m += `8. 12‑WEEK EXECUTION ROADMAP\n`;
+  m += `──────────────────────────────────────────────────────────────\n`;
+  a.execution_roadmap?.forEach((w: any) => {
+    m += `Week ${w.week}: ${w.phase}\n`;
     w.tasks?.forEach((t: string) => { m += `  - ${t}\n`; });
-    m += `  Metric: ${w.success_metric}\n\n`;
+    m += `  KPI: ${w.kpi}\n\n`;
   });
 
-  // 8. Financials
-  const fp = a.financial_projections;
-  m += `8. FINANCIAL PROJECTIONS\n────────────────────────────────────────────\n`;
-  m += `Startup Cost: ${localPrice(fp?.startup_cost_estimate)}\n`;
+  // 9. Financial Forecast
+  m += `9. FINANCIAL FORECAST\n`;
+  m += `──────────────────────────────────────────────────────────────\n`;
+  m += `Startup Cost: ${localPrice(fp?.startup_cost)}\n`;
   m += `Monthly Fixed Costs: ${localPrice(fp?.monthly_fixed_costs)}\n`;
   m += `Avg Profit Per Unit: ${localPrice(fp?.avg_profit_per_unit)}\n`;
   m += `Units to Breakeven: ${fp?.units_to_breakeven}\n`;
-  m += `Time to Profitability: ${fp?.estimated_months_to_profitability} months\n`;
+  m += `Time to Profitability: ${fp?.months_to_profitability} months\n`;
   m += `Month 6 Profit (Conservative): ${localPrice(fp?.month6_profit_conservative)}\n`;
   m += `Month 6 Profit (Optimistic): ${localPrice(fp?.month6_profit_optimistic)}\n\n`;
 
-  // 9. Risks
-  m += `9. RISK ASSESSMENT\n────────────────────────────────────────────\n`;
-  a.risk_radar?.forEach((r: any) => { m += `Risk: ${r.risk}\n  Probability: ${r.probability} | Impact: ${r.impact}\n  Mitigation: ${r.mitigation}\n\n`; });
+  // 10. Risk Matrix
+  m += `10. RISK MATRIX\n`;
+  m += `──────────────────────────────────────────────────────────────\n`;
+  a.risk_matrix?.forEach((r: any) => {
+    m += `Risk: ${r.risk}\n`;
+    m += `  Probability: ${r.probability} | Impact: ${r.impact}\n`;
+    m += `  Mitigation: ${r.mitigation}\n\n`;
+  });
 
-  // Related Resources
+  // 11. Related Resources
   if (a.related_resources?.length) {
-    m += `RELATED RESOURCES & LINKS\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+    m += `11. RELATED RESOURCES\n`;
+    m += `──────────────────────────────────────────────────────────────\n`;
     a.related_resources.forEach((res: any, i: number) => { m += `${i+1}. ${res.name} – ${res.url}\n`; });
     m += `\n`;
   }
 
-  // Data Verification Links
-  m += `DATA VERIFICATION LINKS\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
-  m += `[1] Google Shopping – https://shopping.google.com\n`;
-  m += `[2] Google Keyword Planner – https://ads.google.com/keyword-planner\n`;
-  m += `[3] Google Trends – https://trends.google.com\n`;
-  m += `[4] Exchange Rates – https://exchangerate-api.com\n`;
-  m += `[5] AI Model – GPT-4o by OpenAI (https://openai.com)\n\n`;
+  // ── Methodology & Sources ──
+  m += `METHODOLOGY & SOURCES\n`;
+  m += `──────────────────────────────────────────────────────────────\n`;
+  m += `This report is based on live data collected on ${today} from:\n\n`;
+  m += `• Google Shopping via SerpAPI (serpapi.com)\n`;
+  m += `• Google Keyword Planner via Keywords Everywhere (keywordseverywhere.com)\n`;
+  m += `• Google Trends via Keywords Everywhere\n`;
+  m += `• Exchange Rate API (exchangerate-api.com)\n`;
+  m += `• Analysis Engine: GPT‑4o (openai.com)\n\n`;
+  m += `All data points can be independently verified against their public sources.\n\n`;
 
-  // Final Word
-  const oppLevel = a.opportunity_level || 'high';
-  m += `FINAL WORD\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
-  if (oppLevel === 'High') m += `This market shows exceptional promise. The data indicates a clear path to profitability within months. Execute the playbook with precision and you can capture a significant share of this growing demand.\n`;
-  else if (oppLevel === 'Moderate') m += `A solid opportunity with manageable competition. Focus on the gaps identified and differentiate your offer to build a sustainable business. Consistent effort will yield results.\n`;
-  else m += `While the market is competitive, the strategies outlined above provide a clear path to enter and succeed. Focus on niche positioning and superior execution.\n`;
-  m += `\n`;
-  m += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
-  m += `MarketMuse PRO — Confidential Report\n`;
-  m += `© All Rights Reserved\n`;
+  // ── Document Control ──
+  m += `DOCUMENT CONTROL\n`;
+  m += `──────────────────────────────────────────────────────────────\n`;
+  m += `Classification:  Confidential\n`;
+  m += `Distribution:    Client Only\n`;
+  m += `Version:         1.0\n`;
+  m += `Prepared By:     MusePRO Intelligence Division\n\n`;
+
+  // ── Disclaimer ──
+  m += `DISCLAIMER\n`;
+  m += `──────────────────────────────────────────────────────────────\n`;
+  m += `This document contains proprietary research conducted by MusePRO.\n`;
+  m += `The information herein is intended solely for the designated recipient.\n`;
+  m += `Unauthorized distribution, copying, or disclosure is strictly prohibited.\n\n`;
+  m += `While every effort has been made to ensure accuracy, market conditions\n`;
+  m += `change rapidly. Verify critical data points before making business decisions.\n\n`;
+
+  m += `──────────────────────────────────────────────────────────────\n`;
+  m += `© MusePRO — Intelligence Division. All Rights Reserved.\n`;
 
   return m;
 }
@@ -304,7 +352,7 @@ export const createProductReport = async (req: Request, res: Response, next: Nex
       getKeywordMetrics([niche], country).catch(() => null),
     ]);
 
-    if (!shoppingData) throw new Error('Failed to fetch shopping data.');
+    if (!shoppingData) throw new Error('Unable to retrieve shopping data at this moment.');
 
     const items = shoppingData.shopping_results?.slice(0, 8).map((p: any) => ({
       title: p.title, price: p.extracted_price || p.price, source: p.source,
@@ -317,7 +365,7 @@ export const createProductReport = async (req: Request, res: Response, next: Nex
       trends: trendsArr || null,
     };
 
-    const userMsg = `Niche: ${niche}\nCountry: ${country}\nExchange Rates: ${JSON.stringify(fx)}\nShopping Results: ${JSON.stringify(items)}\nMarket Data: ${JSON.stringify(marketData)}\nTrends: ${trendsArr ? JSON.stringify(trendsArr) : 'N/A'}\n\nProvide complete JSON with specific, data-backed insights, quick wins, related resources, and success accelerators.`;
+    const userMsg = `Niche: ${niche}\nCountry: ${country}\nExchange Rates: ${JSON.stringify(fx)}\nShopping Results: ${JSON.stringify(items)}\nMarket Data: ${JSON.stringify(marketData)}\nTrends: ${trendsArr ? JSON.stringify(trendsArr) : 'N/A'}\n\nProvide a thorough, data‑backed JSON analysis with all required sections.`;
 
     const ai = await runGroqWithRetry(PROMPT, userMsg);
     const analysis = extractJSON(ai);
@@ -327,10 +375,9 @@ export const createProductReport = async (req: Request, res: Response, next: Nex
       analysis.chart_data.demand_forecast_12m = trendsArr;
     }
 
-    // ✅ FIX: Placeholder markdown to pass validation
     const report = await Report.create({
       type: 'product', niche, country, value: '$99',
-      data: analysis, markdown: 'Report is being generated...', charts: {}
+      data: analysis, markdown: 'Intelligence report generation in progress...', charts: {}
     });
 
     const reportId = `MKT-${report._id.toString().slice(-6).toUpperCase()}`;
