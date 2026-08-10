@@ -118,7 +118,7 @@ const PROMPT = `You are a senior market analyst at a top consulting firm. Analyz
     { "name": "resource name", "url": "full url" },
     { "name": "resource name", "url": "full url" },
     { "name": "resource name", "url": "full url" }
-  ] (exactly 8 relevant, high‑quality external resources for this niche, e.g., supplier marketplaces, business tools, industry reports, e‑commerce platforms, etc.),
+  ] (exactly 8 relevant, high‑quality external resources for this niche),
   "chart_data": {
     "demand_forecast_12m": [12 numbers],
     "competitor_market_share": [{"name":"x","share":number}]
@@ -174,7 +174,8 @@ function generateMarkdown(a: any, niche: string, country: string, rates: any, re
   if (a.financial_projections?.month6_profit_optimistic) {
     m += `Est. Monthly Profit Potential: ${localPrice(a.financial_projections.month6_profit_optimistic)}\n`;
   }
-  m += `Time to Profitability: ${a.financial_projections?.estimated_months_to_profitability || 'N/A'} months\n\n`;
+  m += `Time to Profitability: ${a.financial_projections?.estimated_months_to_profitability || 'N/A'} months\n`;
+  m += `\n`;
 
   // Key Findings
   if (a.key_findings?.length) {
@@ -326,9 +327,10 @@ export const createProductReport = async (req: Request, res: Response, next: Nex
       analysis.chart_data.demand_forecast_12m = trendsArr;
     }
 
+    // ✅ FIX: Placeholder markdown to pass validation
     const report = await Report.create({
       type: 'product', niche, country, value: '$99',
-      data: analysis, markdown: '', charts: {}
+      data: analysis, markdown: 'Report is being generated...', charts: {}
     });
 
     const reportId = `MKT-${report._id.toString().slice(-6).toUpperCase()}`;
