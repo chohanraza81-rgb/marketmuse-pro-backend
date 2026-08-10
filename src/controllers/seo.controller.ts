@@ -112,11 +112,9 @@ function generateMarkdown(a: any, niche: string, country: string, reportId: stri
 
   let m = '';
 
-  // Professional Header
   m += `MARKETMUSE PRO\nReal-Time Market Intelligence\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
   m += `Report ID: ${reportId}\nType: SEO Analysis\nNiche: ${niche}\nCountry: ${countryNames[country] || country}\nGenerated: ${today} at ${now}\nStatus: Confidential\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
 
-  // At a Glance
   m += `AT A GLANCE\n────────────────────────────────────────────\n`;
   m += `Trend: ${a.trend_score}\n`;
   m += `Total Keywords Analyzed: ${a.keywords?.length || 50}\n`;
@@ -125,26 +123,21 @@ function generateMarkdown(a: any, niche: string, country: string, reportId: stri
   }
   m += `\n`;
 
-  // Key Findings
   if (a.key_findings?.length) {
     m += `KEY FINDINGS\n────────────────────────────────────────────\n`;
     a.key_findings.forEach((f: string, i: number) => { m += `${i+1}. ${f}\n`; });
     m += `\n`;
   }
 
-  // Quick Wins
   if (a.quick_wins?.length) {
     m += `QUICK WINS – Start Today\n────────────────────────────────────────────\n`;
     a.quick_wins.forEach((w: string, i: number) => { m += `${i+1}. ${w}\n`; });
     m += `\n`;
   }
 
-  // 1. Trend Analysis
   m += `1. TREND ANALYSIS\n────────────────────────────────────────────\n${a.trend_insight}\n\n`;
 
-  // 2. Keywords
-  m += `2. TOP 50 KEYWORD OPPORTUNITIES\n────────────────────────────────────────────\n`;
-  m += `Source: Google Keyword Planner (via Keywords Everywhere) [1]\n\n`;
+  m += `2. TOP 50 KEYWORD OPPORTUNITIES\n────────────────────────────────────────────\nSource: Google Keyword Planner (via Keywords Everywhere) [1]\n\n`;
   m += `| # | Keyword | Volume | KD | CPC | Intent | Opportunity |\n`;
   m += `|---|---------|--------|-----|-----|--------|-------------|\n`;
   a.keywords?.forEach((k: any, i: number) => {
@@ -152,9 +145,7 @@ function generateMarkdown(a: any, niche: string, country: string, reportId: stri
   });
   m += `\n`;
 
-  // 3. SERP Analysis
-  m += `3. SERP COMPETITOR ANALYSIS\n────────────────────────────────────────────\n`;
-  m += `Source: Google Search Results (live via SerpAPI) [2]\n\n`;
+  m += `3. SERP COMPETITOR ANALYSIS\n────────────────────────────────────────────\nSource: Google Search Results (live via SerpAPI) [2]\n\n`;
   a.serp_analysis?.forEach((s: any) => {
     m += `Position #${s.position}: ${s.title}\n`;
     m += `  URL: ${s.url}\n`;
@@ -165,7 +156,6 @@ function generateMarkdown(a: any, niche: string, country: string, reportId: stri
     m += `  Gap: ${s.content_gap}\n\n`;
   });
 
-  // 4. Content Calendar
   m += `4. 12-WEEK CONTENT CALENDAR\n────────────────────────────────────────────\n`;
   a.content_calendar?.forEach((c: any) => {
     m += `Week ${c.week}: ${c.title}\n`;
@@ -176,7 +166,6 @@ function generateMarkdown(a: any, niche: string, country: string, reportId: stri
     m += `  Est. Traffic: ${c.expected_traffic?.toLocaleString()}/mo\n\n`;
   });
 
-  // 5. Backlink Strategy
   const bs = a.backlink_strategy;
   if (bs) {
     m += `5. BACKLINK ACQUISITION STRATEGY\n────────────────────────────────────────────\n${bs.overview}\n\n`;
@@ -203,36 +192,30 @@ function generateMarkdown(a: any, niche: string, country: string, reportId: stri
     }
   }
 
-  // 6. On-Page Checklist
   m += `6. ON-PAGE SEO CHECKLIST\n────────────────────────────────────────────\n`;
   a.onpage_checklist?.forEach((item: string, i: number) => { m += `${i+1}. ${item}\n`; });
   m += `\n`;
 
-  // 7. Success Accelerators
   if (a.success_accelerators?.length) {
     m += `7. SUCCESS ACCELERATORS\n────────────────────────────────────────────\n`;
     a.success_accelerators.forEach((tip: string, i: number) => { m += `${i+1}. ${tip}\n`; });
     m += `\n`;
   }
 
-  // Related Resources
   if (a.related_resources?.length) {
     m += `RELATED RESOURCES & LINKS\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
     a.related_resources.forEach((res: any, i: number) => { m += `${i+1}. ${res.name} – ${res.url}\n`; });
     m += `\n`;
   }
 
-  // Data Verification Links
   m += `DATA VERIFICATION LINKS\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
   m += `[1] Google Keyword Planner – https://ads.google.com/keyword-planner\n`;
   m += `[2] Google Search (SERP) – https://www.google.com\n`;
   m += `[3] Google Trends – https://trends.google.com\n`;
   m += `[4] AI Model – GPT-4o by OpenAI (https://openai.com)\n\n`;
 
-  // Final Word
   m += `FINAL WORD\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
   m += `With this comprehensive SEO roadmap, you are equipped to systematically grow your organic presence. Prioritize the quick wins, execute the content calendar consistently, and build quality backlinks – the traffic forecast reflects what is achievable with dedicated effort.\n\n`;
-
   m += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
   m += `MarketMuse PRO — Confidential Report\n© All Rights Reserved\n`;
 
@@ -285,9 +268,10 @@ export const createSEOReport = async (req: Request, res: Response, next: NextFun
       analysis.chart_data.trend_12m = trendsArr;
     }
 
+    // ✅ FIX: Placeholder markdown to pass validation
     const report = await Report.create({
       type: 'seo', niche, country, value: '$99',
-      data: analysis, markdown: '', charts: {}
+      data: analysis, markdown: 'Report is being generated...', charts: {}
     });
 
     const reportId = `MKT-${report._id.toString().slice(-6).toUpperCase()}`;
