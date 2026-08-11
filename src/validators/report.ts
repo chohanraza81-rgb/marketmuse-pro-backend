@@ -21,6 +21,6 @@ export const reportQuerySchema = z.object({
   country: z.string().optional(),
   startDate: z.string().optional(),
   endDate: z.string().optional(),
-  limit: z.coerce.number().min(1).max(50).default(10),
+  limit: z.coerce.number().min(1).max(500).default(50),  // ✅ Increased to 500
   page: z.coerce.number().min(1).default(1),
 });
