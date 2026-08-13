@@ -7,7 +7,7 @@ import { runGroqWithRetry } from '../services/groq';
 import { Report } from '../models/Report';
 import { ZodError } from 'zod';
 
-// ✅ Robust JSON extraction – fixes malformed or truncated JSON
+// Robust JSON extraction
 const extractJSON = (raw: string): any => {
   let cleaned = raw
     .replace(/```json\s*/gi, '')
@@ -54,9 +54,7 @@ const extractJSON = (raw: string): any => {
   }
 };
 
-const PROMPT = `You are an elite SEO strategist at MusePRO Intelligence Division. You have a decade of experience delivering high-stakes reports. You write like a human expert, not a machine. Be specific, data-driven, and professional.
-
-Analyze REAL keyword data, SERP results, and trends. Return ONLY valid JSON.
+const PROMPT = `You are an elite SEO strategist at MusePRO Intelligence Division. You write like a senior consultant speaking directly to a client. Be specific, data‑driven, and professional. Use the current year 2026 in any year‑specific content.
 
 CRITICAL WRITING INSTRUCTIONS:
 - Write like a senior SEO veteran who has seen it all. Direct, bold, and full of insider wisdom.
@@ -66,57 +64,36 @@ CRITICAL WRITING INSTRUCTIONS:
 - Express genuine excitement about ranking opportunities and honest skepticism about overhyped keywords.
 - Weave numbers directly into conversational sentences.
 - Use hedging where it makes sense: "Could be...", "Looks like...", "Might signal..."
-- Every keyword stat must be followed by interpretation.
-- Avoid corporate buzzwords: "leverage", "utilize", "synergize", "robust".
+- Do not make specific statistical claims that are not directly supported by the provided data. If you mention a percentage or growth figure, ensure it is derived from the provided trends or keyword metrics, otherwise phrase as 'data suggests' or 'we estimate'.
+- After each key insight, include the data source in parentheses, e.g., "(Source: Google Keyword Planner)" or "(Source: Google Search Results)".
 
-Return JSON with this exact structure:
+You will be given REAL keyword data, REAL SERP results, and REAL trend data. Use these numbers, do not generate your own.
+
+Return ONLY valid JSON with the following structure (all fields are required):
+
 {
   "trend_assessment": "Seasonal" | "Evergreen",
-  "trend_analysis": "2-3 sentences with actual trend numbers",
+  "trend_analysis": "2-3 sentences with actual trend numbers from the provided data",
   "key_insights": [
-    "Insight with specific volume/KD numbers",
-    "Insight with specific volume/KD numbers",
-    "Insight with specific volume/KD numbers"
+    "Insight with specific volume/KD numbers from provided data and source at end",
+    "Insight with specific volume/KD numbers from provided data and source at end",
+    "Insight with specific volume/KD numbers from provided data and source at end"
   ],
   "immediate_actions": [
     "Priority SEO action 1",
     "Priority SEO action 2",
     "Priority SEO action 3"
   ],
-  "keywords": [
-    {
-      "keyword": "string",
-      "volume": number,
-      "kd": number,
-      "cpc": number,
-      "intent": "informational|commercial|transactional",
-      "ranking_potential": "Easy Win|Moderate|Long Game"
-    }
-  ] (exactly 50, based on real data, sorted by volume),
-  "serp_landscape": [
-    {
-      "position": number,
-      "title": "string",
-      "url": "string",
-      "da": number,
-      "word_count": number,
-      "backlinks": number,
-      "estimated_traffic": number,
-      "strengths": ["string", "string"],
-      "weaknesses": ["string", "string"],
-      "content_gap": "string"
-    }
-  ] (exactly 8),
   "content_roadmap": [
     {
-      "week": number,
+      "week": 1,
       "title": "string",
-      "primary_keyword": "string",
+      "primary_keyword": "string (use a real keyword from provided list)",
       "secondary_keywords": ["string", "string"],
       "content_type": "Pillar|Listicle|How-to|Case Study",
-      "word_count_target": number,
+      "word_count_target": 2000,
       "outline": ["string", "string", "string", "string", "string"],
-      "expected_traffic": number
+      "expected_traffic": 100
     }
   ] (exactly 12 weeks),
   "link_acquisition": {
@@ -124,9 +101,9 @@ Return JSON with this exact structure:
     "target_sites": [
       {
         "site": "string",
-        "da": number,
-        "type": "string",
-        "contact": "string",
+        "da": 50,
+        "type": "blog",
+        "contact": "email",
         "pitch": "string"
       }
     ] (8 sites),
@@ -144,11 +121,7 @@ Return JSON with this exact structure:
   "growth_accelerators": ["string"] (5 tips),
   "related_resources": [
     { "name": "string", "url": "string" }
-  ] (8 resources),
-  "chart_data": {
-    "trend_12m": [number] (12 values),
-    "traffic_growth_6m": [number] (6 values)
-  }
+  ] (8 resources)
 }`;
 
 const countryNames: Record<string, string> = {
@@ -166,12 +139,30 @@ const countryNames: Record<string, string> = {
   my: 'Malaysia',
 };
 
-function generateMarkdown(a: any, niche: string, country: string, reportId: string): string {
+interface RealKeyword {
+  keyword: string;
+  volume: number;
+  cpc: number;
+  competition: number; // 0-1, we'll convert to KD later if needed
+  intent?: string;
+  ranking_potential?: string;
+}
+
+function generateMarkdown(
+  analysis: any,
+  realKeywords: RealKeyword[],
+  realSerp: any[],
+  trendData: number[] | null,
+  niche: string,
+  country: string,
+  reportId: string
+): string {
   const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
   const now = new Date().toISOString().replace('T', ' ').substring(0, 19) + ' UTC';
 
   let m = '';
 
+  // Header
   m += `MusePRO\n`;
   m += `Real-Time Market Research\n`;
   m += `Intelligence Division\n`;
@@ -183,44 +174,52 @@ function generateMarkdown(a: any, niche: string, country: string, reportId: stri
   m += `Classification: CONFIDENTIAL\n`;
   m += `──────────────────────────────────────────────────────────────\n\n`;
 
-  m += `TABLE OF CONTENTS\n`;
+  // 1
+  m += `1. YOUR OPPORTUNITY AT A GLANCE\n`;
   m += `──────────────────────────────────────────────────────────────\n`;
-  m += `1. Executive Brief\n2. Trend Assessment\n3. Keyword Opportunities (Top 50)\n4. SERP Landscape\n5. Content Roadmap (12 Weeks)\n6. Link Acquisition Strategy\n7. On‑Page Optimization Checklist\n8. Growth Accelerators\n9. Related Resources\n\n`;
-  m += `──────────────────────────────────────────────────────────────\n\n`;
-
-  m += `1. EXECUTIVE BRIEF\n──────────────────────────────────────────────────────────────\n`;
-  m += `This report analyzes the organic search landscape for "${niche}" in ${countryNames[country] || country}. The trend is ${a.trend_assessment || 'N/A'} with ${a.keywords?.length || 50} keyword opportunities identified.\n\n`;
-  if (a.key_insights?.length) {
-    a.key_insights.forEach((f: string, i: number) => { m += `  ${i+1}. ${f}\n`; });
+  m += `We analyzed the organic search landscape for "${niche}" in ${countryNames[country] || country}. The trend is ${analysis.trend_assessment || 'N/A'} with ${realKeywords.length} keyword opportunities identified.\n\n`;
+  if (analysis.key_insights?.length) {
+    m += `Key Insights:\n`;
+    analysis.key_insights.forEach((f: string, i: number) => { m += `  ${i+1}. ${f}\n`; });
+    m += `\n`;
+  }
+  if (analysis.immediate_actions?.length) {
+    m += `What To Do First:\n`;
+    analysis.immediate_actions.forEach((w: string, i: number) => { m += `  ${i+1}. ${w}\n`; });
     m += `\n`;
   }
 
-  if (a.immediate_actions?.length) {
-    m += `Priority Actions:\n`;
-    a.immediate_actions.forEach((w: string, i: number) => { m += `  ${i+1}. ${w}\n`; });
-    m += `\n`;
-  }
+  // 2
+  m += `2. WHAT THE DATA SHOWS\n`;
+  m += `──────────────────────────────────────────────────────────────\n${analysis.trend_analysis || ''}\n`;
+  m += `Source: Google Trends via Keywords Everywhere\n\n`;
 
-  m += `2. TREND ASSESSMENT\n──────────────────────────────────────────────────────────────\n${a.trend_analysis}\n\n`;
-
-  m += `3. KEYWORD OPPORTUNITIES (TOP 50)\n──────────────────────────────────────────────────────────────\nSource: Google Keyword Planner via Keywords Everywhere\n\n`;
-  m += `| # | Keyword | Volume | KD | CPC | Intent | Potential |\n|---|---------|--------|-----|-----|--------|----------|\n`;
-  a.keywords?.forEach((k: any, i: number) => { m += `| ${i+1} | ${k.keyword} | ${k.volume?.toLocaleString()} | ${k.kd} | $${k.cpc} | ${k.intent} | ${k.ranking_potential} |\n`; });
+  // 3
+  m += `3. KEYWORDS WORTH TARGETING\n`;
+  m += `──────────────────────────────────────────────────────────────\nSource: Google Keyword Planner via Keywords Everywhere\n\n`;
+  m += `| # | Keyword | Volume | CPC | Intent | Potential |\n`;
+  m += `|---|---------|--------|-----|--------|----------|\n`;
+  realKeywords.forEach((k, i) => {
+    const intent = k.intent || 'informational';
+    const potential = k.competition < 0.33 ? 'Easy Win' : k.competition < 0.66 ? 'Moderate' : 'Long Game';
+    m += `| ${i+1} | ${k.keyword} | ${k.volume?.toLocaleString()} | $${k.cpc?.toFixed(2)} | ${intent} | ${potential} |\n`;
+  });
   m += `\n`;
 
-  m += `4. SERP LANDSCAPE\n──────────────────────────────────────────────────────────────\nSource: Google Search Results via SerpAPI\n\n`;
-  a.serp_landscape?.forEach((s: any) => {
-    m += `Position #${s.position}: ${s.title}\n`;
+  // 4
+  m += `4. WHO'S RANKING TODAY\n`;
+  m += `──────────────────────────────────────────────────────────────\nSource: Google Search Results via SerpAPI\n\n`;
+  realSerp.forEach((s, i) => {
+    m += `Position #${i+1}: ${s.title}\n`;
     m += `  URL: ${s.url}\n`;
-    m += `  DA: ${s.da} | Words: ${s.word_count} | Backlinks: ${s.backlinks}\n`;
-    m += `  Est. Traffic: ${s.estimated_traffic?.toLocaleString()}/mo\n`;
-    m += `  Strengths: ${s.strengths?.join(', ')}\n`;
-    m += `  Weaknesses: ${s.weaknesses?.join(', ')}\n`;
-    m += `  Gap: ${s.content_gap}\n\n`;
+    m += `  Snippet: ${s.snippet?.substring(0, 120) || 'N/A'}\n\n`;
   });
+  m += `\n`;
 
-  m += `5. CONTENT ROADMAP (12 WEEKS)\n──────────────────────────────────────────────────────────────\n`;
-  a.content_roadmap?.forEach((c: any) => {
+  // 5
+  m += `5. YOUR CONTENT GAME PLAN\n`;
+  m += `──────────────────────────────────────────────────────────────\n`;
+  analysis.content_roadmap?.forEach((c: any) => {
     m += `Week ${c.week}: ${c.title}\n`;
     m += `  Keyword: ${c.primary_keyword} | Type: ${c.content_type}\n`;
     m += `  Secondary: ${c.secondary_keywords?.join(', ')}\n`;
@@ -229,9 +228,11 @@ function generateMarkdown(a: any, niche: string, country: string, reportId: stri
     m += `  Est. Traffic: ${c.expected_traffic?.toLocaleString()}/mo\n\n`;
   });
 
-  const bs = a.link_acquisition;
+  // 6
+  const bs = analysis.link_acquisition;
   if (bs) {
-    m += `6. LINK ACQUISITION STRATEGY\n──────────────────────────────────────────────────────────────\n${bs.overview}\n\n`;
+    m += `6. AUTHORITY BUILDING\n`;
+    m += `──────────────────────────────────────────────────────────────\n${bs.overview}\n\n`;
     if (bs.target_sites?.length) {
       m += `Target Sites:\n`;
       bs.target_sites.forEach((s: any, i: number) => {
@@ -253,25 +254,40 @@ function generateMarkdown(a: any, niche: string, country: string, reportId: stri
     }
   }
 
-  m += `7. ON‑PAGE OPTIMIZATION CHECKLIST\n──────────────────────────────────────────────────────────────\n`;
-  a.onpage_checklist?.forEach((item: string, i: number) => { m += `${i+1}. ${item}\n`; });
+  // 7
+  m += `7. ON-PAGE QUICK WINS\n`;
+  m += `──────────────────────────────────────────────────────────────\n`;
+  analysis.onpage_checklist?.forEach((item: string, i: number) => { m += `${i+1}. ${item}\n`; });
   m += `\n`;
 
-  if (a.growth_accelerators?.length) {
-    m += `8. GROWTH ACCELERATORS\n──────────────────────────────────────────────────────────────\n`;
-    a.growth_accelerators.forEach((tip: string, i: number) => { m += `${i+1}. ${tip}\n`; });
+  // 8
+  if (analysis.growth_accelerators?.length) {
+    m += `8. GROWTH LEVERS\n`;
+    m += `──────────────────────────────────────────────────────────────\n`;
+    analysis.growth_accelerators.forEach((tip: string, i: number) => { m += `${i+1}. ${tip}\n`; });
     m += `\n`;
   }
 
-  if (a.related_resources?.length) {
-    m += `9. RELATED RESOURCES\n──────────────────────────────────────────────────────────────\n`;
-    a.related_resources.forEach((res: any, i: number) => { m += `${i+1}. ${res.name} – ${res.url}\n`; });
+  // 9
+  if (analysis.related_resources?.length) {
+    m += `9. TOOLS & RESOURCES\n`;
+    m += `──────────────────────────────────────────────────────────────\n`;
+    analysis.related_resources.forEach((res: any, i: number) => { m += `${i+1}. ${res.name} – ${res.url}\n`; });
     m += `\n`;
   }
 
-  m += `METHODOLOGY & SOURCES\n──────────────────────────────────────────────────────────────\nThis report is based on live data collected on ${today} from:\n\n• Google Search Results via SerpAPI (serpapi.com)\n• Google Keyword Planner via Keywords Everywhere (keywordseverywhere.com)\n• Google Trends via Keywords Everywhere\n• Analysis Engine: GPT‑4o (openai.com)\n\nAll data points can be independently verified against their public sources.\n\n`;
-  m += `DOCUMENT CONTROL\n──────────────────────────────────────────────────────────────\nClassification:  Confidential\nDistribution:    Client Only\nVersion:         1.0\nPrepared By:     MusePRO Intelligence Division\n\n`;
-  m += `DISCLAIMER\n──────────────────────────────────────────────────────────────\nThis document contains proprietary research conducted by MusePRO. The information herein is intended solely for the designated recipient. Unauthorized distribution, copying, or disclosure is strictly prohibited.\n\nWhile every effort has been made to ensure accuracy, market conditions change rapidly. Verify critical data points before making business decisions.\n\n`;
+  // Methodology & Sources
+  m += `METHODOLOGY & SOURCES\n`;
+  m += `──────────────────────────────────────────────────────────────\nThis report is based on live data collected on ${today} from:\n\n• Google Search Results via SerpAPI (serpapi.com)\n• Google Keyword Planner via Keywords Everywhere (keywordseverywhere.com)\n• Google Trends via Keywords Everywhere\n• Analysis Engine: GPT‑4o (openai.com)\n\nAll data points can be independently verified against their public sources.\n\n`;
+
+  // Document Control
+  m += `DOCUMENT CONTROL\n`;
+  m += `──────────────────────────────────────────────────────────────\nClassification:  Confidential\nDistribution:    Client Only\nVersion:         1.0\nPrepared By:     MusePRO Intelligence Division\n\n`;
+
+  // Disclaimer
+  m += `DISCLAIMER\n`;
+  m += `──────────────────────────────────────────────────────────────\nThis document contains proprietary research conducted by MusePRO. The information herein is intended solely for the designated recipient. Unauthorized distribution, copying, or disclosure is strictly prohibited.\n\nWhile every effort has been made to ensure accuracy, market conditions change rapidly. Verify critical data points before making business decisions.\n\n`;
+
   m += `──────────────────────────────────────────────────────────────\n© MusePRO — Intelligence Division. All Rights Reserved.\n`;
 
   return m;
@@ -286,52 +302,89 @@ export const createSEOReport = async (req: Request, res: Response, next: NextFun
 
     console.log(`SEO: "${niche}" in ${country}`);
 
+    // 1. Fetch REAL data
     const [searchData, relatedKwData, trendsArr] = await Promise.all([
       getSearchResults(niche, country),
       getRelatedKeywords(niche, country).catch(() => null),
       getTrends(niche, country).catch(() => null),
     ]);
 
-    const serp = searchData.organic_results?.slice(0, 8).map((r: any) => ({
-      position: r.position, title: r.title, url: r.link, snippet: r.snippet || ''
-    })) || [];
+    // 2. Build real keywords array
+    const realKeywords: RealKeyword[] = [];
+    if (relatedKwData?.data?.length) {
+      relatedKwData.data.slice(0, 50).forEach((k: any) => {
+        realKeywords.push({
+          keyword: k.keyword,
+          volume: k.vol || 0,
+          cpc: parseFloat(k.cpc?.value || '0'),
+          competition: k.competition || 0,
+          intent: k.intent || 'informational',
+          ranking_potential: k.competition < 0.33 ? 'Easy Win' : k.competition < 0.66 ? 'Moderate' : 'Long Game',
+        });
+      });
+    }
 
-    const relatedList = relatedKwData?.data?.slice(0, 50).map((k: any) => ({
-      keyword: k.keyword, volume: k.vol, cpc: parseFloat(k.cpc?.value || '0'), competition: k.competition,
-    })) || [];
-
-    const seedMetrics = await (async () => {
+    // If KWE failed, try seed keyword metrics as fallback
+    if (realKeywords.length === 0) {
       try {
         const { getKeywordMetrics } = await import('../services/keywordseverywhere');
         const m = await getKeywordMetrics([niche], country);
-        return m.data?.[0];
-      } catch { return null; }
-    })();
-
-    const allKeywords = [
-      ...(seedMetrics ? [{ keyword: seedMetrics.keyword, volume: seedMetrics.vol, cpc: parseFloat(seedMetrics.cpc?.value || '0'), competition: seedMetrics.competition }] : []),
-      ...relatedList,
-    ].slice(0, 55);
-
-    const userMsg = `Niche: ${niche}\nCountry: ${country}\n\nSERP: ${JSON.stringify(serp)}\n\nKeywords: ${JSON.stringify(allKeywords)}\n\nTrends: ${trendsArr ? JSON.stringify(trendsArr) : 'N/A'}`;
-
-    const ai = await runGroqWithRetry(PROMPT, userMsg);
-    const analysis = extractJSON(ai);
-
-    if (trendsArr && Array.isArray(trendsArr)) {
-      analysis.chart_data = analysis.chart_data || {};
-      analysis.chart_data.trend_12m = trendsArr;
+        if (m?.data?.[0]) {
+          const seed = m.data[0];
+          realKeywords.push({
+            keyword: seed.keyword,
+            volume: seed.vol || 0,
+            cpc: parseFloat(seed.cpc?.value || '0'),
+            competition: seed.competition || 0,
+            intent: 'informational',
+            ranking_potential: seed.competition < 0.33 ? 'Easy Win' : seed.competition < 0.66 ? 'Moderate' : 'Long Game',
+          });
+        }
+      } catch {}
     }
 
+    // 3. Build real SERP data
+    const realSerp = searchData.organic_results?.slice(0, 8).map((r: any) => ({
+      position: r.position,
+      title: r.title,
+      url: r.link,
+      snippet: r.snippet || '',
+    })) || [];
+
+    // 4. Prepare trend data
+    const trendArray = trendsArr && Array.isArray(trendsArr) ? trendsArr : null;
+
+    // 5. AI prompt with real data context
+    const aiContext = {
+      niche,
+      country,
+      realKeywords,
+      realSerp,
+      trendData: trendArray,
+    };
+
+    const ai = await runGroqWithRetry(PROMPT, JSON.stringify(aiContext));
+    const analysis = extractJSON(ai);
+
+    // 6. Generate markdown with real data
     const report = await Report.create({
-      type: 'seo', niche, country, value: '$99',
-      data: analysis, markdown: 'Intelligence report generation in progress...', charts: {}
+      type: 'seo',
+      niche,
+      country,
+      value: '$99',
+      data: {
+        ...analysis,
+        realKeywords,
+        realSerp,
+        trendData: trendArray,
+      },
+      markdown: 'Intelligence report generation in progress...',
+      charts: { trends: trendArray },
     });
 
     const reportId = `MKT-${report._id.toString().slice(-6).toUpperCase()}`;
-    const markdown = generateMarkdown(analysis, niche, country, reportId);
+    const markdown = generateMarkdown(analysis, realKeywords, realSerp, trendArray, niche, country, reportId);
     report.markdown = markdown;
-    report.charts = { trends: trendsArr };
     await report.save();
 
     const result = { id: report._id, ...report.toObject() };
