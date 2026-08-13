@@ -6,7 +6,7 @@ const MODELS = [
   'gemini-2.5-pro',
 ];
 
-const TIMEOUT_MS = 90000; // ✅ 90 seconds
+const TIMEOUT_MS = 90000;
 
 async function callGemini(model: string, systemPrompt: string, userMessage: string): Promise<string> {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${env.GEMINI_API_KEY}`;
@@ -22,7 +22,7 @@ async function callGemini(model: string, systemPrompt: string, userMessage: stri
         contents: [{ parts: [{ text: userMessage }] }],
         generationConfig: {
           temperature: 0.3,
-          maxOutputTokens: 15000, // ✅ reduced for faster response
+          maxOutputTokens: 60000,     // ✅ increased to prevent truncation
           topP: 0.95,
         }
       }),
@@ -69,7 +69,7 @@ export const runGroqPrompt = async (systemPrompt: string, userMessage: string): 
   throw new Error('All models failed. Please try again in 2 minutes.');
 };
 
-export const runGroqWithRetry = async (sys: string, msg: string, retries = 2): Promise<string> => {
+export const runGroqWithRetry = async (sys: string, msg: string, retries = 3): Promise<string> => {
   let last: any;
   for (let i = 0; i <= retries; i++) {
     try {
@@ -80,7 +80,7 @@ export const runGroqWithRetry = async (sys: string, msg: string, retries = 2): P
       last = e;
       console.error(`❌ Attempt ${i + 1}:`, e.message);
       if (i === retries) throw last;
-      const delay = 10000 * (i + 1); // 10s, 20s
+      const delay = 7000 * (i + 1);
       console.log(`⏳ Waiting ${delay / 1000}s...`);
       await new Promise(r => setTimeout(r, delay));
     }
