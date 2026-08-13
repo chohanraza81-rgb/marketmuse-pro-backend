@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import mongoose from 'mongoose';
 import { createProductReport, getProductReport } from '../controllers/product.controller';
 import { createSEOReport, getSEOReport } from '../controllers/seo.controller';
 import {
@@ -11,6 +12,8 @@ import {
   bulkDeleteReports,
   searchReports,
 } from '../controllers/report.controller';
+import { sendReportEmail } from '../services/email';
+import { Report } from '../models/Report';
 
 const router = Router();
 
@@ -19,7 +22,7 @@ router.get('/health', (req, res) => {
   res.json({
     status: 'ok',
     timestamp: new Date().toISOString(),
-    service: 'MarketMuse AI PRO MAX ULTRA',
+    service: 'MusePRO',
     version: '1.0.0',
   });
 });
@@ -41,5 +44,37 @@ router.delete('/reports/cleanup', cleanupOldReports);
 router.delete('/reports/bulk-delete', bulkDeleteReports);
 router.delete('/reports/:id', deleteReport);
 router.post('/reports/export-zip', bulkExportZip);
+
+// === Send Report via Email (Brevo) ===
+router.post('/send-report', async (req, res, next) => {
+  try {
+    const { email, reportId } = req.body;
+
+    if (!email || !reportId) {
+      return res.status(400).json({ error: 'email and reportId are required' });
+    }
+
+    // Validate ObjectId format
+    if (!mongoose.Types.ObjectId.isValid(reportId)) {
+      return res.status(400).json({ error: 'Invalid report ID' });
+    }
+
+    const report = await Report.findById(reportId);
+    if (!report) {
+      return res.status(404).json({ error: 'Report not found' });
+    }
+
+    await sendReportEmail(
+      email,
+      `Your Market Research Report: ${report.niche}`,
+      report.markdown,
+      `${report.type} - ${report.niche}`
+    );
+
+    res.json({ success: true, message: 'Report emailed successfully' });
+  } catch (err) {
+    next(err);
+  }
+});
 
 export default router;
