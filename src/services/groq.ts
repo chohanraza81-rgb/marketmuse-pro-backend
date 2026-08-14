@@ -1,9 +1,10 @@
 import { env } from '../config/env';
 
+// ✅ Only current working Gemini models
 const MODELS = [
   'gemini-3.5-flash',
-  'gemini-2.5-flash',
-  'gemini-2.5-pro',
+  'gemini-2.0-flash',
+  'gemini-flash-latest',
 ];
 
 const TIMEOUT_MS = 90000;
@@ -22,7 +23,7 @@ async function callGemini(model: string, systemPrompt: string, userMessage: stri
         contents: [{ parts: [{ text: userMessage }] }],
         generationConfig: {
           temperature: 0.3,
-          maxOutputTokens: 60000,     // ✅ increased to prevent truncation
+          maxOutputTokens: 60000,
           topP: 0.95,
         }
       }),
