@@ -2,7 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import { productResearchSchema } from '../validators/report';
 import { cacheService } from '../services/cache';
 import { getShoppingResults } from '../services/serpapi';
-import { getRelatedKeywords, RealKeywordData } from '../services/keywordseverywhere';
+import { getRelatedKeywords } from '../services/keywordseverywhere';
 import { getExchangeRates, convertPrice } from '../services/exchange';
 import { runGroqWithRetry } from '../services/groq';
 import { Report } from '../models/Report';
@@ -61,8 +61,7 @@ function generateMarkdown(
   rates: any,
   niche: string,
   country: string,
-  reportId: string,
-  keywordSource: string
+  reportId: string
 ): string {
   const sym = currencySymbols[country] || 'USD';
   const localPrice = (usd: number) => `${sym} ${convertPrice(usd, sym, rates).toLocaleString()}`;
@@ -88,7 +87,7 @@ function generateMarkdown(
   realProducts.forEach((p, i) => m += `| ${i + 1} | ${p.title} | ${localPrice(p.price)} | ${p.reviews} | ${p.source} |\n`);
   m += `\n`;
 
-  m += `4. KEYWORD LANDSCAPE\n──────────────────────────────────────────────────────────────\nSource: ${keywordSource}\n\n`;
+  m += `4. KEYWORD LANDSCAPE\n──────────────────────────────────────────────────────────────\nSource: Google Keyword Planner via Keywords Everywhere\n\n`;
   m += `| # | Keyword | Volume | CPC | KD |\n|---|---------|--------|-----|----|\n`;
   keywords.forEach((k, i) => {
     const vol = k.volume ? k.volume.toLocaleString() : 'Not Disclosed';
@@ -124,7 +123,7 @@ function generateMarkdown(
     m += `\n`;
   }
 
-  m += `METHODOLOGY & SOURCES\n──────────────────────────────────────────────────────────────\nThis report is based on live data collected on ${today} from:\n\n• Google Shopping via SerpApi (serpapi.com)\n• ${keywordSource}\n• ExchangeRate-API (exchangerate-api.com)\n• Analysis Engine: Gemini AI\n\nAll data points can be independently verified against their public sources.\n\n`;
+  m += `METHODOLOGY & SOURCES\n──────────────────────────────────────────────────────────────\nThis report is based on live data collected on ${today} from:\n\n• Google Shopping via SerpApi (serpapi.com)\n• Google Keyword Planner via Keywords Everywhere (keywordseverywhere.com)\n• ExchangeRate-API (exchangerate-api.com)\n• Analysis Engine: Gemini AI\n\nAll data points can be independently verified against their public sources.\n\n`;
   m += `DOCUMENT CONTROL\n──────────────────────────────────────────────────────────────\nClassification:  Confidential\nDistribution:    Client Only\nVersion:         1.0\nPrepared By:     MusePRO Intelligence Division\n\n`;
   m += `DISCLAIMER\n──────────────────────────────────────────────────────────────\nThis document contains proprietary research conducted by MusePRO. The information herein is intended solely for the designated recipient. Unauthorized distribution, copying, or disclosure is strictly prohibited.\n\nWhile every effort has been made to ensure accuracy, market conditions change rapidly. Verify critical data points before making business decisions.\n\n`;
   m += `──────────────────────────────────────────────────────────────\n© MusePRO — Intelligence Division. All Rights Reserved.\n`;
@@ -167,12 +166,7 @@ export const createProductReport = async (req: Request, res: Response, next: Nex
       console.log(`✅ Keywords Everywhere provided ${keywords.length} keywords`);
     } else {
       console.warn(`⚠️ Keywords Everywhere returned empty, using product titles as fallback`);
-      keywords = realProducts.slice(0, 10).map(p => ({
-        keyword: p.title,
-        volume: 0,
-        cpc: 0,
-        kd: 0,
-      }));
+      keywords = realProducts.slice(0, 10).map(p => ({ keyword: p.title, volume: 0, cpc: 0, kd: 0 }));
     }
 
     const aiContext = { niche, country, realProducts, keywords, exchangeRates: fx };
@@ -190,7 +184,7 @@ export const createProductReport = async (req: Request, res: Response, next: Nex
     });
 
     const reportId = `MKT-${report._id.toString().slice(-6).toUpperCase()}`;
-    const markdown = generateMarkdown(analysis, realProducts, keywords, fx, niche, country, reportId, 'Google Keyword Planner via Keywords Everywhere (keywordseverywhere.com)');
+    const markdown = generateMarkdown(analysis, realProducts, keywords, fx, niche, country, reportId);
     report.markdown = markdown;
     await report.save();
 
