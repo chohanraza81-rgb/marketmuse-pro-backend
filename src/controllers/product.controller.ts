@@ -37,7 +37,7 @@ const extractJSON = (raw: string): any => {
   }
 };
 
-const PROMPT = `You are a senior market analyst at MusePRO Intelligence Division. Write like a consultant presenting findings to a client. Be specific, data-driven, and professional. Use current year 2026. No undefined, no placeholder. If no value, use "N/A".`;
+const PROMPT = `You are a senior market analyst at MusePRO Intelligence Division. Write like a consultant presenting findings to a client. Be specific, data-driven, and professional. Use the current year 2026. No undefined, no placeholder. If no value, use "Not Disclosed".`;
 
 const currencySymbols: Record<string, string> = {
   us: 'USD', gb: 'GBP', ca: 'CAD', au: 'AUD', de: 'EUR', sg: 'SGD',
@@ -92,11 +92,11 @@ function generateMarkdown(
   let m = '';
   m += `MusePRO\nReal-Time Market Research\nIntelligence Division\n──────────────────────────────────────────────────────────────\nPRODUCT RESEARCH REPORT\n\nPrepared For: [Client Name]\nDate: ${today}\nReference: ${reportId}\nClassification: CONFIDENTIAL\n──────────────────────────────────────────────────────────────\n\n`;
 
-  m += `1. THE BOTTOM LINE\n──────────────────────────────────────────────────────────────\n${analysis.executive_brief}\n\n`;
-  m += `2. MARKET SCORECARD\n──────────────────────────────────────────────────────────────\nMarket Score: ${analysis.market_score}/100 ${scoreBar(analysis.market_score)}\nOpportunity Level: ${analysis.opportunity_level || 'N/A'}\n`;
-  const fp = analysis.financial_forecast;
-  if (fp?.month6_profit_optimistic) m += `Est. Monthly Profit Potential: ${localPrice(fp.month6_profit_optimistic)}\n`;
-  m += `Time to Profitability: ${fp?.months_to_profitability || 'N/A'} months\n\n`;
+  m += `1. THE BOTTOM LINE\n──────────────────────────────────────────────────────────────\n${analysis.executive_brief || 'Not Disclosed'}\n\n`;
+  m += `2. MARKET SCORECARD\n──────────────────────────────────────────────────────────────\nMarket Score: ${analysis.market_score ?? 'Not Disclosed'}/100 ${scoreBar(analysis.market_score || 0)}\nOpportunity Level: ${analysis.opportunity_level || 'Not Disclosed'}\n`;
+  const fp = analysis.financial_forecast || {};
+  if (fp.month6_profit_optimistic) m += `Est. Monthly Profit Potential: ${localPrice(fp.month6_profit_optimistic)}\n`;
+  m += `Time to Profitability: ${fp.months_to_profitability ?? 'Not Disclosed'} months\n\n`;
 
   if (analysis.key_insights?.length) {
     m += `Key Insights:\n`;
@@ -124,12 +124,12 @@ function generateMarkdown(
 
   m += `5. WHITE SPACE OPPORTUNITIES\n──────────────────────────────────────────────────────────────\n`;
   analysis.entry_opportunities?.forEach((g: any) => {
-    m += `${g.title}\n  ${g.description}\n  Revenue Potential: ${g.revenue_potential}\n  Difficulty: ${g.difficulty}\n  First Action: ${g.first_action}\n\n`;
+    m += `${g.title || 'Not Disclosed'}\n  ${g.description || 'Not Disclosed'}\n  Revenue Potential: ${g.revenue_potential || 'Not Disclosed'}\n  Difficulty: ${g.difficulty || 'Not Disclosed'}\n  First Action: ${g.first_action || 'Not Disclosed'}\n\n`;
   });
 
   m += `6. WHO'S BUYING\n──────────────────────────────────────────────────────────────\n`;
   analysis.audience_profiles?.forEach((p: any) => {
-    m += `${p.name} | ${p.age_range} | ${p.income}\n  Primary Need: ${p.primary_need}\n  Purchase Trigger: ${p.purchase_trigger}\n  Channels: ${p.channels?.join(', ')}\n  Messaging: "${p.messaging}"\n\n`;
+    m += `${p.name || 'Not Disclosed'} | ${p.age_range || 'Not Disclosed'} | ${p.income || 'Not Disclosed'}\n  Primary Need: ${p.primary_need || 'Not Disclosed'}\n  Purchase Trigger: ${p.purchase_trigger || 'Not Disclosed'}\n  Channels: ${p.channels?.join(', ') || 'Not Disclosed'}\n  Messaging: "${p.messaging || 'Not Disclosed'}"\n\n`;
   });
 
   if (analysis.growth_accelerators?.length) {
@@ -139,20 +139,20 @@ function generateMarkdown(
   }
 
   m += `8. YOUR 12-WEEK LAUNCH PLAN\n──────────────────────────────────────────────────────────────\n`;
-  analysis.execution_roadmap?.forEach((w: any) => {
-    m += `Week ${w.week}: ${w.phase}\n  ${w.tasks?.join('\n  ')}\n  KPI: ${w.kpi}\n\n`;
+  analysis.execution_roadmap?.forEach((w: any, idx: number) => {
+    m += `Week ${w.week || idx + 1}: ${w.phase || 'Not Disclosed'}\n  ${w.tasks?.join('\n  ') || 'Not Disclosed'}\n  KPI: ${w.kpi || 'Not Disclosed'}\n\n`;
   });
 
-  m += `9. MONEY MATH\n──────────────────────────────────────────────────────────────\nStartup Cost: ${localPrice(fp?.startup_cost)}\nMonthly Fixed Costs: ${localPrice(fp?.monthly_fixed_costs)}\nAvg Profit Per Unit: ${localPrice(fp?.avg_profit_per_unit)}\nUnits to Breakeven: ${fp?.units_to_breakeven}\nTime to Profitability: ${fp?.months_to_profitability} months\nMonth 6 Profit (Conservative): ${localPrice(fp?.month6_profit_conservative)}\nMonth 6 Profit (Optimistic): ${localPrice(fp?.month6_profit_optimistic)}\n\n`;
+  m += `9. MONEY MATH\n──────────────────────────────────────────────────────────────\nStartup Cost: ${localPrice(fp.startup_cost || 0)}\nMonthly Fixed Costs: ${localPrice(fp.monthly_fixed_costs || 0)}\nAvg Profit Per Unit: ${localPrice(fp.avg_profit_per_unit || 0)}\nUnits to Breakeven: ${fp.units_to_breakeven ?? 'Not Disclosed'}\nTime to Profitability: ${fp.months_to_profitability ?? 'Not Disclosed'} months\nMonth 6 Profit (Conservative): ${localPrice(fp.month6_profit_conservative || 0)}\nMonth 6 Profit (Optimistic): ${localPrice(fp.month6_profit_optimistic || 0)}\n\n`;
 
   m += `10. WHAT COULD GO WRONG\n──────────────────────────────────────────────────────────────\n`;
   analysis.risk_matrix?.forEach((r: any) => {
-    m += `Risk: ${r.risk}\n  Probability: ${r.probability} | Impact: ${r.impact}\n  Mitigation: ${r.mitigation}\n\n`;
+    m += `Risk: ${r.risk || 'Not Disclosed'}\n  Probability: ${r.probability || 'Not Disclosed'} | Impact: ${r.impact || 'Not Disclosed'}\n  Mitigation: ${r.mitigation || 'Not Disclosed'}\n\n`;
   });
 
   if (analysis.related_resources?.length) {
     m += `11. TOOLS & LINKS\n──────────────────────────────────────────────────────────────\n`;
-    analysis.related_resources.forEach((res: any, i: number) => (m += `${i + 1}. ${res.name} – ${res.url}\n`));
+    analysis.related_resources.forEach((res: any, i: number) => (m += `${i + 1}. ${res.name || 'Not Disclosed'} – ${res.url || 'Not Disclosed'}\n`));
     m += `\n`;
   }
 
@@ -195,9 +195,8 @@ export const createProductReport = async (req: Request, res: Response, next: Nex
       console.warn(`⚠️ DataForSEO failed for product report, using real SERP queries`);
       keywordSource = 'Live Google SERP via Serper API (serper.dev)';
       keywords = (serperData?.relatedSearches || []).slice(0, 30).map((q: string) => ({ keyword: q, volume: null, cpc: null, kd: null }));
-      if (keywords.length < 5) {
-        const fallbackKeywords = [`${niche} guide`, `${niche} tips`, `best ${niche}`, `how to ${niche}`];
-        keywords = fallbackKeywords.map((q: string) => ({ keyword: q, volume: null, cpc: null, kd: null }));
+      if (keywords.length === 0) {
+        keywords = [`${niche} products`, `best ${niche}`, `${niche} 2026`, `buy ${niche} online`].map((q: string) => ({ keyword: q, volume: null, cpc: null, kd: null }));
       }
     }
 
