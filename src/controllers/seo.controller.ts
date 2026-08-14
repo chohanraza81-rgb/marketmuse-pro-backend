@@ -3,35 +3,52 @@ import { seoReportSchema } from '../validators/report';
 import { cacheService } from '../services/cache';
 import { getKeywordData, RealKeywordData } from '../services/dataforseo';
 import { getSerperResults } from '../services/serper';
-import { getKeywordSuggestions } from '../services/serpapi'; // for related questions/PAA
+import { getKeywordSuggestions } from '../services/serpapi';
 import { runGroqWithRetry } from '../services/groq';
 import { Report } from '../models/Report';
 import { ZodError } from 'zod';
 
+// Robust JSON extraction
 const extractJSON = (raw: string): any => {
-  let cleaned = raw.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
+  let cleaned = raw
+    .replace(/```json\s*/gi, '')
+    .replace(/```\s*/g, '')
+    .trim();
+
   const start = cleaned.indexOf('{');
   const end = cleaned.lastIndexOf('}');
   if (start !== -1 && end !== -1 && end > start) {
     cleaned = cleaned.substring(start, end + 1);
   }
+
   try {
     return JSON.parse(cleaned);
   } catch (err) {
-    const fixed = cleaned.replace(/,\s*}/g, '}').replace(/,\s*]/g, ']').replace(/([{,]\s*)(\w+)(\s*:)/g, '$1"$2"$3');
+    const fixed = cleaned
+      .replace(/,\s*}/g, '}')
+      .replace(/,\s*]/g, ']')
+      .replace(/([{,]\s*)(\w+)(\s*:)/g, '$1"$2"$3');
     try {
       return JSON.parse(fixed);
     } catch (e2) {
       let completed = cleaned;
       let braceCount = (completed.match(/{/g) || []).length;
       let closeCount = (completed.match(/}/g) || []).length;
-      while (closeCount < braceCount) { completed += '}'; closeCount++; }
+      while (closeCount < braceCount) {
+        completed += '}';
+        closeCount++;
+      }
       let bracketCount = (completed.match(/\[/g) || []).length;
       let closeBracketCount = (completed.match(/\]/g) || []).length;
-      while (closeBracketCount < bracketCount) { completed += ']'; closeBracketCount++; }
+      while (closeBracketCount < bracketCount) {
+        completed += ']';
+        closeBracketCount++;
+      }
       try {
         return JSON.parse(completed);
       } catch (e3) {
+        console.error('❌ JSON extraction failed. Raw length:', raw.length);
+        console.error('Last 500 chars:', cleaned.substring(cleaned.length - 500));
         throw new Error('AI response is not valid JSON');
       }
     }
@@ -145,6 +162,7 @@ function generateMarkdown(
   const now = new Date().toISOString().replace('T', ' ').substring(0, 19) + ' UTC';
 
   let m = '';
+
   m += `MusePRO\n`;
   m += `Real-Time Market Research\n`;
   m += `Intelligence Division\n`;
@@ -257,8 +275,9 @@ function generateMarkdown(
     m += `\n`;
   }
 
+  // Corrected Methodology & Sources
   m += `METHODOLOGY & SOURCES\n`;
-  m += `──────────────────────────────────────────────────────────────\nThis report is based on live data collected on ${today} from:\n\n• DataForSEO – Google Keyword Planner data (volume, CPC, KD)\n• Serper API – Live Google SERP results\n• SerpApi – People Also Ask questions\n• ExchangeRate-API – Currency conversion\n• Analysis Engine: Gemini AI\n\nAll data points can be independently verified against their public sources.\n\n`;
+  m += `──────────────────────────────────────────────────────────────\nThis report is based on live data collected on ${today} from:\n\n• Google Keyword Planner via DataForSEO (dataforseo.com)\n• Live Google SERP via Serper API (serper.dev)\n• People Also Ask via SerpApi (serpapi.com)\n• Analysis Engine: Gemini AI\n\nAll data points can be independently verified against their public sources.\n\n`;
 
   m += `DOCUMENT CONTROL\n`;
   m += `──────────────────────────────────────────────────────────────\nClassification:  Confidential\nDistribution:    Client Only\nVersion:         1.0\nPrepared By:     MusePRO Intelligence Division\n\n`;
@@ -282,6 +301,11 @@ export const createSEOReport = async (req: Request, res: Response, next: NextFun
 
     // 1. Fetch real keywords
     const keywords = await getKeywordData(niche, country, 50);
+
+    // ✅ CRITICAL: Throw if keyword data is empty
+    if (!keywords || keywords.length === 0) {
+      throw new Error('No keyword data received from DataForSEO. Please check your DataForSEO API credentials, credits, or location code.');
+    }
 
     // 2. Fetch real SERP results
     const serperData = await getSerperResults(niche, country);
