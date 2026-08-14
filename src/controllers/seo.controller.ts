@@ -1,11 +1,13 @@
 import { Request, Response, NextFunction } from 'express';
 import { seoReportSchema } from '../validators/report';
 import { cacheService } from '../services/cache';
-import { getRelatedKeywords, getTrends } from '../services/keywordseverywhere';
-import { getSearchResults } from '../services/serpapi';
+import { getRelatedKeywords, getTrends, RealKeywordData } from '../services/keywordseverywhere';
+import { getSearchResults, getKeywordSuggestions } from '../services/serpapi';
 import { runGroqWithRetry } from '../services/groq';
 import { Report } from '../models/Report';
 import { ZodError } from 'zod';
+
+// ... (rest of file same as previously provided, but with imports corrected)
 
 const extractJSON = (raw: string): any => {
   let cleaned = raw.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
@@ -163,14 +165,15 @@ export const createSEOReport = async (req: Request, res: Response, next: NextFun
 
     console.log(`SEO: "${niche}" in ${country}`);
 
+    // 1. Fetch real data
     const [serpData, relatedQuestions, kweData] = await Promise.all([
       getSearchResults(niche, country),
       getKeywordSuggestions(niche, country).catch(() => []),
       getRelatedKeywords(niche, country).catch(() => null),
     ]);
 
+    // 2. Build keyword list from Keywords Everywhere
     let keywords: KeywordData[] = [];
-
     if (kweData?.data?.length) {
       keywords = kweData.data.slice(0, 50).map((k: any) => ({
         keyword: k.keyword,
