@@ -17,26 +17,17 @@ export interface RealKeywordData {
   competition: number;
 }
 
+export interface DataForSEOKeywordResult {
+  keywords: RealKeywordData[];
+  trend: number[];
+}
+
 const locationCodes: Record<string, number> = {
-  us: 2840,
-  gb: 2826,
-  ca: 2124,
-  au: 2036,
-  de: 2276,
-  sg: 2702,
-  sa: 2682,
-  ae: 2784,
-  pk: 2586,
-  in: 2356,
-  tr: 2792,
-  my: 2458,
+  us: 2840, gb: 2826, ca: 2124, au: 2036, de: 2276, sg: 2702,
+  sa: 2682, ae: 2784, pk: 2586, in: 2356, tr: 2792, my: 2458,
 };
 
-export async function getKeywordData(keyword: string, country: string, limit = 50): Promise<RealKeywordData[]> {
-  const cacheKey = `dataforseo_${country}_${keyword}`;
-  const cached = cacheService.get<RealKeywordData[]>(cacheKey);
-  if (cached) return cached;
-
+async function fetchFromDataForSEO(keyword: string, country: string, limit: number): Promise<DataForSEOResponse> {
   const locationCode = locationCodes[country.toLowerCase()] || 2840;
   const response = await fetch('https://api.dataforseo.com/v3/keywords_data/google/keywords_for_keywords/live', {
     method: 'POST',
@@ -59,7 +50,15 @@ export async function getKeywordData(keyword: string, country: string, limit = 5
     throw new Error(`DataForSEO API error: ${response.status}`);
   }
 
-  const data = (await response.json()) as DataForSEOResponse;
+  return (await response.json()) as DataForSEOResponse;
+}
+
+export async function getKeywordDataAndTrend(keyword: string, country: string, limit = 50): Promise<DataForSEOKeywordResult> {
+  const cacheKey = `dataforseo_trend_${country}_${keyword}`;
+  const cached = cacheService.get<DataForSEOKeywordResult>(cacheKey);
+  if (cached) return cached;
+
+  const data = await fetchFromDataForSEO(keyword, country, limit);
   const keywordsRaw = data.tasks?.[0]?.result?.[0]?.keywords || [];
 
   const keywords: RealKeywordData[] = keywordsRaw.map((k: any) => ({
@@ -70,6 +69,9 @@ export async function getKeywordData(keyword: string, country: string, limit = 5
     competition: k.competition || 0,
   }));
 
-  cacheService.set(cacheKey, keywords, 86400);
-  return keywords;
+  const trend: number[] = keywordsRaw[0]?.monthly_searches?.map((m: any) => m.search_volume || 0) || [];
+
+  const result: DataForSEOKeywordResult = { keywords, trend };
+  cacheService.set(cacheKey, result, 86400);
+  return result;
 }
