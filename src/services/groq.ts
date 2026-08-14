@@ -1,8 +1,20 @@
 import { env } from '../config/env';
 
-// First 2 attempts with Pro models, then 2 with Flash = total 4 attempts
-const PRO_MODELS = ['gemini-2.5-pro', 'gemini-1.5-pro'];
-const FLASH_MODELS = ['gemini-2.5-flash', 'gemini-1.5-flash'];
+// Pro models: first 2 attempts
+const PRO_MODELS = [
+  'gemini-2.5-pro',
+  'gemini-1.5-pro',
+];
+
+// Flash models: next 4 attempts
+const FLASH_MODELS = [
+  'gemini-3.5-flash',
+  'gemini-flash-latest',
+  'gemini-2.0-flash',
+  'gemini-1.5-flash',
+];
+
+// Total 6 attempts
 const ALL_MODELS = [...PRO_MODELS, ...FLASH_MODELS];
 
 const TIMEOUT_MS = 90000;
@@ -69,16 +81,16 @@ export const runGroqPrompt = async (systemPrompt: string, userMessage: string): 
   throw new Error('All Gemini models failed. Please try again later.');
 };
 
-export const runGroqWithRetry = async (sys: string, msg: string, retries = 3): Promise<string> => {
+export const runGroqWithRetry = async (sys: string, msg: string, retries = 2): Promise<string> => {
   let last: any;
   for (let i = 0; i <= retries; i++) {
     try {
-      console.log(`🚀 Overall attempt ${i + 1}/${retries + 1}`);
+      console.log(`🚀 Overall retry ${i + 1}/${retries + 1}`);
       const r = await runGroqPrompt(sys, msg);
       return r;
     } catch (e: any) {
       last = e;
-      console.error(`❌ Overall attempt ${i + 1} failed: ${e.message}`);
+      console.error(`❌ Overall retry ${i + 1} failed: ${e.message}`);
       if (i === retries) throw last;
       const delay = 7000 * (i + 1);
       console.log(`⏳ Waiting ${delay / 1000}s...`);
