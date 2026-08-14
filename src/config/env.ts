@@ -10,6 +10,7 @@ export const env = {
   DATAFORSEO_PASSWORD: process.env.DATAFORSEO_PASSWORD || '',
   SERPAPI_KEY: process.env.SERPAPI_KEY || '',
   EXCHANGE_API_KEY: process.env.EXCHANGE_API_KEY || '',
+  KEYWORDS_EVERYWHERE_API_KEY: process.env.KEYWORDS_EVERYWHERE_API_KEY || '', // kept for compatibility
   BREVO_API_KEY: process.env.BREVO_API_KEY || '',
   ALLOWED_ORIGIN: process.env.ALLOWED_ORIGIN || 'http://localhost:3000',
   NODE_ENV: process.env.NODE_ENV || 'development',
