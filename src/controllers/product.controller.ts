@@ -2,7 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import { productResearchSchema } from '../validators/report';
 import { cacheService } from '../services/cache';
 import { getShoppingResults } from '../services/serpapi';
-import { getKeywordData, RealKeywordData } from '../services/keywordseverywhere';
+import { getRelatedKeywords, RealKeywordData } from '../services/keywordseverywhere';
 import { getExchangeRates, convertPrice } from '../services/exchange';
 import { runGroqWithRetry } from '../services/groq';
 import { Report } from '../models/Report';
@@ -144,7 +144,7 @@ export const createProductReport = async (req: Request, res: Response, next: Nex
     const [shoppingData, fx, kweData] = await Promise.all([
       getShoppingResults(niche, country).catch(() => null),
       getExchangeRates(),
-      getKeywordData(niche, country).catch(() => null),
+      getRelatedKeywords(niche, country).catch(() => null),
     ]);
 
     if (!shoppingData) throw new Error('Unable to retrieve live shopping data.');
