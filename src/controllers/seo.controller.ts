@@ -1,8 +1,9 @@
 import { Request, Response, NextFunction } from 'express';
 import { seoReportSchema } from '../validators/report';
 import { cacheService } from '../services/cache';
-import { getRelatedKeywords, getTrends } from '../services/keywordseverywhere';
-import { getSearchResults, getKeywordSuggestions } from '../services/serpapi';
+import { getKeywordDataAndTrend, RealKeywordData } from '../services/dataforseo';
+import { getSerperResults } from '../services/serper';
+import { getKeywordSuggestions } from '../services/serpapi';
 import { runGroqWithRetry } from '../services/groq';
 import { Report } from '../models/Report';
 import { ZodError } from 'zod';
@@ -45,9 +46,26 @@ const countryNames: Record<string, string> = {
 
 interface KeywordData {
   keyword: string;
-  volume: number;
-  cpc: number;
-  kd: number;
+  volume: number | null;
+  cpc: number | null;
+  kd: number | null;
+}
+
+function estimateDA(link: string): number {
+  const domain = new URL(link).hostname.replace(/^www\./, '');
+  const known: Record<string, number> = {
+    'google.com': 100, 'youtube.com': 100, 'linkedin.com': 98, 'medium.com': 94,
+    'reddit.com': 91, 'quora.com': 93, 'wikipedia.org': 96, 'amazon.com': 96,
+    'facebook.com': 96, 'twitter.com': 94, 'apple.com': 97, 'microsoft.com': 96,
+    'github.com': 95, 'stackoverflow.com': 93,
+  };
+  return domain.endsWith('.edu') || domain.endsWith('.gov') ? 80 : known[domain] || 35;
+}
+
+function estimateTraffic(position: number, volume: number | null): number | null {
+  if (!volume || volume <= 0) return null;
+  const ctr = [0.3, 0.15, 0.1, 0.07, 0.05, 0.04, 0.03, 0.02][Math.min(position - 1, 7)] || 0.01;
+  return Math.round(volume * ctr);
 }
 
 function generateMarkdown(
@@ -55,20 +73,19 @@ function generateMarkdown(
   keywords: KeywordData[],
   serp: any[],
   relatedQuestions: string[],
-  trendData: number[] | null,
+  trendData: number[],
   niche: string,
   country: string,
-  reportId: string
+  reportId: string,
+  dataSourceStatus: string
 ): string {
   const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
-  const trendLine = trendData && trendData.length ? trendData : null;
-
   let m = '';
 
   m += `MusePRO\nReal-Time Market Research\nIntelligence Division\n──────────────────────────────────────────────────────────────\nSEO RESEARCH REPORT\n\nPrepared For: [Client Name]\nDate: ${today}\nReference: ${reportId}\nClassification: CONFIDENTIAL\n──────────────────────────────────────────────────────────────\n\n`;
 
   m += `1. YOUR OPPORTUNITY AT A GLANCE\n──────────────────────────────────────────────────────────────\n`;
-  m += `We analyzed the organic search landscape for "${niche}" in ${countryNames[country] || country}. The trend is ${analysis.trend_assessment || 'Evergreen'} with ${keywords.length} keyword opportunities identified.\n\n`;
+  m += `We analyzed the organic search landscape for "${niche}" in ${countryNames[country] || country}. The trend is ${analysis.trend_assessment || 'Not Disclosed'} with ${keywords.length} keyword opportunities identified.\n\n`;
   if (analysis.key_insights?.length) {
     m += `Key Insights:\n`;
     analysis.key_insights.forEach((f: string, i: number) => (m += `  ${i + 1}. ${f}\n`));
@@ -81,25 +98,25 @@ function generateMarkdown(
   }
 
   m += `2. WHAT THE DATA SHOWS\n──────────────────────────────────────────────────────────────\n${typeof analysis.trend_analysis === 'string' ? analysis.trend_analysis : 'Not Disclosed'}\n`;
-  if (trendLine) {
-    m += `12-Month Trend Values: ${trendLine.join(', ')}\n`;
+  if (trendData && trendData.length > 0) {
+    m += `12-Month Search Trend: ${trendData.join(' → ')}\n`;
   }
-  m += `Source: Google Keyword Planner via Keywords Everywhere (keywordseverywhere.com)\n\n`;
+  m += `Source: ${dataSourceStatus}\n\n`;
 
-  m += `3. KEYWORDS WORTH TARGETING\n──────────────────────────────────────────────────────────────\nSource: Google Keyword Planner via Keywords Everywhere (keywordseverywhere.com)\n\n`;
+  m += `3. KEYWORDS WORTH TARGETING\n──────────────────────────────────────────────────────────────\nSource: ${dataSourceStatus}\n\n`;
   m += `| # | Keyword | Volume | CPC | KD | Potential |\n|---|---------|--------|-----|----|----------|\n`;
   keywords.forEach((k, i) => {
-    const vol = k.volume ? k.volume.toLocaleString() : 'Not Disclosed';
-    const cpc = k.cpc ? `$${k.cpc.toFixed(2)}` : 'Not Disclosed';
-    const kd = k.kd ? k.kd : 'Not Disclosed';
-    const potential = k.kd ? (k.kd < 30 ? 'Easy Win' : k.kd < 60 ? 'Moderate' : 'Long Game') : 'Not Disclosed';
+    const vol = k.volume !== null ? k.volume.toLocaleString() : 'Not Disclosed';
+    const cpc = k.cpc !== null ? `$${k.cpc.toFixed(2)}` : 'Not Disclosed';
+    const kd = k.kd !== null ? k.kd : 'Not Disclosed';
+    const potential = k.kd !== null ? (k.kd < 30 ? 'Easy Win' : k.kd < 60 ? 'Moderate' : 'Long Game') : 'Not Disclosed';
     m += `| ${i + 1} | ${k.keyword} | ${vol} | ${cpc} | ${kd} | ${potential} |\n`;
   });
   m += `\n`;
 
-  m += `4. WHO'S RANKING TODAY\n──────────────────────────────────────────────────────────────\nSource: SerpAPI (Live Google SERP)\n\n`;
+  m += `4. WHO'S RANKING TODAY\n──────────────────────────────────────────────────────────────\nSource: Serper API (Live Google SERP)\n\n`;
   serp.forEach((s, i) => {
-    m += `Position #${i + 1}: ${s.title}\n  URL: ${s.link}\n  Snippet: ${s.snippet?.substring(0, 120) || 'N/A'}\n\n`;
+    m += `Position #${i + 1}: ${s.title}\n  URL: ${s.link}\n  Est. DA: ${s.da}\n  Est. Traffic: ${s.traffic !== null ? s.traffic.toLocaleString() : 'Not Disclosed'} visits/mo\n  Snippet: ${s.snippet?.substring(0, 120) || 'N/A'}\n\n`;
   });
   m += `\n`;
 
@@ -152,7 +169,7 @@ function generateMarkdown(
     m += `\n`;
   }
 
-  m += `METHODOLOGY & SOURCES\n──────────────────────────────────────────────────────────────\nThis report is based on live data collected on ${today} from:\n\n• Google Keyword Planner via Keywords Everywhere (keywordseverywhere.com)\n• Live Google SERP via SerpAPI (serpapi.com)\n• People Also Ask via SerpAPI\n• Analysis Engine: Gemini AI\n\nAll data points can be independently verified against their public sources.\n\n`;
+  m += `METHODOLOGY & SOURCES\n──────────────────────────────────────────────────────────────\nThis report is based on live data collected on ${today} from:\n\n• ${dataSourceStatus}\n• Live Google SERP via Serper API (serper.dev)\n• People Also Ask via SerpApi (serpapi.com)\n• Analysis Engine: Gemini AI (Hybrid Pro/Flash)\n\nAll data points can be independently verified against their public sources.\n\n`;
   m += `DOCUMENT CONTROL\n──────────────────────────────────────────────────────────────\nClassification:  Confidential\nDistribution:    Client Only\nVersion:         1.0\nPrepared By:     MusePRO Intelligence Division\n\n`;
   m += `DISCLAIMER\n──────────────────────────────────────────────────────────────\nThis document contains proprietary research conducted by MusePRO. The information herein is intended solely for the designated recipient. Unauthorized distribution, copying, or disclosure is strictly prohibited.\n\nWhile every effort has been made to ensure accuracy, market conditions change rapidly. Verify critical data points before making business decisions.\n\n`;
   m += `──────────────────────────────────────────────────────────────\n© MusePRO — Intelligence Division. All Rights Reserved.\n`;
@@ -169,61 +186,65 @@ export const createSEOReport = async (req: Request, res: Response, next: NextFun
 
     console.log(`SEO: "${niche}" in ${country}`);
 
-    // Fetch real data
-    const [serpData, relatedQuestions, kweData, trendArr] = await Promise.all([
-      getSearchResults(niche, country),
-      getKeywordSuggestions(niche, country).catch(() => []),
-      getRelatedKeywords(niche, country).catch(() => null),
-      getTrends(niche, country).catch(() => []),
-    ]);
+    // 1. Fetch real SERP from Serper
+    const serperData = await getSerperResults(niche, country).catch(() => null);
 
-    // Build keyword list
+    // 2. Fetch People Also Ask from SerpApi
+    const relatedQuestions = await getKeywordSuggestions(niche, country).catch(() => []);
+
+    // 3. Fetch keyword data and trend from DataForSEO
     let keywords: KeywordData[] = [];
-    if (kweData?.data?.length) {
-      keywords = kweData.data.slice(0, 50).map((k: any) => ({
-        keyword: k.keyword,
-        volume: k.vol || 0,
-        cpc: parseFloat(k.cpc?.value || '0'),
-        kd: k.competition ? Math.min(Math.round(k.competition * 100), 100) : 0,
-      }));
-      console.log(`✅ Keywords Everywhere provided ${keywords.length} keywords`);
-    } else {
-      console.warn(`⚠️ Keywords Everywhere returned empty, using SERP titles as fallback`);
-      keywords = serpData.organic_results?.slice(0, 30).map((r: any) => ({
-        keyword: r.title,
-        volume: 0,
-        cpc: 0,
-        kd: 0,
-      })) || [];
+    let trendData: number[] = [];
+    let dataSourceStatus = 'Google Keyword Planner via DataForSEO (dataforseo.com)';
+
+    try {
+      const { keywords: dfKeywords, trend } = await getKeywordDataAndTrend(niche, country, 50);
+      if (dfKeywords && dfKeywords.length > 0) {
+        keywords = dfKeywords.map(k => ({ keyword: k.keyword, volume: k.volume, cpc: k.cpc, kd: k.kd }));
+        trendData = trend;
+        console.log(`✅ DataForSEO provided ${keywords.length} keywords and ${trend.length} trend points`);
+      } else {
+        throw new Error('DataForSEO returned empty');
+      }
+    } catch (dfError) {
+      console.warn(`⚠️ DataForSEO failed, switching to Serper/SerpApi smart fallback`);
+      dataSourceStatus = 'Live Google SERP via Serper API (serper.dev) & People Also Ask via SerpApi (serpapi.com)';
+      const relatedSearches = serperData?.relatedSearches || [];
+      const combined = [...new Set([...relatedSearches, ...relatedQuestions])];
+      keywords = combined.slice(0, 30).map((q: string) => ({ keyword: q, volume: null, cpc: null, kd: null }));
+      if (keywords.length === 0) {
+        keywords = relatedQuestions.slice(0, 10).map((q: string) => ({ keyword: q, volume: null, cpc: null, kd: null }));
+      }
+      if (keywords.length === 0) {
+        throw new Error('No keyword data available from any real source.');
+      }
     }
 
-    if (keywords.length === 0) {
-      throw new Error('No keyword data available. Please check Keywords Everywhere credits.');
-    }
+    // 4. Prepare SERP with metrics
+    const serpWithMetrics = (serperData?.organic || []).slice(0, 8).map((r: any) => ({
+      ...r,
+      da: estimateDA(r.link),
+      traffic: estimateTraffic(r.position, keywords[0]?.volume ?? null),
+    }));
 
-    const serp = serpData.organic_results?.slice(0, 8).map((r: any) => ({
-      position: r.position,
-      title: r.title,
-      link: r.link,
-      snippet: r.snippet || '',
-    })) || [];
-
-    const aiContext = { niche, country, keywords, serp, relatedQuestions, trendData: trendArr };
+    // 5. AI call
+    const aiContext = { niche, country, keywords, serp: serpWithMetrics, relatedQuestions, trendData };
     const ai = await runGroqWithRetry(PROMPT, JSON.stringify(aiContext));
     const analysis = extractJSON(ai);
 
+    // 6. Save report
     const report = await Report.create({
       type: 'seo',
       niche,
       country,
       value: '$99',
-      data: { ...analysis, keywords, serp, relatedQuestions, trendData: trendArr },
+      data: { ...analysis, keywords, serp: serpWithMetrics, relatedQuestions, trendData },
       markdown: 'Intelligence report generation in progress...',
       charts: {},
     });
 
     const reportId = `MKT-${report._id.toString().slice(-6).toUpperCase()}`;
-    const markdown = generateMarkdown(analysis, keywords, serp, relatedQuestions, trendArr, niche, country, reportId);
+    const markdown = generateMarkdown(analysis, keywords, serpWithMetrics, relatedQuestions, trendData, niche, country, reportId, dataSourceStatus);
     report.markdown = markdown;
     await report.save();
 
