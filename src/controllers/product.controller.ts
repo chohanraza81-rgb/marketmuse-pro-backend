@@ -37,7 +37,7 @@ const extractJSON = (raw: string): any => {
   }
 };
 
-const PROMPT = `You are a senior market analyst at MusePRO Intelligence Division. Write like a consultant who cares: direct, sharp, and genuinely excited about the opportunity. No corporate nonsense, no robotic transitions. Use current year 2026. Use only the provided real data. Return valid JSON with all required sections. No undefined, no placeholder. If no value, use "Not Disclosed".`;
+const PROMPT = `You are a senior market analyst at MusePRO Intelligence Division. Write like a consultant. Use current year 2026. Use only the provided real data. Return valid JSON with all required sections. No undefined, no placeholder. If no value, use "Not Disclosed".`;
 
 const currencySymbols: Record<string, string> = {
   us: 'USD', gb: 'GBP', ca: 'CAD', au: 'AUD', de: 'EUR', sg: 'SGD',
@@ -70,109 +70,6 @@ function estimateTraffic(position: number, volume: number | null): number | null
   if (!volume || volume <= 0) return null;
   const ctr = [0.3, 0.15, 0.1, 0.07, 0.05, 0.04, 0.03, 0.02][Math.min(position - 1, 7)] || 0.01;
   return Math.round(volume * ctr);
-}
-
-function generateSmartFallbackKeywords(serperData: any, realProducts: RealProduct[], niche: string): KeywordData[] {
-  const set = new Set<string>();
-  if (serperData?.relatedSearches) serperData.relatedSearches.forEach((q: string) => set.add(q));
-  if (serperData?.organic) {
-    serperData.organic.forEach((r: any) => {
-      let clean = r.title;
-      if (clean.includes('|')) clean = clean.split('|')[0].trim();
-      if (clean.includes(' - ')) clean = clean.split(' - ')[0].trim();
-      clean = clean.replace(/^\d+\.\s*/, '').trim();
-      if (clean) set.add(clean);
-    });
-  }
-  realProducts.forEach(p => set.add(p.title));
-  let keywords = Array.from(set).slice(0, 30).map(q => ({ keyword: q, volume: null, cpc: null, kd: null }));
-  if (keywords.length < 5) {
-    ['guide', 'tips', 'best', 'how to', '2026'].forEach(mod => set.add(`${niche} ${mod}`));
-    keywords = Array.from(set).slice(0, 30).map(q => ({ keyword: q, volume: null, cpc: null, kd: null }));
-  }
-  return keywords;
-}
-
-function ensureCompleteAnalysis(analysis: any, realProducts: RealProduct[], keywords: KeywordData[]): any {
-  const safe = { ...analysis };
-  if (!safe.market_score) safe.market_score = 50;
-  if (!safe.opportunity_level) safe.opportunity_level = 'Moderate';
-  if (!safe.executive_brief) safe.executive_brief = `The niche shows promise with ${realProducts.length} live products.`;
-  if (!Array.isArray(safe.key_insights) || safe.key_insights.length < 3) {
-    safe.key_insights = [
-      `${realProducts.length} products were identified from Google Shopping.`,
-      `${keywords.length} keyword opportunities were found.`,
-      'Competitive landscape shows room for differentiation.'
-    ];
-  }
-  if (!Array.isArray(safe.immediate_actions) || safe.immediate_actions.length < 3) {
-    safe.immediate_actions = [
-      'Analyze the top product titles and pricing.',
-      'Build a competitive analysis chart.',
-      'Develop a targeted marketing campaign.'
-    ];
-  }
-  if (!Array.isArray(safe.entry_opportunities) || safe.entry_opportunities.length < 1) {
-    safe.entry_opportunities = [{
-      title: 'Product Differentiation',
-      description: 'Based on collected data, there is room for a unique selling proposition.',
-      revenue_potential: '$5k-10k/mo',
-      difficulty: 'Moderate',
-      first_action: 'Conduct deeper analysis of top products.'
-    }];
-  }
-  if (!Array.isArray(safe.audience_profiles) || safe.audience_profiles.length < 1) {
-    safe.audience_profiles = [{
-      name: 'Value Seeker',
-      age_range: '25-44',
-      income: '$30k-60k',
-      primary_need: 'Affordable and reliable product',
-      purchase_trigger: 'Discount or high rating',
-      channels: ['Google Shopping', 'Amazon'],
-      messaging: `Discover the best products with verified reviews.`
-    }];
-  }
-  if (!Array.isArray(safe.execution_roadmap) || safe.execution_roadmap.length < 12) {
-    safe.execution_roadmap = Array.from({ length: 12 }, (_, i) => ({
-      week: i + 1,
-      phase: `Phase ${i + 1}`,
-      tasks: [
-        `Analyze competitor: ${realProducts[i % realProducts.length]?.title || 'market'}`,
-        'Gather supplier quotes',
-        'Create marketing material'
-      ],
-      kpi: 'Achieve 10% market share in first month'
-    }));
-  }
-  if (!safe.financial_forecast) {
-    safe.financial_forecast = {
-      startup_cost: 10000,
-      monthly_fixed_costs: 2000,
-      avg_profit_per_unit: 50,
-      units_to_breakeven: 200,
-      months_to_profitability: 3,
-      month6_profit_conservative: 5000,
-      month6_profit_optimistic: 15000
-    };
-  }
-  if (!Array.isArray(safe.risk_matrix) || safe.risk_matrix.length < 3) {
-    safe.risk_matrix = [
-      { risk: 'High competition', probability: 'High', impact: 'Medium', mitigation: 'Focus on niche differentiation.' },
-      { risk: 'Shipping delays', probability: 'Medium', impact: 'High', mitigation: 'Partner with local suppliers.' },
-      { risk: 'Currency fluctuation', probability: 'Low', impact: 'Medium', mitigation: 'Use hedging strategies.' }
-    ];
-  }
-  if (!Array.isArray(safe.growth_accelerators) || safe.growth_accelerators.length < 3) {
-    safe.growth_accelerators = [
-      'Leverage social media influencer marketing',
-      'Offer bundle deals',
-      'Use retargeting ads for abandoned carts'
-    ];
-  }
-  if (!Array.isArray(safe.related_resources) || safe.related_resources.length < 5) {
-    safe.related_resources = realProducts.slice(0, 8).map(p => ({ name: p.title, url: p.source }));
-  }
-  return safe;
 }
 
 function generateMarkdown(
@@ -274,39 +171,37 @@ export const createProductReport = async (req: Request, res: Response, next: Nex
 
     console.log(`Product: "${niche}" in ${country}`);
 
-    const [shoppingData, fx, serperData] = await Promise.all([
-      getShoppingResults(niche, country).catch(() => null),
-      getExchangeRates(),
-      getSerperResults(niche, country).catch(() => null),
-    ]);
-
-    if (!shoppingData) throw new Error('Unable to retrieve live shopping data.');
-
+    // 1. Fetch real data from DataForSEO (NO FALLBACK)
     let keywords: KeywordData[] = [];
     let trendData: number[] = [];
     let keywordSource = 'Google Keyword Planner via DataForSEO (dataforseo.com)';
 
     try {
       const { keywords: dfKeywords, trend } = await getKeywordDataAndTrend(niche, country, 50);
-      if (dfKeywords && dfKeywords.length > 0) {
-        keywords = dfKeywords.map((k: RealKeywordData) => ({ keyword: k.keyword, volume: k.volume, cpc: k.cpc, kd: k.kd }));
-        trendData = trend;
-        console.log(`✅ DataForSEO provided ${keywords.length} keywords and ${trend.length} trend points`);
-      } else {
-        throw new Error('DataForSEO empty');
+      if (!dfKeywords || dfKeywords.length === 0) {
+        throw new Error('DataForSEO returned no keywords.');
       }
-    } catch (e) {
-      console.warn(`⚠️ DataForSEO failed for product report, using smart fallback`);
-      keywordSource = 'Live Google SERP via Serper API (serper.dev) & Product Titles via SerpApi';
-      const tempProducts = (shoppingData.shopping_results || []).slice(0, 10).map((p: any) => ({
-        title: p.title || 'Unknown',
-        price: p.extracted_price || p.price || 0,
-        source: p.source || 'Unknown',
-        reviews: p.rating || 0,
-      }));
-      keywords = generateSmartFallbackKeywords(serperData, tempProducts, niche);
+      keywords = dfKeywords.map((k: RealKeywordData) => ({ keyword: k.keyword, volume: k.volume, cpc: k.cpc, kd: k.kd }));
+      trendData = trend;
+      console.log(`✅ DataForSEO provided ${keywords.length} keywords and ${trend.length} trend points`);
+    } catch (dfError: any) {
+      console.error(`❌ DataForSEO failed: ${dfError.message}`);
+      return res.status(500).json({ error: 'DataForSEO service unavailable. Please try again later or check API credentials.' });
     }
 
+    // 2. Fetch shopping data from SerpApi (NO FALLBACK)
+    const shoppingData = await getShoppingResults(niche, country).catch(() => null);
+    if (!shoppingData) {
+      return res.status(500).json({ error: 'Google Shopping data unavailable. Please try again later.' });
+    }
+
+    // 3. Fetch SERP from Serper (optional)
+    const serperData = await getSerperResults(niche, country).catch(() => null);
+
+    // 4. Fetch exchange rates
+    const fx = await getExchangeRates();
+
+    // 5. Prepare products
     const realProducts: RealProduct[] = (shoppingData.shopping_results || []).slice(0, 10).map((p: any) => ({
       title: p.title || 'Unknown',
       price: p.extracted_price || p.price || 0,
@@ -314,30 +209,31 @@ export const createProductReport = async (req: Request, res: Response, next: Nex
       reviews: p.rating || 0,
     }));
 
+    // 6. Prepare SERP with metrics
     const serpResults = (serperData?.organic || []).slice(0, 8).map((r: any) => ({
       ...r,
       da: estimateDA(r.link),
       traffic: estimateTraffic(r.position, keywords[0]?.volume ?? null),
     }));
 
+    // 7. AI call
     const aiContext = { niche, country, realProducts, serpResults, keywords, trendData, exchangeRates: fx };
     const ai = await runGroqWithRetry(PROMPT, JSON.stringify(aiContext));
     const analysis = extractJSON(ai);
 
-    const safeAnalysis = ensureCompleteAnalysis(analysis, realProducts, keywords);
-
+    // 8. Save report
     const report = await Report.create({
       type: 'product',
       niche,
       country,
       value: '$99',
-      data: { ...safeAnalysis, realProducts, serpResults, keywords, trendData },
+      data: { ...analysis, realProducts, serpResults, keywords, trendData },
       markdown: 'Intelligence report generation in progress...',
       charts: { fx },
     });
 
     const reportId = `MKT-${report._id.toString().slice(-6).toUpperCase()}`;
-    const markdown = generateMarkdown(safeAnalysis, realProducts, serpResults, keywords, trendData, fx, niche, country, reportId, keywordSource);
+    const markdown = generateMarkdown(analysis, realProducts, serpResults, keywords, trendData, fx, niche, country, reportId, keywordSource);
     report.markdown = markdown;
     await report.save();
 
