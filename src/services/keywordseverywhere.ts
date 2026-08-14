@@ -39,7 +39,7 @@ export const getRelatedKeywords = async (keyword: string, country: string): Prom
   return data;
 };
 
-// Optional: if you need single keyword metrics later
+// Optional single keyword metrics
 export const getKeywordData = async (keyword: string, country: string): Promise<{ data?: any[] }> => {
   const cacheKey = `kwe_keyword_${country}_${keyword}`;
   const cached = cacheService.get(cacheKey);
@@ -53,4 +53,20 @@ export const getKeywordData = async (keyword: string, country: string): Promise<
   });
   cacheService.set(cacheKey, data, 86400);
   return data;
+};
+
+// ✅ getTrends – properly returns 12-month trend values
+export const getTrends = async (keyword: string, country: string): Promise<number[]> => {
+  const cacheKey = `kwe_trend_${country}_${keyword}`;
+  const cached = cacheService.get<number[]>(cacheKey);
+  if (cached) return cached;
+
+  const metrics = await getKeywordData(keyword, country);
+  const rawTrend = (metrics as any)?.data?.[0]?.trend;
+  if (!rawTrend || !Array.isArray(rawTrend)) {
+    return [];  // return empty if no trend
+  }
+  const values = rawTrend.map((point: any) => point.value || 0);
+  cacheService.set(cacheKey, values, 86400);
+  return values;
 };
