@@ -2,7 +2,8 @@ import { Request, Response, NextFunction } from 'express';
 import { productResearchSchema } from '../validators/report';
 import { cacheService } from '../services/cache';
 import { getShoppingResults } from '../services/serpapi';
-import { getRelatedKeywords } from '../services/keywordseverywhere';
+import { getKeywordDataAndTrend } from '../services/dataforseo';
+import { getSerperResults } from '../services/serper';
 import { getExchangeRates, convertPrice } from '../services/exchange';
 import { runGroqWithRetry } from '../services/groq';
 import { Report } from '../models/Report';
@@ -36,7 +37,7 @@ const extractJSON = (raw: string): any => {
   }
 };
 
-const PROMPT = `You are a senior market analyst at MusePRO Intelligence Division. Write like a consultant presenting findings to a client. Be specific, data-driven, and professional. Use current year 2026. No undefined, no placeholder. If no value, use "Not Disclosed".`;
+const PROMPT = `You are a senior market analyst at MusePRO Intelligence Division. Write like a consultant. Use current year 2026. Use provided real data only. Return valid JSON with all required sections. No undefined, no placeholder. If no value, use "Not Disclosed".`;
 
 const currencySymbols: Record<string, string> = {
   us: 'USD', gb: 'GBP', ca: 'CAD', au: 'AUD', de: 'EUR', sg: 'SGD',
@@ -52,16 +53,36 @@ const countryNames: Record<string, string> = {
 const scoreBar = (score: number): string => '[' + '█'.repeat(Math.round(score / 10)) + '░'.repeat(10 - Math.round(score / 10)) + ']';
 
 interface RealProduct { title: string; price: number; source: string; reviews: number; }
-interface KeywordData { keyword: string; volume: number; cpc: number; kd: number; }
+interface KeywordData { keyword: string; volume: number | null; cpc: number | null; kd: number | null; }
+
+function estimateDA(link: string): number {
+  const domain = new URL(link).hostname.replace(/^www\./, '');
+  const known: Record<string, number> = {
+    'google.com': 100, 'youtube.com': 100, 'linkedin.com': 98, 'medium.com': 94,
+    'reddit.com': 91, 'quora.com': 93, 'wikipedia.org': 96, 'amazon.com': 96,
+    'facebook.com': 96, 'twitter.com': 94, 'apple.com': 97, 'microsoft.com': 96,
+    'github.com': 95, 'stackoverflow.com': 93,
+  };
+  return domain.endsWith('.edu') || domain.endsWith('.gov') ? 80 : known[domain] || 35;
+}
+
+function estimateTraffic(position: number, volume: number | null): number | null {
+  if (!volume || volume <= 0) return null;
+  const ctr = [0.3, 0.15, 0.1, 0.07, 0.05, 0.04, 0.03, 0.02][Math.min(position - 1, 7)] || 0.01;
+  return Math.round(volume * ctr);
+}
 
 function generateMarkdown(
   analysis: any,
   realProducts: RealProduct[],
+  serpResults: any[],
   keywords: KeywordData[],
+  trendData: number[],
   rates: any,
   niche: string,
   country: string,
-  reportId: string
+  reportId: string,
+  keywordSource: string
 ): string {
   const sym = currencySymbols[country] || 'USD';
   const localPrice = (usd: number) => `${sym} ${convertPrice(usd, sym, rates).toLocaleString()}`;
@@ -82,48 +103,58 @@ function generateMarkdown(
   (analysis.immediate_actions || []).forEach((w: string, i: number) => m += `  ${i + 1}. ${w}\n`);
   m += `\n`;
 
-  m += `3. PRODUCTS WORTH SELLING\n──────────────────────────────────────────────────────────────\nSource: Google Shopping (live data via SerpApi)\n\n`;
+  if (trendData && trendData.length > 0) {
+    m += `3. 12-MONTH DEMAND TREND\n──────────────────────────────────────────────────────────────\n${trendData.join(' → ')}\nSource: DataForSEO\n\n`;
+  }
+
+  m += `4. PRODUCTS WORTH SELLING\n──────────────────────────────────────────────────────────────\nSource: Google Shopping (live data via SerpApi)\n\n`;
   m += `| # | Product | Price | Reviews | Source |\n|---|---------|-------|---------|--------|\n`;
   realProducts.forEach((p, i) => m += `| ${i + 1} | ${p.title} | ${localPrice(p.price)} | ${p.reviews} | ${p.source} |\n`);
   m += `\n`;
 
-  m += `4. KEYWORD LANDSCAPE\n──────────────────────────────────────────────────────────────\nSource: Google Keyword Planner via Keywords Everywhere\n\n`;
+  m += `5. COMPETITIVE BATTLEFIELD\n──────────────────────────────────────────────────────────────\nSource: Serper API (Live Google SERP)\n\n`;
+  serpResults.forEach((s) => {
+    m += `Position #${s.position}: ${s.title}\n  URL: ${s.link}\n  Est. DA: ${s.da}\n  Est. Traffic: ${s.traffic !== null ? s.traffic.toLocaleString() : 'Not Disclosed'} visits/mo\n  Snippet: ${s.snippet?.substring(0, 120) || 'N/A'}\n\n`;
+  });
+  m += `\n`;
+
+  m += `6. KEYWORD LANDSCAPE\n──────────────────────────────────────────────────────────────\nSource: ${keywordSource}\n\n`;
   m += `| # | Keyword | Volume | CPC | KD |\n|---|---------|--------|-----|----|\n`;
   keywords.forEach((k, i) => {
-    const vol = k.volume ? k.volume.toLocaleString() : 'Not Disclosed';
-    const cpc = k.cpc ? `$${k.cpc.toFixed(2)}` : 'Not Disclosed';
-    const kd = k.kd ? k.kd : 'Not Disclosed';
+    const vol = k.volume !== null ? k.volume.toLocaleString() : 'Not Disclosed';
+    const cpc = k.cpc !== null ? `$${k.cpc.toFixed(2)}` : 'Not Disclosed';
+    const kd = k.kd !== null ? k.kd : 'Not Disclosed';
     m += `| ${i + 1} | ${k.keyword} | ${vol} | ${cpc} | ${kd} |\n`;
   });
   m += `\n`;
 
-  m += `5. WHITE SPACE OPPORTUNITIES\n──────────────────────────────────────────────────────────────\n`;
+  m += `7. WHITE SPACE OPPORTUNITIES\n──────────────────────────────────────────────────────────────\n`;
   (analysis.entry_opportunities || []).forEach((g: any) => m += `${g.title || 'Not Disclosed'}\n  ${g.description || 'Not Disclosed'}\n  Revenue Potential: ${g.revenue_potential || 'Not Disclosed'}\n  Difficulty: ${g.difficulty || 'Not Disclosed'}\n  First Action: ${g.first_action || 'Not Disclosed'}\n\n`);
 
-  m += `6. WHO'S BUYING\n──────────────────────────────────────────────────────────────\n`;
+  m += `8. WHO'S BUYING\n──────────────────────────────────────────────────────────────\n`;
   (analysis.audience_profiles || []).forEach((p: any) => m += `${p.name || 'Not Disclosed'} | ${p.age_range || 'Not Disclosed'} | ${p.income || 'Not Disclosed'}\n  Primary Need: ${p.primary_need || 'Not Disclosed'}\n  Purchase Trigger: ${p.purchase_trigger || 'Not Disclosed'}\n  Channels: ${p.channels?.join(', ') || 'Not Disclosed'}\n  Messaging: "${p.messaging || 'Not Disclosed'}"\n\n`);
 
   if (analysis.growth_accelerators?.length) {
-    m += `7. FAST-TRACK STRATEGIES\n──────────────────────────────────────────────────────────────\n`;
+    m += `9. FAST-TRACK STRATEGIES\n──────────────────────────────────────────────────────────────\n`;
     analysis.growth_accelerators.forEach((tip: string, i: number) => m += `${i + 1}. ${tip}\n`);
     m += `\n`;
   }
 
-  m += `8. YOUR 12-WEEK LAUNCH PLAN\n──────────────────────────────────────────────────────────────\n`;
+  m += `10. YOUR 12-WEEK LAUNCH PLAN\n──────────────────────────────────────────────────────────────\n`;
   (analysis.execution_roadmap || []).forEach((w: any, idx: number) => m += `Week ${w.week || idx + 1}: ${w.phase || 'Not Disclosed'}\n  ${w.tasks?.join('\n  ') || 'Not Disclosed'}\n  KPI: ${w.kpi || 'Not Disclosed'}\n\n`);
 
-  m += `9. MONEY MATH\n──────────────────────────────────────────────────────────────\nStartup Cost: ${localPrice(fp.startup_cost || 0)}\nMonthly Fixed Costs: ${localPrice(fp.monthly_fixed_costs || 0)}\nAvg Profit Per Unit: ${localPrice(fp.avg_profit_per_unit || 0)}\nUnits to Breakeven: ${fp.units_to_breakeven ?? 'Not Disclosed'}\nTime to Profitability: ${fp.months_to_profitability ?? 'Not Disclosed'} months\nMonth 6 Profit (Conservative): ${localPrice(fp.month6_profit_conservative || 0)}\nMonth 6 Profit (Optimistic): ${localPrice(fp.month6_profit_optimistic || 0)}\n\n`;
+  m += `11. MONEY MATH\n──────────────────────────────────────────────────────────────\nStartup Cost: ${localPrice(fp.startup_cost || 0)}\nMonthly Fixed Costs: ${localPrice(fp.monthly_fixed_costs || 0)}\nAvg Profit Per Unit: ${localPrice(fp.avg_profit_per_unit || 0)}\nUnits to Breakeven: ${fp.units_to_breakeven ?? 'Not Disclosed'}\nTime to Profitability: ${fp.months_to_profitability ?? 'Not Disclosed'} months\nMonth 6 Profit (Conservative): ${localPrice(fp.month6_profit_conservative || 0)}\nMonth 6 Profit (Optimistic): ${localPrice(fp.month6_profit_optimistic || 0)}\n\n`;
 
-  m += `10. WHAT COULD GO WRONG\n──────────────────────────────────────────────────────────────\n`;
+  m += `12. WHAT COULD GO WRONG\n──────────────────────────────────────────────────────────────\n`;
   (analysis.risk_matrix || []).forEach((r: any) => m += `Risk: ${r.risk || 'Not Disclosed'}\n  Probability: ${r.probability || 'Not Disclosed'} | Impact: ${r.impact || 'Not Disclosed'}\n  Mitigation: ${r.mitigation || 'Not Disclosed'}\n\n`);
 
   if (analysis.related_resources?.length) {
-    m += `11. TOOLS & LINKS\n──────────────────────────────────────────────────────────────\n`;
+    m += `13. TOOLS & LINKS\n──────────────────────────────────────────────────────────────\n`;
     analysis.related_resources.forEach((res: any, i: number) => m += `${i + 1}. ${res.name || 'Not Disclosed'} – ${res.url || 'Not Disclosed'}\n`);
     m += `\n`;
   }
 
-  m += `METHODOLOGY & SOURCES\n──────────────────────────────────────────────────────────────\nThis report is based on live data collected on ${today} from:\n\n• Google Shopping via SerpApi (serpapi.com)\n• Google Keyword Planner via Keywords Everywhere (keywordseverywhere.com)\n• ExchangeRate-API (exchangerate-api.com)\n• Analysis Engine: Gemini AI\n\nAll data points can be independently verified against their public sources.\n\n`;
+  m += `METHODOLOGY & SOURCES\n──────────────────────────────────────────────────────────────\nThis report is based on live data collected on ${today} from:\n\n• Google Shopping via SerpApi (serpapi.com)\n• ${keywordSource}\n• Live Google SERP via Serper API (serper.dev)\n• ExchangeRate-API (exchangerate-api.com)\n• Analysis Engine: Gemini AI (Hybrid Pro/Flash)\n\nAll data points can be independently verified against their public sources.\n\n`;
   m += `DOCUMENT CONTROL\n──────────────────────────────────────────────────────────────\nClassification:  Confidential\nDistribution:    Client Only\nVersion:         1.0\nPrepared By:     MusePRO Intelligence Division\n\n`;
   m += `DISCLAIMER\n──────────────────────────────────────────────────────────────\nThis document contains proprietary research conducted by MusePRO. The information herein is intended solely for the designated recipient. Unauthorized distribution, copying, or disclosure is strictly prohibited.\n\nWhile every effort has been made to ensure accuracy, market conditions change rapidly. Verify critical data points before making business decisions.\n\n`;
   m += `──────────────────────────────────────────────────────────────\n© MusePRO — Intelligence Division. All Rights Reserved.\n`;
@@ -140,14 +171,39 @@ export const createProductReport = async (req: Request, res: Response, next: Nex
 
     console.log(`Product: "${niche}" in ${country}`);
 
-    const [shoppingData, fx, kweData] = await Promise.all([
+    // 1. Fetch real data
+    const [shoppingData, fx, serperData] = await Promise.all([
       getShoppingResults(niche, country).catch(() => null),
       getExchangeRates(),
-      getRelatedKeywords(niche, country).catch(() => null),
+      getSerperResults(niche, country).catch(() => null),
     ]);
 
     if (!shoppingData) throw new Error('Unable to retrieve live shopping data.');
 
+    // 2. Keyword data and trend from DataForSEO
+    let keywords: KeywordData[] = [];
+    let trendData: number[] = [];
+    let keywordSource = 'Google Keyword Planner via DataForSEO (dataforseo.com)';
+
+    try {
+      const { keywords: dfKeywords, trend } = await getKeywordDataAndTrend(niche, country, 50);
+      if (dfKeywords && dfKeywords.length > 0) {
+        keywords = dfKeywords.map(k => ({ keyword: k.keyword, volume: k.volume, cpc: k.cpc, kd: k.kd }));
+        trendData = trend;
+        console.log(`✅ DataForSEO provided ${keywords.length} keywords and ${trend.length} trend points`);
+      } else {
+        throw new Error('DataForSEO empty');
+      }
+    } catch (e) {
+      console.warn(`⚠️ DataForSEO failed for product report, using SERP related searches`);
+      keywordSource = 'Live Google SERP via Serper API (serper.dev)';
+      keywords = (serperData?.relatedSearches || []).slice(0, 30).map((q: string) => ({ keyword: q, volume: null, cpc: null, kd: null }));
+      if (keywords.length === 0) {
+        keywords = [{ keyword: niche, volume: null, cpc: null, kd: null }];
+      }
+    }
+
+    // 3. Products
     const realProducts: RealProduct[] = (shoppingData.shopping_results || []).slice(0, 10).map((p: any) => ({
       title: p.title || 'Unknown',
       price: p.extracted_price || p.price || 0,
@@ -155,36 +211,31 @@ export const createProductReport = async (req: Request, res: Response, next: Nex
       reviews: p.rating || 0,
     }));
 
-    let keywords: KeywordData[] = [];
-    if (kweData?.data?.length) {
-      keywords = kweData.data.slice(0, 50).map((k: any) => ({
-        keyword: k.keyword,
-        volume: k.vol || 0,
-        cpc: parseFloat(k.cpc?.value || '0'),
-        kd: k.competition ? Math.min(Math.round(k.competition * 100), 100) : 0,
-      }));
-      console.log(`✅ Keywords Everywhere provided ${keywords.length} keywords`);
-    } else {
-      console.warn(`⚠️ Keywords Everywhere returned empty, using product titles as fallback`);
-      keywords = realProducts.slice(0, 10).map(p => ({ keyword: p.title, volume: 0, cpc: 0, kd: 0 }));
-    }
+    // 4. SERP
+    const serpResults = (serperData?.organic || []).slice(0, 8).map((r: any) => ({
+      ...r,
+      da: estimateDA(r.link),
+      traffic: estimateTraffic(r.position, keywords[0]?.volume ?? null),
+    }));
 
-    const aiContext = { niche, country, realProducts, keywords, exchangeRates: fx };
+    // 5. AI
+    const aiContext = { niche, country, realProducts, serpResults, keywords, trendData, exchangeRates: fx };
     const ai = await runGroqWithRetry(PROMPT, JSON.stringify(aiContext));
     const analysis = extractJSON(ai);
 
+    // 6. Save
     const report = await Report.create({
       type: 'product',
       niche,
       country,
       value: '$99',
-      data: { ...analysis, realProducts, keywords },
+      data: { ...analysis, realProducts, serpResults, keywords, trendData },
       markdown: 'Intelligence report generation in progress...',
       charts: { fx },
     });
 
     const reportId = `MKT-${report._id.toString().slice(-6).toUpperCase()}`;
-    const markdown = generateMarkdown(analysis, realProducts, keywords, fx, niche, country, reportId);
+    const markdown = generateMarkdown(analysis, realProducts, serpResults, keywords, trendData, fx, niche, country, reportId, keywordSource);
     report.markdown = markdown;
     await report.save();
 
