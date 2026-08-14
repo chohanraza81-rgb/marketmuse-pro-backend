@@ -37,9 +37,7 @@ const extractJSON = (raw: string): any => {
   }
 };
 
-const PROMPT = `You are a senior market analyst at MusePRO Intelligence Division. Write like a consultant presenting findings to a client. Be specific, data‑driven, and professional. Use the current year 2026.
-
-CRITICAL: Every field in JSON must have a REAL value. No undefined, no placeholder, no empty strings. If you don't have data, use "N/A". Arrays must have exact required length.`;
+const PROMPT = `You are a senior market analyst at MusePRO Intelligence Division. Write like a consultant presenting findings to a client. Be specific, data-driven, and professional. Use current year 2026. No undefined, no placeholder. If no value, use "N/A".`;
 
 const currencySymbols: Record<string, string> = {
   us: 'USD', gb: 'GBP', ca: 'CAD', au: 'AUD', de: 'EUR', sg: 'SGD',
@@ -196,9 +194,10 @@ export const createProductReport = async (req: Request, res: Response, next: Nex
     } catch (e) {
       console.warn(`⚠️ DataForSEO failed for product report, using real SERP queries`);
       keywordSource = 'Live Google SERP via Serper API (serper.dev)';
-      keywords = (serperData?.relatedSearches || []).slice(0, 30).map(q => ({ keyword: q, volume: null, cpc: null, kd: null }));
+      keywords = (serperData?.relatedSearches || []).slice(0, 30).map((q: string) => ({ keyword: q, volume: null, cpc: null, kd: null }));
       if (keywords.length < 5) {
-        keywords = [...keywords, `${niche} guide`, `${niche} tips`, `best ${niche}`, `how to ${niche}`].map(q => ({ keyword: q, volume: null, cpc: null, kd: null }));
+        const fallbackKeywords = [`${niche} guide`, `${niche} tips`, `best ${niche}`, `how to ${niche}`];
+        keywords = fallbackKeywords.map((q: string) => ({ keyword: q, volume: null, cpc: null, kd: null }));
       }
     }
 
