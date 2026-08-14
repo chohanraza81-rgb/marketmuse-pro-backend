@@ -38,7 +38,18 @@ const extractJSON = (raw: string): any => {
 
 const PROMPT = `You are an elite SEO strategist at MusePRO Intelligence Division. You've been in the trenches for over a decade. Write like a senior consultant who talks straight: warm, direct, and excited about the opportunity. No corporate fluff, no robotic language.
 
-Use current year 2026. Use only the provided real data. Return valid JSON with all required sections. No undefined, no placeholder. If you don't have a value, write "Not Disclosed".`;
+Use current year 2026. Use only the provided real data. Return valid JSON with ALL these exact fields:
+- trend_assessment: string (Evergreen or Seasonal or "Not Disclosed")
+- trend_analysis: string (2-3 sentences)
+- key_insights: array of 3 strings
+- immediate_actions: array of 3 strings
+- content_roadmap: array of 12 objects {week:number, title:string, primary_keyword:string, secondary_keywords:string[], content_type:string, word_count_target:number, outline:string[], expected_traffic:number}
+- link_acquisition: object {overview:string, target_sites:array of 8 {site:string, da:number, type:string, contact:string, pitch:string}, guest_post_topics:array of 5 strings, broken_link_opportunities:array of 3 {site:string, dead_page:string, replacement:string}, outreach_template:string}
+- onpage_checklist: array of 15 strings
+- growth_accelerators: array of 5 strings
+- related_resources: array of 8 {name:string, url:string}
+
+No undefined, no empty arrays. If you don't have data, use "Not Disclosed". If you cannot produce 12 specific weeks, generate generic but relevant weeks based on the keyword list. Never leave a section empty.`;
 
 const countryNames: Record<string, string> = {
   us: 'United States', gb: 'United Kingdom', ca: 'Canada', au: 'Australia',
@@ -68,6 +79,153 @@ function estimateTraffic(position: number, volume: number | null): number | null
   if (!volume || volume <= 0) return null;
   const ctr = [0.3, 0.15, 0.1, 0.07, 0.05, 0.04, 0.03, 0.02][Math.min(position - 1, 7)] || 0.01;
   return Math.round(volume * ctr);
+}
+
+function cleanSERPTitle(title: string): string {
+  let clean = title;
+  // Remove after | or -
+  if (clean.includes('|')) clean = clean.split('|')[0].trim();
+  if (clean.includes(' - ')) clean = clean.split(' - ')[0].trim();
+  // Remove leading numbers and dot
+  clean = clean.replace(/^\d+\.\s*/, '').trim();
+  // Limit length
+  if (clean.length > 80) clean = clean.substring(0, 80) + '...';
+  return clean;
+}
+
+function generateSmartFallbackKeywords(
+  serperData: any,
+  relatedQuestions: string[],
+  niche: string
+): KeywordData[] {
+  const keywordsSet = new Set<string>();
+
+  // 1. Serper related searches
+  if (serperData?.relatedSearches) {
+    serperData.relatedSearches.forEach((q: string) => keywordsSet.add(q));
+  }
+
+  // 2. People Also Ask
+  relatedQuestions.forEach((q: string) => keywordsSet.add(q));
+
+  // 3. Cleaned SERP titles
+  if (serperData?.organic) {
+    serperData.organic.forEach((r: any) => {
+      const cleaned = cleanSERPTitle(r.title);
+      if (cleaned) keywordsSet.add(cleaned);
+    });
+  }
+
+  // Convert to array
+  let keywords = Array.from(keywordsSet).slice(0, 30).map((q) => ({
+    keyword: q,
+    volume: null,
+    cpc: null,
+    kd: null,
+  }));
+
+  // If still too few, add niche-related phrases
+  if (keywords.length < 5) {
+    const fallbacks = [
+      `${niche} guide`,
+      `${niche} tips`,
+      `best ${niche}`,
+      `how to ${niche}`,
+      `${niche} 2026`,
+    ];
+    fallbacks.forEach((q) => keywordsSet.add(q));
+    keywords = Array.from(keywordsSet).slice(0, 30).map((q) => ({
+      keyword: q,
+      volume: null,
+      cpc: null,
+      kd: null,
+    }));
+  }
+
+  return keywords;
+}
+
+function ensureCompleteAnalysis(analysis: any, keywords: KeywordData[], serp: any[]): any {
+  // Fill missing sections with sensible defaults
+  const safe = { ...analysis };
+
+  if (!safe.trend_assessment) safe.trend_assessment = 'Not Disclosed';
+  if (!safe.trend_analysis) safe.trend_analysis = 'Not Disclosed';
+
+  if (!Array.isArray(safe.key_insights) || safe.key_insights.length < 3) {
+    safe.key_insights = [
+      `Top competitors include ${serp.slice(0, 3).map(s => s.title).join(', ')}.`,
+      `${keywords.length} keyword opportunities were identified.`,
+      `Based on live SERP analysis and real search data.`,
+    ];
+  }
+
+  if (!Array.isArray(safe.immediate_actions) || safe.immediate_actions.length < 3) {
+    safe.immediate_actions = [
+      'Create targeted content for the top keywords.',
+      'Optimize on-page SEO for identified opportunities.',
+      'Build backlinks from high-authority domains in the SERP.',
+    ];
+  }
+
+  if (!Array.isArray(safe.content_roadmap) || safe.content_roadmap.length < 12) {
+    safe.content_roadmap = Array.from({ length: 12 }, (_, i) => {
+      const kw = keywords[i % keywords.length]?.keyword || niche;
+      return {
+        week: i + 1,
+        title: `${kw} – Comprehensive Guide`,
+        primary_keyword: kw,
+        secondary_keywords: [],
+        content_type: 'Pillar',
+        word_count_target: 2000,
+        outline: ['Introduction', 'Key Concepts', 'Step-by-Step Process', 'Common Mistakes', 'Conclusion'],
+        expected_traffic: 100,
+      };
+    });
+  }
+
+  if (!safe.link_acquisition || !safe.link_acquisition.target_sites || safe.link_acquisition.target_sites.length < 8) {
+    safe.link_acquisition = {
+      overview: 'We recommend reaching out to high-authority sites in the SERP.',
+      target_sites: serp.slice(0, 8).map(s => ({
+        site: s.link,
+        da: s.da,
+        type: 'Blog',
+        contact: 'N/A',
+        pitch: `We have a comprehensive guide on ${niche} that would be valuable for your readers.`,
+      })),
+      guest_post_topics: ['How to Succeed with ' + niche, niche + ' Trends for 2026', 'Case Study: ' + niche],
+      broken_link_opportunities: [],
+      outreach_template: `Hi [Name], I noticed your page on [Topic]. We have a fresh guide on ${niche} that may be useful.`,
+    };
+  }
+
+  if (!Array.isArray(safe.onpage_checklist) || safe.onpage_checklist.length < 8) {
+    safe.onpage_checklist = [
+      'Include primary keyword in H1 and title tag',
+      'Write meta description under 155 characters',
+      'Use H2/H3 subheadings with secondary keywords',
+      'Add internal links to related content',
+      'Optimize images with alt text',
+      'Ensure mobile responsiveness',
+      'Improve page load speed',
+      'Add FAQ schema',
+    ];
+  }
+
+  if (!Array.isArray(safe.growth_accelerators) || safe.growth_accelerators.length < 3) {
+    safe.growth_accelerators = [
+      'Leverage social media to promote content',
+      'Use email outreach for backlinks',
+      'Create a lead magnet for email capture',
+    ];
+  }
+
+  if (!Array.isArray(safe.related_resources) || safe.related_resources.length < 5) {
+    safe.related_resources = serp.slice(0, 8).map(s => ({ name: s.title, url: s.link }));
+  }
+
+  return safe;
 }
 
 function generateMarkdown(
@@ -188,9 +346,13 @@ export const createSEOReport = async (req: Request, res: Response, next: NextFun
 
     console.log(`SEO: "${niche}" in ${country}`);
 
+    // 1. Fetch real SERP from Serper
     const serperData = await getSerperResults(niche, country).catch(() => null);
+
+    // 2. Fetch People Also Ask from SerpApi
     const relatedQuestions = await getKeywordSuggestions(niche, country).catch(() => []);
 
+    // 3. Fetch keyword data and trend from DataForSEO
     let keywords: KeywordData[] = [];
     let trendData: number[] = [];
     let dataSourceStatus = 'Google Keyword Planner via DataForSEO (dataforseo.com)';
@@ -205,41 +367,42 @@ export const createSEOReport = async (req: Request, res: Response, next: NextFun
         throw new Error('DataForSEO returned empty');
       }
     } catch (dfError) {
-      console.warn(`⚠️ DataForSEO failed, switching to Serper/SerpApi smart fallback`);
+      console.warn(`⚠️ DataForSEO failed, switching to smart fallback`);
       dataSourceStatus = 'Live Google SERP via Serper API (serper.dev) & People Also Ask via SerpApi (serpapi.com)';
-      const relatedSearches = serperData?.relatedSearches || [];
-      const combined = [...new Set([...relatedSearches, ...relatedQuestions])];
-      keywords = combined.slice(0, 30).map((q: string) => ({ keyword: q, volume: null, cpc: null, kd: null }));
-      if (keywords.length === 0) {
-        keywords = relatedQuestions.slice(0, 10).map((q: string) => ({ keyword: q, volume: null, cpc: null, kd: null }));
-      }
+      keywords = generateSmartFallbackKeywords(serperData, relatedQuestions, niche);
       if (keywords.length === 0) {
         throw new Error('No keyword data available from any real source.');
       }
     }
 
+    // 4. Prepare SERP with metrics
     const serpWithMetrics = (serperData?.organic || []).slice(0, 8).map((r: any) => ({
       ...r,
       da: estimateDA(r.link),
       traffic: estimateTraffic(r.position, keywords[0]?.volume ?? null),
     }));
 
+    // 5. AI call
     const aiContext = { niche, country, keywords, serp: serpWithMetrics, relatedQuestions, trendData };
     const ai = await runGroqWithRetry(PROMPT, JSON.stringify(aiContext));
     const analysis = extractJSON(ai);
 
+    // 6. Ensure completeness
+    const safeAnalysis = ensureCompleteAnalysis(analysis, keywords, serpWithMetrics);
+
+    // 7. Save report
     const report = await Report.create({
       type: 'seo',
       niche,
       country,
       value: '$99',
-      data: { ...analysis, keywords, serp: serpWithMetrics, relatedQuestions, trendData },
+      data: { ...safeAnalysis, keywords, serp: serpWithMetrics, relatedQuestions, trendData },
       markdown: 'Intelligence report generation in progress...',
       charts: {},
     });
 
     const reportId = `MKT-${report._id.toString().slice(-6).toUpperCase()}`;
-    const markdown = generateMarkdown(analysis, keywords, serpWithMetrics, relatedQuestions, trendData, niche, country, reportId, dataSourceStatus);
+    const markdown = generateMarkdown(safeAnalysis, keywords, serpWithMetrics, relatedQuestions, trendData, niche, country, reportId, dataSourceStatus);
     report.markdown = markdown;
     await report.save();
 
