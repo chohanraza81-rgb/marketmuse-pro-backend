@@ -2,24 +2,20 @@ import { Request, Response, NextFunction } from 'express';
 import { productResearchSchema } from '../validators/report';
 import { cacheService } from '../services/cache';
 import { getShoppingResults } from '../services/serpapi';
-import { getTrends, getKeywordMetrics } from '../services/keywordseverywhere';
+import { getKeywordData, RealKeywordData } from '../services/dataforseo';
+import { getSerperResults } from '../services/serper';
 import { getExchangeRates, convertPrice } from '../services/exchange';
 import { runGroqWithRetry } from '../services/groq';
 import { Report } from '../models/Report';
 import { ZodError } from 'zod';
 
 const extractJSON = (raw: string): any => {
-  let cleaned = raw
-    .replace(/```json\s*/gi, '')
-    .replace(/```\s*/g, '')
-    .trim();
-
+  let cleaned = raw.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
   const start = cleaned.indexOf('{');
   const end = cleaned.lastIndexOf('}');
   if (start !== -1 && end !== -1 && end > start) {
     cleaned = cleaned.substring(start, end + 1);
   }
-
   try {
     return JSON.parse(cleaned);
   } catch (err) {
@@ -46,8 +42,6 @@ const extractJSON = (raw: string): any => {
       try {
         return JSON.parse(completed);
       } catch (e3) {
-        console.error('❌ JSON extraction failed. Raw length:', raw.length);
-        console.error('Last 500 chars:', cleaned.substring(cleaned.length - 500));
         throw new Error('AI response is not valid JSON');
       }
     }
@@ -59,7 +53,7 @@ const PROMPT = `You are a senior market analyst at MusePRO Intelligence Division
 CRITICAL WRITING INSTRUCTIONS:
 - Write like a battle‑hardened business strategist. Get to the point. Be bold.
 - Vary sentence structure drastically. Short, punchy observations mixed with longer, nuanced explanations.
-- Use natural business language. No robotic transitions.
+- Use natural business language. No robotic transitions like "Furthermore", "Moreover", "Additionally".
 - Use first-person plural: "We spotted...", "Our take...", "We'd put money on..."
 - Express genuine excitement about big opportunities and honest concern about real risks.
 - Weave numbers directly into conversational sentences.
@@ -67,7 +61,7 @@ CRITICAL WRITING INSTRUCTIONS:
 - Do not make specific statistical claims that are not directly supported by the provided data. If you mention a percentage or growth figure, ensure it is derived from the provided trends or keyword metrics, otherwise phrase as 'data suggests' or 'we estimate'.
 - After each key insight, include the data source in parentheses.
 
-You will be given REAL shopping product data, REAL keyword metrics, exchange rates, and trend data. Use these numbers, do not generate your own.
+You will be given REAL shopping product data, REAL keyword data, exchange rates, and SERP results. Use these numbers, do not generate your own.
 
 Return ONLY valid JSON with the following structure (all fields are required):
 
@@ -172,9 +166,41 @@ interface RealProduct {
   reviews: number;
 }
 
+interface SerperResult {
+  position: number;
+  title: string;
+  link: string;
+  snippet: string;
+}
+
+interface ProductSerpResult extends SerperResult {
+  da: number;
+  traffic: number;
+}
+
+function estimateDA(link: string): number {
+  const domain = new URL(link).hostname.replace(/^www\./, '');
+  const knownDA: Record<string, number> = {
+    'google.com': 100, 'youtube.com': 100, 'linkedin.com': 98, 'medium.com': 94,
+    'reddit.com': 91, 'quora.com': 93, 'wikipedia.org': 96, 'amazon.com': 96,
+    'facebook.com': 96, 'twitter.com': 94, 'apple.com': 97, 'microsoft.com': 96,
+    'github.com': 95, 'stackoverflow.com': 93, 'nytimes.com': 94, 'forbes.com': 92,
+  };
+  if (domain.endsWith('.edu') || domain.endsWith('.gov')) return 80;
+  return knownDA[domain] || 35;
+}
+
+function estimateTraffic(position: number, volume: number): number {
+  const ctrCurve = [0.30, 0.15, 0.10, 0.07, 0.05, 0.04, 0.03, 0.02];
+  const ctr = ctrCurve[Math.min(position - 1, ctrCurve.length - 1)] || 0.01;
+  return Math.round(volume * ctr);
+}
+
 function generateMarkdown(
   analysis: any,
   realProducts: RealProduct[],
+  serpResults: ProductSerpResult[],
+  keywords: RealKeywordData[],
   rates: any,
   niche: string,
   country: string,
@@ -221,7 +247,7 @@ function generateMarkdown(
   if (analysis.key_insights?.length) {
     m += `Key Insights:\n`;
     analysis.key_insights.forEach((f: string, i: number) => { m += `  ${i+1}. ${f}\n`; });
-    m += `  (All insights based on live data from SerpAPI, Keywords Everywhere, and ExchangeRate-API)\n\n`;
+    m += `  (All insights based on live data from DataForSEO, Serper, SerpApi, and ExchangeRate-API)\n\n`;
   }
 
   if (analysis.immediate_actions?.length) {
@@ -232,7 +258,7 @@ function generateMarkdown(
 
   // 3
   m += `3. PRODUCTS WORTH SELLING\n`;
-  m += `──────────────────────────────────────────────────────────────\nSource: Google Shopping (live data via SerpAPI)\n\n`;
+  m += `──────────────────────────────────────────────────────────────\nSource: Google Shopping (live data via SerpApi)\n\n`;
   m += `| # | Product | Price | Reviews | Source |\n`;
   m += `|---|---------|-------|---------|--------|\n`;
   realProducts.forEach((p, i) => {
@@ -242,11 +268,15 @@ function generateMarkdown(
 
   // 4
   m += `4. COMPETITIVE BATTLEFIELD\n`;
-  m += `──────────────────────────────────────────────────────────────\n`;
-  // AI will provide competitor analysis, but we'll inject brands from real products as context
-  analysis.entry_opportunities?.forEach((g: any) => {
-    m += `${g.title}\n  ${g.description}\n  Revenue Potential: ${g.revenue_potential}\n  Difficulty: ${g.difficulty}\n  First Action: ${g.first_action}\n\n`;
+  m += `──────────────────────────────────────────────────────────────\nSource: Serper API (Live Google SERP)\n\n`;
+  serpResults.forEach((s) => {
+    m += `Position #${s.position}: ${s.title}\n`;
+    m += `  URL: ${s.link}\n`;
+    m += `  Est. DA: ${s.da}\n`;
+    m += `  Est. Traffic: ${s.traffic.toLocaleString()} visits/mo (based on keyword volume)\n`;
+    m += `  Snippet: ${s.snippet?.substring(0, 120) || 'N/A'}\n\n`;
   });
+  m += `\n`;
 
   // 5
   m += `5. WHITE SPACE OPPORTUNITIES\n`;
@@ -307,7 +337,7 @@ function generateMarkdown(
 
   // Methodology & Sources
   m += `METHODOLOGY & SOURCES\n`;
-  m += `──────────────────────────────────────────────────────────────\nThis report is based on live data collected on ${today} from:\n\n• Google Shopping via SerpAPI (serpapi.com)\n• Google Keyword Planner via Keywords Everywhere (keywordseverywhere.com)\n• Google Trends via Keywords Everywhere\n• Exchange Rate API (exchangerate-api.com)\n• Analysis Engine: GPT‑4o (openai.com)\n\nAll data points can be independently verified against their public sources.\n\n`;
+  m += `──────────────────────────────────────────────────────────────\nThis report is based on live data collected on ${today} from:\n\n• Google Shopping via SerpApi (serpapi.com)\n• DataForSEO – Google Keyword Planner data (volume, CPC, KD)\n• Serper API – Live Google SERP results\n• ExchangeRate-API (exchangerate-api.com)\n• Analysis Engine: Gemini AI\n\nAll data points can be independently verified against their public sources.\n\n`;
 
   // Document Control
   m += `DOCUMENT CONTROL\n`;
@@ -331,17 +361,19 @@ export const createProductReport = async (req: Request, res: Response, next: Nex
 
     console.log(`Product: "${niche}" in ${country}`);
 
-    // 1. Fetch real data
-    const [shoppingData, fx, trendsArr, keywordMetrics] = await Promise.all([
+    // 1. Fetch real data in parallel
+    const [shoppingData, fx, serperData, keywordData] = await Promise.all([
       getShoppingResults(niche, country).catch(() => null),
       getExchangeRates(),
-      getTrends(niche, country).catch(() => null),
-      getKeywordMetrics([niche], country).catch(() => null),
+      getSerperResults(niche, country).catch(() => null),
+      getKeywordData(niche, country, 50).catch(() => []),
     ]);
 
-    if (!shoppingData) throw new Error('Unable to retrieve shopping data.');
+    if (!shoppingData) {
+      throw new Error('Unable to retrieve live shopping data. Please try again later.');
+    }
 
-    // 2. Build real products
+    // 2. Prepare real products
     const realProducts: RealProduct[] = (shoppingData.shopping_results || [])
       .slice(0, 10)
       .map((p: any) => ({
@@ -351,21 +383,30 @@ export const createProductReport = async (req: Request, res: Response, next: Nex
         reviews: p.rating || 0,
       }));
 
-    // 3. Prepare keyword & trend data for AI context
-    const seedKw = keywordMetrics?.data?.[0];
+    // 3. Prepare SERP results for competitor landscape
+    const serpResults: ProductSerpResult[] = (serperData?.organic || [])
+      .slice(0, 8)
+      .map((r: SerperResult) => ({
+        ...r,
+        da: estimateDA(r.link),
+        traffic: estimateTraffic(r.position, keywordData[0]?.volume || 0),
+      }));
+
+    // 4. Prepare AI context with all real data
     const aiContext = {
       niche,
       country,
       realProducts,
-      keyword: seedKw ? { volume: seedKw.vol, cpc: seedKw.cpc?.value, competition: seedKw.competition } : null,
-      trends: trendsArr,
+      serpResults,
+      keywords: keywordData,
+      exchangeRates: fx,
     };
 
-    // 4. AI generates narrative
+    // 5. AI generates narrative
     const ai = await runGroqWithRetry(PROMPT, JSON.stringify(aiContext));
     const analysis = extractJSON(ai);
 
-    // 5. Generate markdown
+    // 6. Generate markdown with real data
     const report = await Report.create({
       type: 'product',
       niche,
@@ -374,17 +415,15 @@ export const createProductReport = async (req: Request, res: Response, next: Nex
       data: {
         ...analysis,
         realProducts,
-        chart_data: {
-          demand_forecast_12m: trendsArr || [],
-          competitor_market_share: [],
-        },
+        serpResults,
+        keywords: keywordData,
       },
       markdown: 'Intelligence report generation in progress...',
-      charts: { trends: trendsArr, fx },
+      charts: { fx },
     });
 
     const reportId = `MKT-${report._id.toString().slice(-6).toUpperCase()}`;
-    const markdown = generateMarkdown(analysis, realProducts, fx, niche, country, reportId);
+    const markdown = generateMarkdown(analysis, realProducts, serpResults, keywordData, fx, niche, country, reportId);
     report.markdown = markdown;
     await report.save();
 
