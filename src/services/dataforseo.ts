@@ -17,13 +17,27 @@ export interface RealKeywordData {
   competition: number;
 }
 
+const locationCodes: Record<string, number> = {
+  us: 2840,
+  gb: 2826,
+  ca: 2124,
+  au: 2036,
+  de: 2276,
+  sg: 2702,
+  sa: 2682,
+  ae: 2784,
+  pk: 2586,
+  in: 2356,
+  tr: 2792,
+  my: 2458,
+};
+
 export async function getKeywordData(keyword: string, country: string, limit = 50): Promise<RealKeywordData[]> {
   const cacheKey = `dataforseo_${country}_${keyword}`;
   const cached = cacheService.get<RealKeywordData[]>(cacheKey);
   if (cached) return cached;
 
-  const locationCode = country.toLowerCase() === 'us' ? 2840 : country.toLowerCase() === 'gb' ? 2826 : country.toLowerCase() === 'ca' ? 2124 : country.toLowerCase() === 'au' ? 2036 : country.toLowerCase() === 'de' ? 2276 : country.toLowerCase() === 'sg' ? 2702 : country.toLowerCase() === 'sa' ? 2682 : country.toLowerCase() === 'ae' ? 2784 : country.toLowerCase() === 'pk' ? 2586 : country.toLowerCase() === 'in' ? 2356 : country.toLowerCase() === 'tr' ? 2792 : country.toLowerCase() === 'my' ? 2458 : 2840;
-
+  const locationCode = locationCodes[country.toLowerCase()] || 2840;
   const response = await fetch('https://api.dataforseo.com/v3/keywords_data/google/keywords_for_keywords/live', {
     method: 'POST',
     headers: {
@@ -45,7 +59,6 @@ export async function getKeywordData(keyword: string, country: string, limit = 5
     throw new Error(`DataForSEO API error: ${response.status}`);
   }
 
-  // ✅ Fix: Cast JSON response to expected interface
   const data = (await response.json()) as DataForSEOResponse;
   const keywordsRaw = data.tasks?.[0]?.result?.[0]?.keywords || [];
 
