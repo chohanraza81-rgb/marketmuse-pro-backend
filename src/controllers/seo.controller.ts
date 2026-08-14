@@ -36,7 +36,9 @@ const extractJSON = (raw: string): any => {
   }
 };
 
-const PROMPT = `You are an elite SEO strategist at MusePRO Intelligence Division. Write like a senior consultant. Use current year 2026. Use provided real data only. Return valid JSON with all required sections. No undefined, no placeholder. If no value, use "Not Disclosed".`;
+const PROMPT = `You are an elite SEO strategist at MusePRO Intelligence Division. You've been in the trenches for over a decade. Write like a senior consultant who talks straight: warm, direct, and excited about the opportunity. No corporate fluff, no robotic language.
+
+Use current year 2026. Use only the provided real data. Return valid JSON with all required sections. No undefined, no placeholder. If you don't have a value, write "Not Disclosed".`;
 
 const countryNames: Record<string, string> = {
   us: 'United States', gb: 'United Kingdom', ca: 'Canada', au: 'Australia',
@@ -186,13 +188,9 @@ export const createSEOReport = async (req: Request, res: Response, next: NextFun
 
     console.log(`SEO: "${niche}" in ${country}`);
 
-    // 1. Fetch real SERP from Serper
     const serperData = await getSerperResults(niche, country).catch(() => null);
-
-    // 2. Fetch People Also Ask from SerpApi
     const relatedQuestions = await getKeywordSuggestions(niche, country).catch(() => []);
 
-    // 3. Fetch keyword data and trend from DataForSEO
     let keywords: KeywordData[] = [];
     let trendData: number[] = [];
     let dataSourceStatus = 'Google Keyword Planner via DataForSEO (dataforseo.com)';
@@ -200,7 +198,7 @@ export const createSEOReport = async (req: Request, res: Response, next: NextFun
     try {
       const { keywords: dfKeywords, trend } = await getKeywordDataAndTrend(niche, country, 50);
       if (dfKeywords && dfKeywords.length > 0) {
-        keywords = dfKeywords.map(k => ({ keyword: k.keyword, volume: k.volume, cpc: k.cpc, kd: k.kd }));
+        keywords = dfKeywords.map((k: RealKeywordData) => ({ keyword: k.keyword, volume: k.volume, cpc: k.cpc, kd: k.kd }));
         trendData = trend;
         console.log(`✅ DataForSEO provided ${keywords.length} keywords and ${trend.length} trend points`);
       } else {
@@ -220,19 +218,16 @@ export const createSEOReport = async (req: Request, res: Response, next: NextFun
       }
     }
 
-    // 4. Prepare SERP with metrics
     const serpWithMetrics = (serperData?.organic || []).slice(0, 8).map((r: any) => ({
       ...r,
       da: estimateDA(r.link),
       traffic: estimateTraffic(r.position, keywords[0]?.volume ?? null),
     }));
 
-    // 5. AI call
     const aiContext = { niche, country, keywords, serp: serpWithMetrics, relatedQuestions, trendData };
     const ai = await runGroqWithRetry(PROMPT, JSON.stringify(aiContext));
     const analysis = extractJSON(ai);
 
-    // 6. Save report
     const report = await Report.create({
       type: 'seo',
       niche,
