@@ -36,9 +36,7 @@ const extractJSON = (raw: string): any => {
   }
 };
 
-const PROMPT = `You are an elite SEO strategist at MusePRO Intelligence Division. Write like a senior consultant speaking directly to a client. Be specific, data-driven, and professional. Use current year 2026.
-
-CRITICAL: Every field in JSON must have a REAL value. No undefined, no placeholder, no empty strings. If you don't have data, use "N/A". Arrays must have exact required length. content_roadmap must have 12 weeks. link_acquisition must have 8 target sites. related_resources must have 8 items.`;
+const PROMPT = `You are an elite SEO strategist at MusePRO Intelligence Division. Write like a senior consultant. Use current year 2026. Use provided real data only. Return valid JSON with all required sections. No undefined, no placeholder. If no value, use "N/A".`;
 
 const countryNames: Record<string, string> = {
   us: 'United States', gb: 'United Kingdom', ca: 'Canada', au: 'Australia',
@@ -194,8 +192,7 @@ export const createSEOReport = async (req: Request, res: Response, next: NextFun
     try {
       const dfKeywords: RealKeywordData[] = await getKeywordData(niche, country, 50);
       if (dfKeywords && dfKeywords.length > 0) {
-        keywords = dfKeywords.map((k) => ({ keyword: k.keyword, volume: k.volume, cpc: k.cpc, kd: k.kd }));
-        console.log(`✅ DataForSEO provided ${keywords.length} keywords`);
+        keywords = dfKeywords.map(k => ({ keyword: k.keyword, volume: k.volume, cpc: k.cpc, kd: k.kd }));
       } else {
         throw new Error('DataForSEO returned empty');
       }
@@ -204,9 +201,10 @@ export const createSEOReport = async (req: Request, res: Response, next: NextFun
       dataSourceStatus = 'Live Google SERP via Serper API (serper.dev) & People Also Ask via SerpApi (serpapi.com)';
       const relatedSearches = serperData?.relatedSearches || [];
       const combined = [...new Set([...relatedSearches, ...relatedQuestions])];
-      keywords = combined.slice(0, 30).map((q) => ({ keyword: q, volume: null, cpc: null, kd: null }));
+      keywords = combined.slice(0, 30).map((q: string) => ({ keyword: q, volume: null, cpc: null, kd: null }));
       if (keywords.length < 5) {
-        keywords = [...keywords, `${niche} guide`, `${niche} tips`, `best ${niche}`, `how to ${niche}`, `${niche} 2026`].map((q) => ({ keyword: q, volume: null, cpc: null, kd: null }));
+        const fallbackKeywords = [`${niche} guide`, `${niche} tips`, `best ${niche}`, `how to ${niche}`, `${niche} 2026`];
+        keywords = fallbackKeywords.map((q: string) => ({ keyword: q, volume: null, cpc: null, kd: null }));
       }
       if (keywords.length === 0) {
         throw new Error('No keyword data available from any real source.');
