@@ -36,7 +36,7 @@ const extractJSON = (raw: string): any => {
   }
 };
 
-const PROMPT = `You are an elite SEO strategist at MusePRO Intelligence Division. Write like a senior consultant. Use current year 2026. Use provided real data only. Return valid JSON with all required sections. No undefined, no placeholder. If no value, use "N/A".`;
+const PROMPT = `You are an elite SEO strategist at MusePRO Intelligence Division. Write like a senior consultant. Use current year 2026. Use provided real data only. Return valid JSON with all required sections. No undefined, no placeholder. If no value, use "Not Disclosed".`;
 
 const countryNames: Record<string, string> = {
   us: 'United States', gb: 'United Kingdom', ca: 'Canada', au: 'Australia',
@@ -84,7 +84,7 @@ function generateMarkdown(
   m += `MusePRO\nReal-Time Market Research\nIntelligence Division\n──────────────────────────────────────────────────────────────\nSEO RESEARCH REPORT\n\nPrepared For: [Client Name]\nDate: ${today}\nReference: ${reportId}\nClassification: CONFIDENTIAL\n──────────────────────────────────────────────────────────────\n\n`;
 
   m += `1. YOUR OPPORTUNITY AT A GLANCE\n──────────────────────────────────────────────────────────────\n`;
-  m += `We analyzed the organic search landscape for "${niche}" in ${countryNames[country] || country}. The trend is ${analysis.trend_assessment || 'N/A'} with ${keywords.length} keyword opportunities identified.\n\n`;
+  m += `We analyzed the organic search landscape for "${niche}" in ${countryNames[country] || country}. The trend is ${analysis.trend_assessment || 'Not Disclosed'} with ${keywords.length} keyword opportunities identified.\n\n`;
   if (analysis.key_insights?.length) {
     m += `Key Insights:\n`;
     analysis.key_insights.forEach((f: string, i: number) => (m += `  ${i + 1}. ${f}\n`));
@@ -96,7 +96,7 @@ function generateMarkdown(
     m += `\n`;
   }
 
-  m += `2. WHAT THE DATA SHOWS\n──────────────────────────────────────────────────────────────\n${typeof analysis.trend_analysis === 'string' ? analysis.trend_analysis : JSON.stringify(analysis.trend_analysis)}\nSource: ${dataSourceStatus}\n\n`;
+  m += `2. WHAT THE DATA SHOWS\n──────────────────────────────────────────────────────────────\n${typeof analysis.trend_analysis === 'string' ? analysis.trend_analysis : 'Not Disclosed'}\nSource: ${dataSourceStatus}\n\n`;
 
   m += `3. KEYWORDS WORTH TARGETING\n──────────────────────────────────────────────────────────────\nSource: ${dataSourceStatus}\n\n`;
   m += `| # | Keyword | Volume | CPC | KD | Potential |\n|---|---------|--------|-----|----|----------|\n`;
@@ -122,16 +122,16 @@ function generateMarkdown(
   }
 
   m += `6. YOUR CONTENT GAME PLAN\n──────────────────────────────────────────────────────────────\n`;
-  analysis.content_roadmap?.forEach((c: any) => {
-    m += `Week ${c.week}: ${c.title}\n  Keyword: ${c.primary_keyword} | Type: ${c.content_type}\n  Secondary: ${c.secondary_keywords?.join(', ')}\n  Target Words: ${c.word_count_target}\n  Outline: ${c.outline?.join(' | ')}\n  Est. Traffic: ${c.expected_traffic?.toLocaleString()}/mo\n\n`;
+  analysis.content_roadmap?.forEach((c: any, idx: number) => {
+    m += `Week ${c.week || idx + 1}: ${c.title || 'N/A'}\n  Keyword: ${c.primary_keyword || 'N/A'} | Type: ${c.content_type || 'N/A'}\n  Secondary: ${c.secondary_keywords?.join(', ') || 'N/A'}\n  Target Words: ${c.word_count_target || 'N/A'}\n  Outline: ${c.outline?.join(' | ') || 'N/A'}\n  Est. Traffic: ${c.expected_traffic?.toLocaleString() || 'N/A'}/mo\n\n`;
   });
 
   const bs = analysis.link_acquisition;
   if (bs) {
-    m += `7. AUTHORITY BUILDING\n──────────────────────────────────────────────────────────────\n${bs.overview}\n\n`;
+    m += `7. AUTHORITY BUILDING\n──────────────────────────────────────────────────────────────\n${bs.overview || 'N/A'}\n\n`;
     if (bs.target_sites?.length) {
       m += `Target Sites:\n`;
-      bs.target_sites.forEach((s: any, i: number) => (m += `  ${i + 1}. ${s.site} (DA: ${s.da})\n     Type: ${s.type} | Contact: ${s.contact}\n     Pitch: ${s.pitch}\n\n`));
+      bs.target_sites.forEach((s: any, i: number) => (m += `  ${i + 1}. ${s.site || 'N/A'} (DA: ${s.da || 'N/A'})\n     Type: ${s.type || 'N/A'} | Contact: ${s.contact || 'N/A'}\n     Pitch: ${s.pitch || 'N/A'}\n\n`));
     }
     if (bs.guest_post_topics?.length) {
       m += `Guest Post Topics:\n`;
@@ -193,6 +193,7 @@ export const createSEOReport = async (req: Request, res: Response, next: NextFun
       const dfKeywords: RealKeywordData[] = await getKeywordData(niche, country, 50);
       if (dfKeywords && dfKeywords.length > 0) {
         keywords = dfKeywords.map(k => ({ keyword: k.keyword, volume: k.volume, cpc: k.cpc, kd: k.kd }));
+        console.log(`✅ DataForSEO provided ${keywords.length} keywords`);
       } else {
         throw new Error('DataForSEO returned empty');
       }
@@ -202,9 +203,8 @@ export const createSEOReport = async (req: Request, res: Response, next: NextFun
       const relatedSearches = serperData?.relatedSearches || [];
       const combined = [...new Set([...relatedSearches, ...relatedQuestions])];
       keywords = combined.slice(0, 30).map((q: string) => ({ keyword: q, volume: null, cpc: null, kd: null }));
-      if (keywords.length < 5) {
-        const fallbackKeywords = [`${niche} guide`, `${niche} tips`, `best ${niche}`, `how to ${niche}`, `${niche} 2026`];
-        keywords = fallbackKeywords.map((q: string) => ({ keyword: q, volume: null, cpc: null, kd: null }));
+      if (keywords.length === 0) {
+        keywords = relatedQuestions.slice(0, 10).map((q: string) => ({ keyword: q, volume: null, cpc: null, kd: null }));
       }
       if (keywords.length === 0) {
         throw new Error('No keyword data available from any real source.');
