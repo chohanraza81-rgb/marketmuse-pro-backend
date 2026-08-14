@@ -74,11 +74,7 @@ function estimateTraffic(position: number, volume: number | null): number | null
 
 function generateSmartFallbackKeywords(serperData: any, realProducts: RealProduct[], niche: string): KeywordData[] {
   const set = new Set<string>();
-
-  if (serperData?.relatedSearches) {
-    serperData.relatedSearches.forEach((q: string) => set.add(q));
-  }
-
+  if (serperData?.relatedSearches) serperData.relatedSearches.forEach((q: string) => set.add(q));
   if (serperData?.organic) {
     serperData.organic.forEach((r: any) => {
       let clean = r.title;
@@ -88,79 +84,54 @@ function generateSmartFallbackKeywords(serperData: any, realProducts: RealProduc
       if (clean) set.add(clean);
     });
   }
-
   realProducts.forEach(p => set.add(p.title));
-
-  const keywords = Array.from(set).slice(0, 30).map(q => ({
-    keyword: q,
-    volume: null,
-    cpc: null,
-    kd: null,
-  }));
-
+  let keywords = Array.from(set).slice(0, 30).map(q => ({ keyword: q, volume: null, cpc: null, kd: null }));
   if (keywords.length < 5) {
-    const fallback = [`${niche} products`, `best ${niche}`, `${niche} 2026`, `buy ${niche} online`];
-    fallback.forEach(q => set.add(q));
-    return Array.from(set).slice(0, 30).map(q => ({
-      keyword: q,
-      volume: null,
-      cpc: null,
-      kd: null,
-    }));
+    ['guide', 'tips', 'best', 'how to', '2026'].forEach(mod => set.add(`${niche} ${mod}`));
+    keywords = Array.from(set).slice(0, 30).map(q => ({ keyword: q, volume: null, cpc: null, kd: null }));
   }
-
   return keywords;
 }
 
 function ensureCompleteAnalysis(analysis: any, realProducts: RealProduct[], keywords: KeywordData[]): any {
   const safe = { ...analysis };
-
   if (!safe.market_score) safe.market_score = 50;
   if (!safe.opportunity_level) safe.opportunity_level = 'Moderate';
-  if (!safe.executive_brief) safe.executive_brief = `The ${realProducts.length ? realProducts[0].source : 'market'} niche shows promising opportunities with ${realProducts.length} live products.`;
-
+  if (!safe.executive_brief) safe.executive_brief = `The niche shows promise with ${realProducts.length} live products.`;
   if (!Array.isArray(safe.key_insights) || safe.key_insights.length < 3) {
     safe.key_insights = [
       `${realProducts.length} products were identified from Google Shopping.`,
       `${keywords.length} keyword opportunities were found.`,
-      `Competitive landscape shows room for differentiation.`,
+      'Competitive landscape shows room for differentiation.'
     ];
   }
-
   if (!Array.isArray(safe.immediate_actions) || safe.immediate_actions.length < 3) {
     safe.immediate_actions = [
       'Analyze the top product titles and pricing.',
       'Build a competitive analysis chart.',
-      'Develop a targeted marketing campaign.',
+      'Develop a targeted marketing campaign.'
     ];
   }
-
   if (!Array.isArray(safe.entry_opportunities) || safe.entry_opportunities.length < 1) {
-    safe.entry_opportunities = [
-      {
-        title: 'Product Differentiation',
-        description: 'Based on collected data, there is room for a unique selling proposition.',
-        revenue_potential: '$5k-10k/mo',
-        difficulty: 'Moderate',
-        first_action: 'Conduct deeper analysis of top products.',
-      },
-    ];
+    safe.entry_opportunities = [{
+      title: 'Product Differentiation',
+      description: 'Based on collected data, there is room for a unique selling proposition.',
+      revenue_potential: '$5k-10k/mo',
+      difficulty: 'Moderate',
+      first_action: 'Conduct deeper analysis of top products.'
+    }];
   }
-
   if (!Array.isArray(safe.audience_profiles) || safe.audience_profiles.length < 1) {
-    safe.audience_profiles = [
-      {
-        name: 'Value Seeker',
-        age_range: '25-44',
-        income: '$30k-60k',
-        primary_need: 'Affordable and reliable product',
-        purchase_trigger: 'Discount or high rating',
-        channels: ['Google Shopping', 'Amazon'],
-        messaging: `Discover the best ${realProducts[0]?.title || 'product'} with verified reviews.`,
-      },
-    ];
+    safe.audience_profiles = [{
+      name: 'Value Seeker',
+      age_range: '25-44',
+      income: '$30k-60k',
+      primary_need: 'Affordable and reliable product',
+      purchase_trigger: 'Discount or high rating',
+      channels: ['Google Shopping', 'Amazon'],
+      messaging: `Discover the best products with verified reviews.`
+    }];
   }
-
   if (!Array.isArray(safe.execution_roadmap) || safe.execution_roadmap.length < 12) {
     safe.execution_roadmap = Array.from({ length: 12 }, (_, i) => ({
       week: i + 1,
@@ -168,12 +139,11 @@ function ensureCompleteAnalysis(analysis: any, realProducts: RealProduct[], keyw
       tasks: [
         `Analyze competitor: ${realProducts[i % realProducts.length]?.title || 'market'}`,
         'Gather supplier quotes',
-        'Create marketing material',
+        'Create marketing material'
       ],
-      kpi: 'Achieve 10% market share in first month',
+      kpi: 'Achieve 10% market share in first month'
     }));
   }
-
   if (!safe.financial_forecast) {
     safe.financial_forecast = {
       startup_cost: 10000,
@@ -182,30 +152,26 @@ function ensureCompleteAnalysis(analysis: any, realProducts: RealProduct[], keyw
       units_to_breakeven: 200,
       months_to_profitability: 3,
       month6_profit_conservative: 5000,
-      month6_profit_optimistic: 15000,
+      month6_profit_optimistic: 15000
     };
   }
-
   if (!Array.isArray(safe.risk_matrix) || safe.risk_matrix.length < 3) {
     safe.risk_matrix = [
       { risk: 'High competition', probability: 'High', impact: 'Medium', mitigation: 'Focus on niche differentiation.' },
       { risk: 'Shipping delays', probability: 'Medium', impact: 'High', mitigation: 'Partner with local suppliers.' },
-      { risk: 'Currency fluctuation', probability: 'Low', impact: 'Medium', mitigation: 'Use hedging strategies.' },
+      { risk: 'Currency fluctuation', probability: 'Low', impact: 'Medium', mitigation: 'Use hedging strategies.' }
     ];
   }
-
   if (!Array.isArray(safe.growth_accelerators) || safe.growth_accelerators.length < 3) {
     safe.growth_accelerators = [
       'Leverage social media influencer marketing',
       'Offer bundle deals',
-      'Use retargeting ads for abandoned carts',
+      'Use retargeting ads for abandoned carts'
     ];
   }
-
   if (!Array.isArray(safe.related_resources) || safe.related_resources.length < 5) {
     safe.related_resources = realProducts.slice(0, 8).map(p => ({ name: p.title, url: p.source }));
   }
-
   return safe;
 }
 
@@ -332,13 +298,13 @@ export const createProductReport = async (req: Request, res: Response, next: Nex
     } catch (e) {
       console.warn(`⚠️ DataForSEO failed for product report, using smart fallback`);
       keywordSource = 'Live Google SERP via Serper API (serper.dev) & Product Titles via SerpApi';
-      const realProductsTemp: RealProduct[] = (shoppingData.shopping_results || []).slice(0, 10).map((p: any) => ({
+      const tempProducts = (shoppingData.shopping_results || []).slice(0, 10).map((p: any) => ({
         title: p.title || 'Unknown',
         price: p.extracted_price || p.price || 0,
         source: p.source || 'Unknown',
         reviews: p.rating || 0,
       }));
-      keywords = generateSmartFallbackKeywords(serperData, realProductsTemp, niche);
+      keywords = generateSmartFallbackKeywords(serperData, tempProducts, niche);
     }
 
     const realProducts: RealProduct[] = (shoppingData.shopping_results || []).slice(0, 10).map((p: any) => ({
