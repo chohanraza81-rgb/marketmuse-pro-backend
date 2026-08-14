@@ -38,7 +38,8 @@ export async function getSerperResults(query: string, country: string): Promise<
     throw new Error(`Serper API error: ${response.status}`);
   }
 
-  const data = await response.json();
+  // ✅ Fix: Cast to any to avoid TS18046
+  const data: any = await response.json();
 
   const result: SerperData = {
     organic: (data.organic || []).map((r: any, idx: number) => ({
