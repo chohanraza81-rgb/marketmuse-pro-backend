@@ -1,10 +1,9 @@
 import { Request, Response, NextFunction } from 'express';
-import { productResearchSchema } from '../validators/report';
+import { seoReportSchema } from '../validators/report';
 import { cacheService } from '../services/cache';
-import { getShoppingResults } from '../services/serpapi';
-import { getKeywordDataAndTrend } from '../services/dataforseo';
+import { getKeywordDataAndTrend, RealKeywordData } from '../services/dataforseo';
 import { getSerperResults } from '../services/serper';
-import { getExchangeRates, convertPrice } from '../services/exchange';
+import { getKeywordSuggestions } from '../services/serpapi';
 import { runGroqWithRetry } from '../services/groq';
 import { Report } from '../models/Report';
 import { ZodError } from 'zod';
@@ -37,12 +36,9 @@ const extractJSON = (raw: string): any => {
   }
 };
 
-const PROMPT = `You are a senior market analyst at MusePRO Intelligence Division. Write like a consultant. Use current year 2026. Use provided real data only. Return valid JSON with all required sections. No undefined, no placeholder. If no value, use "Not Disclosed".`;
+const PROMPT = `You are an elite SEO strategist at MusePRO Intelligence Division. You've been in the trenches for over a decade. Write like a senior consultant who talks straight: warm, direct, and excited about the opportunity. No corporate fluff, no robotic language.
 
-const currencySymbols: Record<string, string> = {
-  us: 'USD', gb: 'GBP', ca: 'CAD', au: 'AUD', de: 'EUR', sg: 'SGD',
-  sa: 'SAR', ae: 'AED', pk: 'PKR', in: 'INR', tr: 'TRY', my: 'MYR',
-};
+Use current year 2026. Use only the provided real data. Return valid JSON with all required sections. No undefined, no placeholder. If you don't have a value, write "Not Disclosed".`;
 
 const countryNames: Record<string, string> = {
   us: 'United States', gb: 'United Kingdom', ca: 'Canada', au: 'Australia',
@@ -50,10 +46,12 @@ const countryNames: Record<string, string> = {
   pk: 'Pakistan', in: 'India', tr: 'Turkey', my: 'Malaysia',
 };
 
-const scoreBar = (score: number): string => '[' + '█'.repeat(Math.round(score / 10)) + '░'.repeat(10 - Math.round(score / 10)) + ']';
-
-interface RealProduct { title: string; price: number; source: string; reviews: number; }
-interface KeywordData { keyword: string; volume: number | null; cpc: number | null; kd: number | null; }
+interface KeywordData {
+  keyword: string;
+  volume: number | null;
+  cpc: number | null;
+  kd: number | null;
+}
 
 function estimateDA(link: string): number {
   const domain = new URL(link).hostname.replace(/^www\./, '');
@@ -74,87 +72,106 @@ function estimateTraffic(position: number, volume: number | null): number | null
 
 function generateMarkdown(
   analysis: any,
-  realProducts: RealProduct[],
-  serpResults: any[],
   keywords: KeywordData[],
+  serp: any[],
+  relatedQuestions: string[],
   trendData: number[],
-  rates: any,
   niche: string,
   country: string,
   reportId: string,
-  keywordSource: string
+  dataSourceStatus: string
 ): string {
-  const sym = currencySymbols[country] || 'USD';
-  const localPrice = (usd: number) => `${sym} ${convertPrice(usd, sym, rates).toLocaleString()}`;
   const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
-
   let m = '';
-  m += `MusePRO\nReal-Time Market Research\nIntelligence Division\n──────────────────────────────────────────────────────────────\nPRODUCT RESEARCH REPORT\n\nPrepared For: [Client Name]\nDate: ${today}\nReference: ${reportId}\nClassification: CONFIDENTIAL\n──────────────────────────────────────────────────────────────\n\n`;
 
-  m += `1. THE BOTTOM LINE\n──────────────────────────────────────────────────────────────\n${analysis.executive_brief || 'Not Disclosed'}\n\n`;
-  m += `2. MARKET SCORECARD\n──────────────────────────────────────────────────────────────\nMarket Score: ${analysis.market_score ?? 'Not Disclosed'}/100 ${scoreBar(analysis.market_score || 0)}\nOpportunity Level: ${analysis.opportunity_level || 'Not Disclosed'}\n`;
-  const fp = analysis.financial_forecast || {};
-  if (fp.month6_profit_optimistic) m += `Est. Monthly Profit Potential: ${localPrice(fp.month6_profit_optimistic)}\n`;
-  m += `Time to Profitability: ${fp.months_to_profitability ?? 'Not Disclosed'} months\n\n`;
+  m += `MusePRO\nReal-Time Market Research\nIntelligence Division\n──────────────────────────────────────────────────────────────\nSEO RESEARCH REPORT\n\nPrepared For: [Client Name]\nDate: ${today}\nReference: ${reportId}\nClassification: CONFIDENTIAL\n──────────────────────────────────────────────────────────────\n\n`;
 
-  m += `Key Insights:\n`;
-  (analysis.key_insights || []).forEach((f: string, i: number) => m += `  ${i + 1}. ${f}\n`);
-  m += `\nWhat To Do First:\n`;
-  (analysis.immediate_actions || []).forEach((w: string, i: number) => m += `  ${i + 1}. ${w}\n`);
-  m += `\n`;
-
-  if (trendData && trendData.length > 0) {
-    m += `3. 12-MONTH DEMAND TREND\n──────────────────────────────────────────────────────────────\n${trendData.join(' → ')}\nSource: DataForSEO\n\n`;
+  m += `1. YOUR OPPORTUNITY AT A GLANCE\n──────────────────────────────────────────────────────────────\n`;
+  m += `We analyzed the organic search landscape for "${niche}" in ${countryNames[country] || country}. The trend is ${analysis.trend_assessment || 'Not Disclosed'} with ${keywords.length} keyword opportunities identified.\n\n`;
+  if (analysis.key_insights?.length) {
+    m += `Key Insights:\n`;
+    analysis.key_insights.forEach((f: string, i: number) => (m += `  ${i + 1}. ${f}\n`));
+    m += `\n`;
+  }
+  if (analysis.immediate_actions?.length) {
+    m += `What To Do First:\n`;
+    analysis.immediate_actions.forEach((w: string, i: number) => (m += `  ${i + 1}. ${w}\n`));
+    m += `\n`;
   }
 
-  m += `4. PRODUCTS WORTH SELLING\n──────────────────────────────────────────────────────────────\nSource: Google Shopping (live data via SerpApi)\n\n`;
-  m += `| # | Product | Price | Reviews | Source |\n|---|---------|-------|---------|--------|\n`;
-  realProducts.forEach((p, i) => m += `| ${i + 1} | ${p.title} | ${localPrice(p.price)} | ${p.reviews} | ${p.source} |\n`);
-  m += `\n`;
+  m += `2. WHAT THE DATA SHOWS\n──────────────────────────────────────────────────────────────\n${typeof analysis.trend_analysis === 'string' ? analysis.trend_analysis : 'Not Disclosed'}\n`;
+  if (trendData && trendData.length > 0) {
+    m += `12-Month Search Trend: ${trendData.join(' → ')}\n`;
+  }
+  m += `Source: ${dataSourceStatus}\n\n`;
 
-  m += `5. COMPETITIVE BATTLEFIELD\n──────────────────────────────────────────────────────────────\nSource: Serper API (Live Google SERP)\n\n`;
-  serpResults.forEach((s) => {
-    m += `Position #${s.position}: ${s.title}\n  URL: ${s.link}\n  Est. DA: ${s.da}\n  Est. Traffic: ${s.traffic !== null ? s.traffic.toLocaleString() : 'Not Disclosed'} visits/mo\n  Snippet: ${s.snippet?.substring(0, 120) || 'N/A'}\n\n`;
-  });
-  m += `\n`;
-
-  m += `6. KEYWORD LANDSCAPE\n──────────────────────────────────────────────────────────────\nSource: ${keywordSource}\n\n`;
-  m += `| # | Keyword | Volume | CPC | KD |\n|---|---------|--------|-----|----|\n`;
+  m += `3. KEYWORDS WORTH TARGETING\n──────────────────────────────────────────────────────────────\nSource: ${dataSourceStatus}\n\n`;
+  m += `| # | Keyword | Volume | CPC | KD | Potential |\n|---|---------|--------|-----|----|----------|\n`;
   keywords.forEach((k, i) => {
     const vol = k.volume !== null ? k.volume.toLocaleString() : 'Not Disclosed';
     const cpc = k.cpc !== null ? `$${k.cpc.toFixed(2)}` : 'Not Disclosed';
     const kd = k.kd !== null ? k.kd : 'Not Disclosed';
-    m += `| ${i + 1} | ${k.keyword} | ${vol} | ${cpc} | ${kd} |\n`;
+    const potential = k.kd !== null ? (k.kd < 30 ? 'Easy Win' : k.kd < 60 ? 'Moderate' : 'Long Game') : 'Not Disclosed';
+    m += `| ${i + 1} | ${k.keyword} | ${vol} | ${cpc} | ${kd} | ${potential} |\n`;
   });
   m += `\n`;
 
-  m += `7. WHITE SPACE OPPORTUNITIES\n──────────────────────────────────────────────────────────────\n`;
-  (analysis.entry_opportunities || []).forEach((g: any) => m += `${g.title || 'Not Disclosed'}\n  ${g.description || 'Not Disclosed'}\n  Revenue Potential: ${g.revenue_potential || 'Not Disclosed'}\n  Difficulty: ${g.difficulty || 'Not Disclosed'}\n  First Action: ${g.first_action || 'Not Disclosed'}\n\n`);
+  m += `4. WHO'S RANKING TODAY\n──────────────────────────────────────────────────────────────\nSource: Serper API (Live Google SERP)\n\n`;
+  serp.forEach((s, i) => {
+    m += `Position #${i + 1}: ${s.title}\n  URL: ${s.link}\n  Est. DA: ${s.da}\n  Est. Traffic: ${s.traffic !== null ? s.traffic.toLocaleString() : 'Not Disclosed'} visits/mo\n  Snippet: ${s.snippet?.substring(0, 120) || 'N/A'}\n\n`;
+  });
+  m += `\n`;
 
-  m += `8. WHO'S BUYING\n──────────────────────────────────────────────────────────────\n`;
-  (analysis.audience_profiles || []).forEach((p: any) => m += `${p.name || 'Not Disclosed'} | ${p.age_range || 'Not Disclosed'} | ${p.income || 'Not Disclosed'}\n  Primary Need: ${p.primary_need || 'Not Disclosed'}\n  Purchase Trigger: ${p.purchase_trigger || 'Not Disclosed'}\n  Channels: ${p.channels?.join(', ') || 'Not Disclosed'}\n  Messaging: "${p.messaging || 'Not Disclosed'}"\n\n`);
+  if (relatedQuestions.length) {
+    m += `5. PEOPLE ARE ASKING\n──────────────────────────────────────────────────────────────\n`;
+    relatedQuestions.forEach((q, i) => (m += `${i + 1}. ${q}\n`));
+    m += `\n`;
+  }
+
+  m += `6. YOUR CONTENT GAME PLAN\n──────────────────────────────────────────────────────────────\n`;
+  analysis.content_roadmap?.forEach((c: any, idx: number) => {
+    m += `Week ${c.week || idx + 1}: ${c.title || 'N/A'}\n  Keyword: ${c.primary_keyword || 'N/A'} | Type: ${c.content_type || 'N/A'}\n  Secondary: ${c.secondary_keywords?.join(', ') || 'N/A'}\n  Target Words: ${c.word_count_target || 'N/A'}\n  Outline: ${c.outline?.join(' | ') || 'N/A'}\n  Est. Traffic: ${c.expected_traffic?.toLocaleString() || 'N/A'}/mo\n\n`;
+  });
+
+  const bs = analysis.link_acquisition;
+  if (bs) {
+    m += `7. AUTHORITY BUILDING\n──────────────────────────────────────────────────────────────\n${bs.overview || 'N/A'}\n\n`;
+    if (bs.target_sites?.length) {
+      m += `Target Sites:\n`;
+      bs.target_sites.forEach((s: any, i: number) => (m += `  ${i + 1}. ${s.site || 'N/A'} (DA: ${s.da || 'N/A'})\n     Type: ${s.type || 'N/A'} | Contact: ${s.contact || 'N/A'}\n     Pitch: ${s.pitch || 'N/A'}\n\n`));
+    }
+    if (bs.guest_post_topics?.length) {
+      m += `Guest Post Topics:\n`;
+      bs.guest_post_topics.forEach((t: string, i: number) => (m += `  ${i + 1}. ${t}\n`));
+      m += `\n`;
+    }
+    if (bs.broken_link_opportunities?.length) {
+      m += `Broken Link Opportunities:\n`;
+      bs.broken_link_opportunities.forEach((b: any) => (m += `  - ${b.site}: ${b.dead_page} → ${b.replacement}\n`));
+      m += `\n`;
+    }
+    if (bs.outreach_template) {
+      m += `Outreach Template:\n${bs.outreach_template}\n\n`;
+    }
+  }
+
+  m += `8. ON-PAGE QUICK WINS\n──────────────────────────────────────────────────────────────\n`;
+  analysis.onpage_checklist?.forEach((item: string, i: number) => (m += `${i + 1}. ${item}\n`));
+  m += `\n`;
 
   if (analysis.growth_accelerators?.length) {
-    m += `9. FAST-TRACK STRATEGIES\n──────────────────────────────────────────────────────────────\n`;
-    analysis.growth_accelerators.forEach((tip: string, i: number) => m += `${i + 1}. ${tip}\n`);
+    m += `9. GROWTH LEVERS\n──────────────────────────────────────────────────────────────\n`;
+    analysis.growth_accelerators.forEach((tip: string, i: number) => (m += `${i + 1}. ${tip}\n`));
     m += `\n`;
   }
-
-  m += `10. YOUR 12-WEEK LAUNCH PLAN\n──────────────────────────────────────────────────────────────\n`;
-  (analysis.execution_roadmap || []).forEach((w: any, idx: number) => m += `Week ${w.week || idx + 1}: ${w.phase || 'Not Disclosed'}\n  ${w.tasks?.join('\n  ') || 'Not Disclosed'}\n  KPI: ${w.kpi || 'Not Disclosed'}\n\n`);
-
-  m += `11. MONEY MATH\n──────────────────────────────────────────────────────────────\nStartup Cost: ${localPrice(fp.startup_cost || 0)}\nMonthly Fixed Costs: ${localPrice(fp.monthly_fixed_costs || 0)}\nAvg Profit Per Unit: ${localPrice(fp.avg_profit_per_unit || 0)}\nUnits to Breakeven: ${fp.units_to_breakeven ?? 'Not Disclosed'}\nTime to Profitability: ${fp.months_to_profitability ?? 'Not Disclosed'} months\nMonth 6 Profit (Conservative): ${localPrice(fp.month6_profit_conservative || 0)}\nMonth 6 Profit (Optimistic): ${localPrice(fp.month6_profit_optimistic || 0)}\n\n`;
-
-  m += `12. WHAT COULD GO WRONG\n──────────────────────────────────────────────────────────────\n`;
-  (analysis.risk_matrix || []).forEach((r: any) => m += `Risk: ${r.risk || 'Not Disclosed'}\n  Probability: ${r.probability || 'Not Disclosed'} | Impact: ${r.impact || 'Not Disclosed'}\n  Mitigation: ${r.mitigation || 'Not Disclosed'}\n\n`);
 
   if (analysis.related_resources?.length) {
-    m += `13. TOOLS & LINKS\n──────────────────────────────────────────────────────────────\n`;
-    analysis.related_resources.forEach((res: any, i: number) => m += `${i + 1}. ${res.name || 'Not Disclosed'} – ${res.url || 'Not Disclosed'}\n`);
+    m += `10. TOOLS & RESOURCES\n──────────────────────────────────────────────────────────────\n`;
+    analysis.related_resources.forEach((res: any, i: number) => (m += `${i + 1}. ${res.name || 'N/A'} – ${res.url || 'N/A'}\n`));
     m += `\n`;
   }
 
-  m += `METHODOLOGY & SOURCES\n──────────────────────────────────────────────────────────────\nThis report is based on live data collected on ${today} from:\n\n• Google Shopping via SerpApi (serpapi.com)\n• ${keywordSource}\n• Live Google SERP via Serper API (serper.dev)\n• ExchangeRate-API (exchangerate-api.com)\n• Analysis Engine: Gemini AI (Hybrid Pro/Flash)\n\nAll data points can be independently verified against their public sources.\n\n`;
+  m += `METHODOLOGY & SOURCES\n──────────────────────────────────────────────────────────────\nThis report is based on live data collected on ${today} from:\n\n• ${dataSourceStatus}\n• Live Google SERP via Serper API (serper.dev)\n• People Also Ask via SerpApi (serpapi.com)\n• Analysis Engine: Gemini AI (Hybrid Pro/Flash)\n\nAll data points can be independently verified against their public sources.\n\n`;
   m += `DOCUMENT CONTROL\n──────────────────────────────────────────────────────────────\nClassification:  Confidential\nDistribution:    Client Only\nVersion:         1.0\nPrepared By:     MusePRO Intelligence Division\n\n`;
   m += `DISCLAIMER\n──────────────────────────────────────────────────────────────\nThis document contains proprietary research conducted by MusePRO. The information herein is intended solely for the designated recipient. Unauthorized distribution, copying, or disclosure is strictly prohibited.\n\nWhile every effort has been made to ensure accuracy, market conditions change rapidly. Verify critical data points before making business decisions.\n\n`;
   m += `──────────────────────────────────────────────────────────────\n© MusePRO — Intelligence Division. All Rights Reserved.\n`;
@@ -162,80 +179,67 @@ function generateMarkdown(
   return m;
 }
 
-export const createProductReport = async (req: Request, res: Response, next: NextFunction) => {
+export const createSEOReport = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { niche, country } = productResearchSchema.parse(req.body);
-    const ck = `prod_${niche}_${country}`;
+    const { niche, country } = seoReportSchema.parse(req.body);
+    const ck = `seo_${niche}_${country}`;
     const cached = cacheService.get(ck);
     if (cached) return res.json(cached);
 
-    console.log(`Product: "${niche}" in ${country}`);
+    console.log(`SEO: "${niche}" in ${country}`);
 
-    // 1. Fetch real data
-    const [shoppingData, fx, serperData] = await Promise.all([
-      getShoppingResults(niche, country).catch(() => null),
-      getExchangeRates(),
-      getSerperResults(niche, country).catch(() => null),
-    ]);
+    const serperData = await getSerperResults(niche, country).catch(() => null);
+    const relatedQuestions = await getKeywordSuggestions(niche, country).catch(() => []);
 
-    if (!shoppingData) throw new Error('Unable to retrieve live shopping data.');
-
-    // 2. Keyword data and trend from DataForSEO
     let keywords: KeywordData[] = [];
     let trendData: number[] = [];
-    let keywordSource = 'Google Keyword Planner via DataForSEO (dataforseo.com)';
+    let dataSourceStatus = 'Google Keyword Planner via DataForSEO (dataforseo.com)';
 
     try {
       const { keywords: dfKeywords, trend } = await getKeywordDataAndTrend(niche, country, 50);
       if (dfKeywords && dfKeywords.length > 0) {
-        keywords = dfKeywords.map(k => ({ keyword: k.keyword, volume: k.volume, cpc: k.cpc, kd: k.kd }));
+        keywords = dfKeywords.map((k: RealKeywordData) => ({ keyword: k.keyword, volume: k.volume, cpc: k.cpc, kd: k.kd }));
         trendData = trend;
         console.log(`✅ DataForSEO provided ${keywords.length} keywords and ${trend.length} trend points`);
       } else {
-        throw new Error('DataForSEO empty');
+        throw new Error('DataForSEO returned empty');
       }
-    } catch (e) {
-      console.warn(`⚠️ DataForSEO failed for product report, using SERP related searches`);
-      keywordSource = 'Live Google SERP via Serper API (serper.dev)';
-      keywords = (serperData?.relatedSearches || []).slice(0, 30).map((q: string) => ({ keyword: q, volume: null, cpc: null, kd: null }));
+    } catch (dfError) {
+      console.warn(`⚠️ DataForSEO failed, switching to Serper/SerpApi smart fallback`);
+      dataSourceStatus = 'Live Google SERP via Serper API (serper.dev) & People Also Ask via SerpApi (serpapi.com)';
+      const relatedSearches = serperData?.relatedSearches || [];
+      const combined = [...new Set([...relatedSearches, ...relatedQuestions])];
+      keywords = combined.slice(0, 30).map((q: string) => ({ keyword: q, volume: null, cpc: null, kd: null }));
       if (keywords.length === 0) {
-        keywords = [{ keyword: niche, volume: null, cpc: null, kd: null }];
+        keywords = relatedQuestions.slice(0, 10).map((q: string) => ({ keyword: q, volume: null, cpc: null, kd: null }));
+      }
+      if (keywords.length === 0) {
+        throw new Error('No keyword data available from any real source.');
       }
     }
 
-    // 3. Products
-    const realProducts: RealProduct[] = (shoppingData.shopping_results || []).slice(0, 10).map((p: any) => ({
-      title: p.title || 'Unknown',
-      price: p.extracted_price || p.price || 0,
-      source: p.source || 'Unknown',
-      reviews: p.rating || 0,
-    }));
-
-    // 4. SERP
-    const serpResults = (serperData?.organic || []).slice(0, 8).map((r: any) => ({
+    const serpWithMetrics = (serperData?.organic || []).slice(0, 8).map((r: any) => ({
       ...r,
       da: estimateDA(r.link),
       traffic: estimateTraffic(r.position, keywords[0]?.volume ?? null),
     }));
 
-    // 5. AI
-    const aiContext = { niche, country, realProducts, serpResults, keywords, trendData, exchangeRates: fx };
+    const aiContext = { niche, country, keywords, serp: serpWithMetrics, relatedQuestions, trendData };
     const ai = await runGroqWithRetry(PROMPT, JSON.stringify(aiContext));
     const analysis = extractJSON(ai);
 
-    // 6. Save
     const report = await Report.create({
-      type: 'product',
+      type: 'seo',
       niche,
       country,
       value: '$99',
-      data: { ...analysis, realProducts, serpResults, keywords, trendData },
+      data: { ...analysis, keywords, serp: serpWithMetrics, relatedQuestions, trendData },
       markdown: 'Intelligence report generation in progress...',
-      charts: { fx },
+      charts: {},
     });
 
     const reportId = `MKT-${report._id.toString().slice(-6).toUpperCase()}`;
-    const markdown = generateMarkdown(analysis, realProducts, serpResults, keywords, trendData, fx, niche, country, reportId, keywordSource);
+    const markdown = generateMarkdown(analysis, keywords, serpWithMetrics, relatedQuestions, trendData, niche, country, reportId, dataSourceStatus);
     report.markdown = markdown;
     await report.save();
 
@@ -248,7 +252,7 @@ export const createProductReport = async (req: Request, res: Response, next: Nex
   }
 };
 
-export const getProductReport = async (req: Request, res: Response) => {
+export const getSEOReport = async (req: Request, res: Response) => {
   const report = await Report.findById(req.params.id);
   if (!report) return res.status(404).json({ error: 'Not found' });
   res.json(report);
