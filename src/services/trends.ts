@@ -22,7 +22,7 @@ export async function getGoogleTrends(keyword: string, country: string): Promise
     cacheService.set(cacheKey, values, 86400);
     return values;
   } catch (error) {
-    console.warn(`⚠️ Google Trends failed for "${keyword}" in ${country}: ${error}`);
-    return [];
+    console.warn(`⚠️ Google Trends failed: ${error}`);
+    return []; // optional, will show Not Disclosed in report
   }
 }
