@@ -36,22 +36,7 @@ const extractJSON = (raw: string): any => {
   }
 };
 
-const PROMPT = `You are an elite SEO strategist at MusePRO Intelligence Division. You have 15 years of experience. Write like a senior consultant who talks straight: warm, direct, and excited about the opportunity. No corporate fluff, no robotic language.
-
-CRITICAL INSTRUCTIONS:
-- NEVER leave any field empty. NEVER use "N/A" or "Not Disclosed" or "Estimated" as placeholders. Always provide actual, realistic values.
-- Use the provided real data if available. If not available, generate realistic estimates based on niche, country, and SERP patterns.
-- Exactly 50 keywords with variation: some high volume (1000+), many medium (100-999), several low (10-99).
-- Every keyword must have volume (number), cpc (number), kd (number), intent.
-- 12 specific content roadmap items with unique titles, primary_keyword, secondary_keywords, content_type, word_count_target, outline (5 points), expected_traffic.
-- Authority building with 8 target sites (realistic domains for the niche), guest post topics (5), broken link opportunities (3), outreach email template.
-- 15 on-page checklist items, 5 growth accelerators, 8 related resources with URLs.
-- Key insights (3) and immediate actions (3) must be specific and actionable.
-- Trend analysis 2-3 sentences with actual trend reasoning.
-- Market score number (0-100). Opportunity level "High", "Moderate", or "Limited".
-- All numbers realistic and coherent.
-
-Return ONLY valid JSON with ALL required fields.`;
+const PROMPT = `You are an elite SEO strategist at MusePRO Intelligence Division. Write like a senior consultant. Use current year 2026. Use provided real data if available. Never leave any field empty. Generate realistic numbers. Return valid JSON with all required fields.`;
 
 const countryNames: Record<string, string> = {
   us: 'United States', gb: 'United Kingdom', ca: 'Canada', au: 'Australia',
@@ -99,14 +84,15 @@ function generateMarkdown(
   m += `MusePRO\nReal-Time Market Research\nIntelligence Division\n──────────────────────────────────────────────────────────────\nSEO RESEARCH REPORT\n\nPrepared For: [Client Name]\nDate: ${today}\nReference: ${reportId}\nClassification: CONFIDENTIAL\n──────────────────────────────────────────────────────────────\n\n`;
 
   m += `1. YOUR OPPORTUNITY AT A GLANCE\n──────────────────────────────────────────────────────────────\n`;
-  m += `We analyzed the organic search landscape for "${niche}" in ${countryNames[country] || country}. The trend is ${analysis.trend_assessment} with ${keywords.length} keyword opportunities identified.\n\n`;
+  m += `We analyzed the organic search landscape for "${niche}" in ${countryNames[country] || country}. The trend is ${analysis.trend_assessment || 'Evergreen'} with ${keywords.length} keyword opportunities identified.\n\n`;
+
   m += `Key Insights:\n`;
-  analysis.key_insights.forEach((f: string, i: number) => (m += `  ${i + 1}. ${f}\n`));
+  (analysis.key_insights || []).forEach((f: string, i: number) => (m += `  ${i + 1}. ${f}\n`));
   m += `\nWhat To Do First:\n`;
-  analysis.immediate_actions.forEach((w: string, i: number) => (m += `  ${i + 1}. ${w}\n`));
+  (analysis.immediate_actions || []).forEach((w: string, i: number) => (m += `  ${i + 1}. ${w}\n`));
   m += `\n`;
 
-  m += `2. WHAT THE DATA SHOWS\n──────────────────────────────────────────────────────────────\n${analysis.trend_analysis}\n`;
+  m += `2. WHAT THE DATA SHOWS\n──────────────────────────────────────────────────────────────\n${analysis.trend_analysis || 'Not Disclosed'}\n`;
   if (trendData && trendData.length > 0) {
     m += `12-Month Search Trend: ${trendData.join(' → ')}\n`;
   }
@@ -133,30 +119,30 @@ function generateMarkdown(
   }
 
   m += `6. YOUR CONTENT GAME PLAN\n──────────────────────────────────────────────────────────────\n`;
-  analysis.content_roadmap.forEach((c: any) => {
-    m += `Week ${c.week}: ${c.title}\n  Keyword: ${c.primary_keyword} | Type: ${c.content_type}\n  Secondary: ${c.secondary_keywords.join(', ')}\n  Target Words: ${c.word_count_target}\n  Outline: ${c.outline.join(' | ')}\n  Est. Traffic: ${c.expected_traffic.toLocaleString()}/mo\n\n`;
+  (analysis.content_roadmap || []).forEach((c: any) => {
+    m += `Week ${c.week}: ${c.title}\n  Keyword: ${c.primary_keyword} | Type: ${c.content_type}\n  Secondary: ${c.secondary_keywords?.join(', ')}\n  Target Words: ${c.word_count_target}\n  Outline: ${c.outline?.join(' | ')}\n  Est. Traffic: ${c.expected_traffic?.toLocaleString()}/mo\n\n`;
   });
 
-  const bs = analysis.link_acquisition;
-  m += `7. AUTHORITY BUILDING\n──────────────────────────────────────────────────────────────\n${bs.overview}\n\n`;
+  const bs = analysis.link_acquisition || {};
+  m += `7. AUTHORITY BUILDING\n──────────────────────────────────────────────────────────────\n${bs.overview || 'N/A'}\n\n`;
   m += `Target Sites:\n`;
-  bs.target_sites.forEach((s: any, i: number) => (m += `  ${i + 1}. ${s.site} (DA: ${s.da})\n     Type: ${s.type} | Contact: ${s.contact}\n     Pitch: ${s.pitch}\n\n`));
+  (bs.target_sites || []).forEach((s: any, i: number) => (m += `  ${i + 1}. ${s.site} (DA: ${s.da})\n     Type: ${s.type} | Contact: ${s.contact}\n     Pitch: ${s.pitch}\n\n`));
   m += `Guest Post Topics:\n`;
-  bs.guest_post_topics.forEach((t: string, i: number) => (m += `  ${i + 1}. ${t}\n`));
+  (bs.guest_post_topics || []).forEach((t: string, i: number) => (m += `  ${i + 1}. ${t}\n`));
   m += `\nBroken Link Opportunities:\n`;
-  bs.broken_link_opportunities.forEach((b: any) => (m += `  - ${b.site}: ${b.dead_page} → ${b.replacement}\n`));
-  m += `\nOutreach Template:\n${bs.outreach_template}\n\n`;
+  (bs.broken_link_opportunities || []).forEach((b: any) => (m += `  - ${b.site}: ${b.dead_page} → ${b.replacement}\n`));
+  m += `\nOutreach Template:\n${bs.outreach_template || 'N/A'}\n\n`;
 
   m += `8. ON-PAGE QUICK WINS\n──────────────────────────────────────────────────────────────\n`;
-  analysis.onpage_checklist.forEach((item: string, i: number) => (m += `${i + 1}. ${item}\n`));
+  (analysis.onpage_checklist || []).forEach((item: string, i: number) => (m += `${i + 1}. ${item}\n`));
   m += `\n`;
 
   m += `9. GROWTH LEVERS\n──────────────────────────────────────────────────────────────\n`;
-  analysis.growth_accelerators.forEach((tip: string, i: number) => (m += `${i + 1}. ${tip}\n`));
+  (analysis.growth_accelerators || []).forEach((tip: string, i: number) => (m += `${i + 1}. ${tip}\n`));
   m += `\n`;
 
   m += `10. TOOLS & RESOURCES\n──────────────────────────────────────────────────────────────\n`;
-  analysis.related_resources.forEach((res: any, i: number) => (m += `${i + 1}. ${res.name} – ${res.url}\n`));
+  (analysis.related_resources || []).forEach((res: any, i: number) => (m += `${i + 1}. ${res.name} – ${res.url}\n`));
   m += `\n`;
 
   m += `METHODOLOGY & SOURCES\n──────────────────────────────────────────────────────────────\nThis report is based on live data collected on ${today} from:\n\n• ${dataSourceStatus}\n• Live Google SERP via SerpAPI (serpapi.com)\n• People Also Ask via SerpAPI\n• Analysis Engine: Gemini AI (Hybrid Pro/Flash)\n\nAll data points are independently verified where possible.\n\n`;
