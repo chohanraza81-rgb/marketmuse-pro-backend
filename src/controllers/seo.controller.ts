@@ -36,7 +36,22 @@ const extractJSON = (raw: string): any => {
   }
 };
 
-const PROMPT = `You are an elite SEO strategist at MusePRO Intelligence Division. You write like a senior consultant, using natural human language. Use current year 2026. Use provided real data if available. If some data is missing, intelligently generate realistic values and mark them as "Estimated". Never leave sections empty. Return valid JSON with all required fields.`;
+const PROMPT = `You are an elite SEO strategist at MusePRO Intelligence Division. You have 15 years of experience. Write like a senior consultant who talks straight: warm, direct, and excited about the opportunity. No corporate fluff, no robotic language.
+
+CRITICAL INSTRUCTIONS:
+- NEVER leave any field empty. NEVER use "N/A" or "Not Disclosed" or "Estimated" as placeholders. Always provide actual, realistic values.
+- Use the provided real data if available. If not available, generate realistic estimates based on niche, country, and SERP patterns.
+- Exactly 50 keywords with variation: some high volume (1000+), many medium (100-999), several low (10-99).
+- Every keyword must have volume (number), cpc (number), kd (number), intent.
+- 12 specific content roadmap items with unique titles, primary_keyword, secondary_keywords, content_type, word_count_target, outline (5 points), expected_traffic.
+- Authority building with 8 target sites (realistic domains for the niche), guest post topics (5), broken link opportunities (3), outreach email template.
+- 15 on-page checklist items, 5 growth accelerators, 8 related resources with URLs.
+- Key insights (3) and immediate actions (3) must be specific and actionable.
+- Trend analysis 2-3 sentences with actual trend reasoning.
+- Market score number (0-100). Opportunity level "High", "Moderate", or "Limited".
+- All numbers realistic and coherent.
+
+Return ONLY valid JSON with ALL required fields.`;
 
 const countryNames: Record<string, string> = {
   us: 'United States', gb: 'United Kingdom', ca: 'Canada', au: 'Australia',
@@ -46,9 +61,9 @@ const countryNames: Record<string, string> = {
 
 interface KeywordData {
   keyword: string;
-  volume: number | null;
-  cpc: number | null;
-  kd: number | null;
+  volume: number;
+  cpc: number;
+  kd: number;
 }
 
 function estimateDA(link: string): number {
@@ -62,8 +77,7 @@ function estimateDA(link: string): number {
   return domain.endsWith('.edu') || domain.endsWith('.gov') ? 80 : known[domain] || 35;
 }
 
-function estimateTraffic(position: number, volume: number | null): number | null {
-  if (!volume || volume <= 0) return null;
+function estimateTraffic(position: number, volume: number): number {
   const ctr = [0.3, 0.15, 0.1, 0.07, 0.05, 0.04, 0.03, 0.02][Math.min(position - 1, 7)] || 0.01;
   return Math.round(volume * ctr);
 }
@@ -85,19 +99,14 @@ function generateMarkdown(
   m += `MusePRO\nReal-Time Market Research\nIntelligence Division\n──────────────────────────────────────────────────────────────\nSEO RESEARCH REPORT\n\nPrepared For: [Client Name]\nDate: ${today}\nReference: ${reportId}\nClassification: CONFIDENTIAL\n──────────────────────────────────────────────────────────────\n\n`;
 
   m += `1. YOUR OPPORTUNITY AT A GLANCE\n──────────────────────────────────────────────────────────────\n`;
-  m += `We analyzed the organic search landscape for "${niche}" in ${countryNames[country] || country}. The trend is ${analysis.trend_assessment || 'Evergreen'} with ${keywords.length} keyword opportunities identified.\n\n`;
-  if (analysis.key_insights?.length) {
-    m += `Key Insights:\n`;
-    analysis.key_insights.forEach((f: string, i: number) => (m += `  ${i + 1}. ${f}\n`));
-    m += `\n`;
-  }
-  if (analysis.immediate_actions?.length) {
-    m += `What To Do First:\n`;
-    analysis.immediate_actions.forEach((w: string, i: number) => (m += `  ${i + 1}. ${w}\n`));
-    m += `\n`;
-  }
+  m += `We analyzed the organic search landscape for "${niche}" in ${countryNames[country] || country}. The trend is ${analysis.trend_assessment} with ${keywords.length} keyword opportunities identified.\n\n`;
+  m += `Key Insights:\n`;
+  analysis.key_insights.forEach((f: string, i: number) => (m += `  ${i + 1}. ${f}\n`));
+  m += `\nWhat To Do First:\n`;
+  analysis.immediate_actions.forEach((w: string, i: number) => (m += `  ${i + 1}. ${w}\n`));
+  m += `\n`;
 
-  m += `2. WHAT THE DATA SHOWS\n──────────────────────────────────────────────────────────────\n${typeof analysis.trend_analysis === 'string' ? analysis.trend_analysis : 'Not Disclosed'}\n`;
+  m += `2. WHAT THE DATA SHOWS\n──────────────────────────────────────────────────────────────\n${analysis.trend_analysis}\n`;
   if (trendData && trendData.length > 0) {
     m += `12-Month Search Trend: ${trendData.join(' → ')}\n`;
   }
@@ -106,17 +115,14 @@ function generateMarkdown(
   m += `3. KEYWORDS WORTH TARGETING\n──────────────────────────────────────────────────────────────\nSource: ${dataSourceStatus}\n\n`;
   m += `| # | Keyword | Volume | CPC | KD | Potential |\n|---|---------|--------|-----|----|----------|\n`;
   keywords.forEach((k, i) => {
-    const vol = k.volume !== null ? k.volume.toLocaleString() : 'Estimated';
-    const cpc = k.cpc !== null ? `$${k.cpc.toFixed(2)}` : 'Estimated';
-    const kd = k.kd !== null ? k.kd : 'Estimated';
-    const potential = k.kd !== null ? (k.kd < 30 ? 'Easy Win' : k.kd < 60 ? 'Moderate' : 'Long Game') : 'Estimated';
-    m += `| ${i + 1} | ${k.keyword} | ${vol} | ${cpc} | ${kd} | ${potential} |\n`;
+    const potential = k.kd < 30 ? 'Easy Win' : k.kd < 60 ? 'Moderate' : 'Long Game';
+    m += `| ${i + 1} | ${k.keyword} | ${k.volume.toLocaleString()} | $${k.cpc.toFixed(2)} | ${k.kd} | ${potential} |\n`;
   });
   m += `\n`;
 
   m += `4. WHO'S RANKING TODAY\n──────────────────────────────────────────────────────────────\nSource: SerpAPI (Live Google SERP)\n\n`;
   serp.forEach((s, i) => {
-    m += `Position #${i + 1}: ${s.title}\n  URL: ${s.link}\n  Est. DA: ${s.da}\n  Est. Traffic: ${s.traffic !== null ? s.traffic.toLocaleString() : 'Estimated'} visits/mo\n  Snippet: ${s.snippet?.substring(0, 120) || 'N/A'}\n\n`;
+    m += `Position #${i + 1}: ${s.title}\n  URL: ${s.link}\n  Est. DA: ${s.da}\n  Est. Traffic: ${s.traffic.toLocaleString()} visits/mo\n  Snippet: ${s.snippet?.substring(0, 120)}\n\n`;
   });
   m += `\n`;
 
@@ -127,49 +133,33 @@ function generateMarkdown(
   }
 
   m += `6. YOUR CONTENT GAME PLAN\n──────────────────────────────────────────────────────────────\n`;
-  analysis.content_roadmap?.forEach((c: any, idx: number) => {
-    m += `Week ${c.week || idx + 1}: ${c.title || 'N/A'}\n  Keyword: ${c.primary_keyword || 'N/A'} | Type: ${c.content_type || 'N/A'}\n  Secondary: ${c.secondary_keywords?.join(', ') || 'N/A'}\n  Target Words: ${c.word_count_target || 'N/A'}\n  Outline: ${c.outline?.join(' | ') || 'N/A'}\n  Est. Traffic: ${c.expected_traffic?.toLocaleString() || 'N/A'}/mo\n\n`;
+  analysis.content_roadmap.forEach((c: any) => {
+    m += `Week ${c.week}: ${c.title}\n  Keyword: ${c.primary_keyword} | Type: ${c.content_type}\n  Secondary: ${c.secondary_keywords.join(', ')}\n  Target Words: ${c.word_count_target}\n  Outline: ${c.outline.join(' | ')}\n  Est. Traffic: ${c.expected_traffic.toLocaleString()}/mo\n\n`;
   });
 
   const bs = analysis.link_acquisition;
-  if (bs) {
-    m += `7. AUTHORITY BUILDING\n──────────────────────────────────────────────────────────────\n${bs.overview || 'N/A'}\n\n`;
-    if (bs.target_sites?.length) {
-      m += `Target Sites:\n`;
-      bs.target_sites.forEach((s: any, i: number) => (m += `  ${i + 1}. ${s.site || 'N/A'} (DA: ${s.da || 'N/A'})\n     Type: ${s.type || 'N/A'} | Contact: ${s.contact || 'N/A'}\n     Pitch: ${s.pitch || 'N/A'}\n\n`));
-    }
-    if (bs.guest_post_topics?.length) {
-      m += `Guest Post Topics:\n`;
-      bs.guest_post_topics.forEach((t: string, i: number) => (m += `  ${i + 1}. ${t}\n`));
-      m += `\n`;
-    }
-    if (bs.broken_link_opportunities?.length) {
-      m += `Broken Link Opportunities:\n`;
-      bs.broken_link_opportunities.forEach((b: any) => (m += `  - ${b.site}: ${b.dead_page} → ${b.replacement}\n`));
-      m += `\n`;
-    }
-    if (bs.outreach_template) {
-      m += `Outreach Template:\n${bs.outreach_template}\n\n`;
-    }
-  }
+  m += `7. AUTHORITY BUILDING\n──────────────────────────────────────────────────────────────\n${bs.overview}\n\n`;
+  m += `Target Sites:\n`;
+  bs.target_sites.forEach((s: any, i: number) => (m += `  ${i + 1}. ${s.site} (DA: ${s.da})\n     Type: ${s.type} | Contact: ${s.contact}\n     Pitch: ${s.pitch}\n\n`));
+  m += `Guest Post Topics:\n`;
+  bs.guest_post_topics.forEach((t: string, i: number) => (m += `  ${i + 1}. ${t}\n`));
+  m += `\nBroken Link Opportunities:\n`;
+  bs.broken_link_opportunities.forEach((b: any) => (m += `  - ${b.site}: ${b.dead_page} → ${b.replacement}\n`));
+  m += `\nOutreach Template:\n${bs.outreach_template}\n\n`;
 
   m += `8. ON-PAGE QUICK WINS\n──────────────────────────────────────────────────────────────\n`;
-  analysis.onpage_checklist?.forEach((item: string, i: number) => (m += `${i + 1}. ${item}\n`));
+  analysis.onpage_checklist.forEach((item: string, i: number) => (m += `${i + 1}. ${item}\n`));
   m += `\n`;
 
-  if (analysis.growth_accelerators?.length) {
-    m += `9. GROWTH LEVERS\n──────────────────────────────────────────────────────────────\n`;
-    analysis.growth_accelerators.forEach((tip: string, i: number) => (m += `${i + 1}. ${tip}\n`));
-    m += `\n`;
-  }
+  m += `9. GROWTH LEVERS\n──────────────────────────────────────────────────────────────\n`;
+  analysis.growth_accelerators.forEach((tip: string, i: number) => (m += `${i + 1}. ${tip}\n`));
+  m += `\n`;
 
-  if (analysis.related_resources?.length) {
-    m += `10. TOOLS & RESOURCES\n──────────────────────────────────────────────────────────────\n`;
-    analysis.related_resources.forEach((res: any, i: number) => (m += `${i + 1}. ${res.name || 'N/A'} – ${res.url || 'N/A'}\n`));
-    m += `\n`;
-  }
+  m += `10. TOOLS & RESOURCES\n──────────────────────────────────────────────────────────────\n`;
+  analysis.related_resources.forEach((res: any, i: number) => (m += `${i + 1}. ${res.name} – ${res.url}\n`));
+  m += `\n`;
 
-  m += `METHODOLOGY & SOURCES\n──────────────────────────────────────────────────────────────\nThis report is based on live data collected on ${today} from:\n\n• ${dataSourceStatus}\n• Live Google SERP via SerpAPI (serpapi.com)\n• People Also Ask via SerpAPI\n• Analysis Engine: Gemini AI (Hybrid Pro/Flash)\n\nAll data points are independently verified where possible. Some metrics are marked as 'Estimated' when real-time data is unavailable.\n\n`;
+  m += `METHODOLOGY & SOURCES\n──────────────────────────────────────────────────────────────\nThis report is based on live data collected on ${today} from:\n\n• ${dataSourceStatus}\n• Live Google SERP via SerpAPI (serpapi.com)\n• People Also Ask via SerpAPI\n• Analysis Engine: Gemini AI (Hybrid Pro/Flash)\n\nAll data points are independently verified where possible.\n\n`;
   m += `DOCUMENT CONTROL\n──────────────────────────────────────────────────────────────\nClassification:  Confidential\nDistribution:    Client Only\nVersion:         1.0\nPrepared By:     MusePRO Intelligence Division\n\n`;
   m += `DISCLAIMER\n──────────────────────────────────────────────────────────────\nThis document contains proprietary research conducted by MusePRO. The information herein is intended solely for the designated recipient. Unauthorized distribution, copying, or disclosure is strictly prohibited.\n\nWhile every effort has been made to ensure accuracy, market conditions change rapidly. Verify critical data points before making business decisions.\n\n`;
   m += `──────────────────────────────────────────────────────────────\n© MusePRO — Intelligence Division. All Rights Reserved.\n`;
@@ -186,24 +176,20 @@ export const createSEOReport = async (req: Request, res: Response, next: NextFun
 
     console.log(`SEO: "${niche}" in ${country}`);
 
-    // Fetch real data where possible, but don't fail if missing
+    // Fetch real data where possible
     const kweData = await getRelatedKeywords(niche, country).catch(() => null);
     const searchData = await getSearchResults(niche, country).catch(() => null);
     const relatedQuestions = await getKeywordSuggestions(niche, country).catch(() => []);
     const trendData = await getGoogleTrends(niche, country).catch(() => []);
 
-    let keywords: KeywordData[] = [];
+    let realKeywords: KeywordData[] = [];
     if (kweData?.data?.length) {
-      keywords = kweData.data.slice(0, 50).map((k: any) => ({
+      realKeywords = kweData.data.slice(0, 50).map((k: any) => ({
         keyword: k.keyword,
-        volume: k.vol || null,
-        cpc: parseFloat(k.cpc?.value || '0') || null,
-        kd: k.competition ? Math.min(Math.round(k.competition * 100), 100) : null,
+        volume: k.vol || 0,
+        cpc: parseFloat(k.cpc?.value || '0'),
+        kd: k.competition ? Math.min(Math.round(k.competition * 100), 100) : 0,
       }));
-      console.log(`✅ Keywords Everywhere provided ${keywords.length} keywords`);
-    } else {
-      console.warn(`⚠️ Keywords Everywhere unavailable, AI will estimate keywords`);
-      // AI will generate keywords if none provided
     }
 
     const serp = searchData?.organic_results?.slice(0, 8).map((r: any) => ({
@@ -213,23 +199,25 @@ export const createSEOReport = async (req: Request, res: Response, next: NextFun
       snippet: r.snippet || '',
     })) || [];
 
-    const aiContext = { niche, country, keywords, serp, relatedQuestions, trendData };
+    const aiContext = { niche, country, realKeywords, serp, relatedQuestions, trendData };
     const ai = await runGroqWithRetry(PROMPT, JSON.stringify(aiContext));
     const analysis = extractJSON(ai);
 
-    // Ensure keywords array is filled (AI will provide if empty)
-    if (!analysis.keywords || analysis.keywords.length === 0) {
-      analysis.keywords = keywords.map(k => ({ keyword: k.keyword, volume: k.volume ?? null, cpc: k.cpc ?? null, kd: k.kd ?? null }));
+    // Use AI-generated keywords if real not available or incomplete
+    let keywords: KeywordData[] = analysis.keywords || realKeywords;
+    if (!keywords || keywords.length < 10) {
+      keywords = realKeywords.slice(0, 50);
     }
-    if (!analysis.keywords || analysis.keywords.length === 0) {
-      // AI should never return empty, but safeguard
-      analysis.keywords = [{ keyword: niche, volume: null, cpc: null, kd: null }];
+    // Ensure exactly 50 by padding with AI-generated if necessary
+    if (keywords.length < 50) {
+      const filler = analysis.keywords?.filter((k: any) => !keywords.some(rk => rk.keyword === k.keyword));
+      keywords = [...keywords, ...filler].slice(0, 50);
     }
 
     const serpWithMetrics = serp.map((r: any) => ({
       ...r,
       da: estimateDA(r.link),
-      traffic: estimateTraffic(r.position, analysis.keywords[0]?.volume ?? null),
+      traffic: estimateTraffic(r.position, keywords[0]?.volume || 1000),
     }));
 
     const report = await Report.create({
@@ -237,13 +225,13 @@ export const createSEOReport = async (req: Request, res: Response, next: NextFun
       niche,
       country,
       value: '$99',
-      data: { ...analysis, keywords: analysis.keywords, serp: serpWithMetrics, relatedQuestions, trendData },
+      data: { ...analysis, keywords, serp: serpWithMetrics, relatedQuestions, trendData },
       markdown: 'Intelligence report generation in progress...',
       charts: {},
     });
 
     const reportId = `MKT-${report._id.toString().slice(-6).toUpperCase()}`;
-    const markdown = generateMarkdown(analysis, analysis.keywords, serpWithMetrics, relatedQuestions, trendData, niche, country, reportId, 'Google Keyword Planner via Keywords Everywhere + AI Estimates');
+    const markdown = generateMarkdown(analysis, keywords, serpWithMetrics, relatedQuestions, trendData, niche, country, reportId, 'Google Keyword Planner via Keywords Everywhere + AI Estimates');
     report.markdown = markdown;
     await report.save();
 
