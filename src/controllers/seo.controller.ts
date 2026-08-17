@@ -1,9 +1,9 @@
 import { Request, Response, NextFunction } from 'express';
 import { seoReportSchema } from '../validators/report';
 import { cacheService } from '../services/cache';
-import { getKeywordDataAndTrend, RealKeywordData } from '../services/dataforseo';
-import { getSerperResults } from '../services/serper';
-import { getKeywordSuggestions } from '../services/serpapi';
+import { getRelatedKeywords, RealKeywordData } from '../services/keywordseverywhere';
+import { getGoogleTrends } from '../services/trends';
+import { getSearchResults, getKeywordSuggestions } from '../services/serpapi';
 import { runGroqWithRetry } from '../services/groq';
 import { Report } from '../models/Report';
 import { ZodError } from 'zod';
@@ -114,7 +114,7 @@ function generateMarkdown(
   });
   m += `\n`;
 
-  m += `4. WHO'S RANKING TODAY\n──────────────────────────────────────────────────────────────\nSource: Serper API (Live Google SERP)\n\n`;
+  m += `4. WHO'S RANKING TODAY\n──────────────────────────────────────────────────────────────\nSource: SerpAPI (Live Google SERP)\n\n`;
   serp.forEach((s, i) => {
     m += `Position #${i + 1}: ${s.title}\n  URL: ${s.link}\n  Est. DA: ${s.da}\n  Est. Traffic: ${s.traffic !== null ? s.traffic.toLocaleString() : 'Not Disclosed'} visits/mo\n  Snippet: ${s.snippet?.substring(0, 120) || 'N/A'}\n\n`;
   });
@@ -169,7 +169,7 @@ function generateMarkdown(
     m += `\n`;
   }
 
-  m += `METHODOLOGY & SOURCES\n──────────────────────────────────────────────────────────────\nThis report is based on live data collected on ${today} from:\n\n• ${dataSourceStatus}\n• Live Google SERP via Serper API (serper.dev)\n• People Also Ask via SerpApi (serpapi.com)\n• Analysis Engine: Gemini AI (Hybrid Pro/Flash)\n\nAll data points can be independently verified against their public sources.\n\n`;
+  m += `METHODOLOGY & SOURCES\n──────────────────────────────────────────────────────────────\nThis report is based on live data collected on ${today} from:\n\n• ${dataSourceStatus}\n• Live Google SERP via SerpAPI (serpapi.com)\n• People Also Ask via SerpAPI\n• Analysis Engine: Gemini AI (Hybrid Pro/Flash)\n\nAll data points can be independently verified against their public sources.\n\n`;
   m += `DOCUMENT CONTROL\n──────────────────────────────────────────────────────────────\nClassification:  Confidential\nDistribution:    Client Only\nVersion:         1.0\nPrepared By:     MusePRO Intelligence Division\n\n`;
   m += `DISCLAIMER\n──────────────────────────────────────────────────────────────\nThis document contains proprietary research conducted by MusePRO. The information herein is intended solely for the designated recipient. Unauthorized distribution, copying, or disclosure is strictly prohibited.\n\nWhile every effort has been made to ensure accuracy, market conditions change rapidly. Verify critical data points before making business decisions.\n\n`;
   m += `──────────────────────────────────────────────────────────────\n© MusePRO — Intelligence Division. All Rights Reserved.\n`;
@@ -186,33 +186,40 @@ export const createSEOReport = async (req: Request, res: Response, next: NextFun
 
     console.log(`SEO: "${niche}" in ${country}`);
 
-    // 1. Fetch real data from DataForSEO (NO FALLBACK)
-    let keywords: KeywordData[] = [];
-    let trendData: number[] = [];
-    let dataSourceStatus = 'Google Keyword Planner via DataForSEO (dataforseo.com)';
+    // 1. Fetch related keywords from Keywords Everywhere (NO FALLBACK)
+    const kweData = await getRelatedKeywords(niche, country).catch((err) => {
+      console.error(`❌ Keywords Everywhere failed: ${err.message}`);
+      return null;
+    });
 
-    try {
-      const { keywords: dfKeywords, trend } = await getKeywordDataAndTrend(niche, country, 50);
-      if (!dfKeywords || dfKeywords.length === 0) {
-        throw new Error('DataForSEO returned no keywords.');
-      }
-      keywords = dfKeywords.map((k: RealKeywordData) => ({ keyword: k.keyword, volume: k.volume, cpc: k.cpc, kd: k.kd }));
-      trendData = trend;
-      console.log(`✅ DataForSEO provided ${keywords.length} keywords and ${trend.length} trend points`);
-    } catch (dfError: any) {
-      console.error(`❌ DataForSEO failed: ${dfError.message}`);
-      // Return a clear error to the frontend – NO report generation
-      return res.status(500).json({ error: 'DataForSEO service unavailable. Please try again later or check API credentials.' });
+    if (!kweData?.data?.length) {
+      return res.status(500).json({ error: 'Keywords Everywhere service unavailable. Please check your API key or credits.' });
     }
 
-    // 2. Fetch SERP from Serper (optional data, but kept for completeness)
-    const serperData = await getSerperResults(niche, country).catch(() => null);
+    const keywords: KeywordData[] = kweData.data.slice(0, 50).map((k: any) => ({
+      keyword: k.keyword,
+      volume: k.vol || 0,
+      cpc: parseFloat(k.cpc?.value || '0'),
+      kd: k.competition ? Math.min(Math.round(k.competition * 100), 100) : 0,
+    }));
 
-    // 3. Fetch People Also Ask from SerpApi (optional)
+    console.log(`✅ Keywords Everywhere provided ${keywords.length} keywords`);
+
+    // 2. Fetch SERP from SerpAPI
+    const searchData = await getSearchResults(niche, country);
     const relatedQuestions = await getKeywordSuggestions(niche, country).catch(() => []);
+    const serp = searchData.organic_results?.slice(0, 8).map((r: any) => ({
+      position: r.position,
+      title: r.title,
+      link: r.link,
+      snippet: r.snippet || '',
+    })) || [];
+
+    // 3. Fetch 12-month trend from google-trends-api (optional)
+    const trendData = await getGoogleTrends(niche, country).catch(() => []);
 
     // 4. Prepare SERP with metrics
-    const serpWithMetrics = (serperData?.organic || []).slice(0, 8).map((r: any) => ({
+    const serpWithMetrics = serp.map((r: any) => ({
       ...r,
       da: estimateDA(r.link),
       traffic: estimateTraffic(r.position, keywords[0]?.volume ?? null),
@@ -235,7 +242,7 @@ export const createSEOReport = async (req: Request, res: Response, next: NextFun
     });
 
     const reportId = `MKT-${report._id.toString().slice(-6).toUpperCase()}`;
-    const markdown = generateMarkdown(analysis, keywords, serpWithMetrics, relatedQuestions, trendData, niche, country, reportId, dataSourceStatus);
+    const markdown = generateMarkdown(analysis, keywords, serpWithMetrics, relatedQuestions, trendData, niche, country, reportId, 'Google Keyword Planner via Keywords Everywhere (keywordseverywhere.com)');
     report.markdown = markdown;
     await report.save();
 
