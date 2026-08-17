@@ -7,6 +7,9 @@ export const env = {
   GEMINI_API_KEY: process.env.GEMINI_API_KEY || '',
   KEYWORDS_EVERYWHERE_API_KEY: process.env.KEYWORDS_EVERYWHERE_API_KEY || '',
   SERPAPI_KEY: process.env.SERPAPI_KEY || '',
+  SERPER_API_KEY: process.env.SERPER_API_KEY || '',                 // ✅ added
+  DATAFORSEO_LOGIN: process.env.DATAFORSEO_LOGIN || '',             // ✅ added
+  DATAFORSEO_PASSWORD: process.env.DATAFORSEO_PASSWORD || '',       // ✅ added
   EXCHANGE_API_KEY: process.env.EXCHANGE_API_KEY || '',
   BREVO_API_KEY: process.env.BREVO_API_KEY || '',
   ALLOWED_ORIGIN: process.env.ALLOWED_ORIGIN || 'http://localhost:3000',
