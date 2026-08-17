@@ -208,7 +208,7 @@ export const createSEOReport = async (req: Request, res: Response, next: NextFun
     if (!keywords || keywords.length < 10) {
       keywords = realKeywords.slice(0, 50);
     }
-    // Ensure exactly 50 by padding with AI-generated if necessary
+    // Ensure exactly 50
     if (keywords.length < 50) {
       const filler = analysis.keywords?.filter((k: any) => !keywords.some(rk => rk.keyword === k.keyword));
       keywords = [...keywords, ...filler].slice(0, 50);
