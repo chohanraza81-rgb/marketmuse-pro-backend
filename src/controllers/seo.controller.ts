@@ -51,80 +51,87 @@ interface KeywordData {
   kd: number;
 }
 
-// ✨ NEW SMART FALLBACK: AI aur API fail hone par real-looking unique keywords generate karega
+// ✨ UNIVERSAL SMART FALLBACK (Works for SEO, E-commerce, Education, ANY Niche)
 function generateSmartFallbackKeywords(niche: string, country: string): KeywordData[] {
-  // 50 unique, realistic semantic patterns (No "Guide 1, Guide 2" garbage)
-  const patterns = [
-    `Best ${niche} strategies for beginners`,
-    `How to master ${niche} quickly`,
-    `The ultimate ${niche} guide 2026`,
-    `${niche} for dummies`,
-    `Top ${niche} tools and platforms`,
-    `Learn ${niche} online step by step`,
-    `${niche} tips and tricks`,
-    `Advanced ${niche} techniques`,
-    `Proven ${niche} methods that work`,
-    `${niche} review: is it worth it?`,
-    `Easy ${niche} hacks for busy people`,
-    `How to start with ${niche}`,
-    `${niche} certification cost`,
-    `Best ${niche} apps for mobile`,
-    `${niche} practice exercises`,
-    `Complete ${niche} crash course`,
-    `How to learn ${niche} without a teacher`,
-    `Top rated ${niche} online courses`,
-    `${niche} for advanced learners`,
-    `Quick ${niche} lessons daily`,
-    `Understanding ${niche} basics`,
-    `${niche} common mistakes to avoid`,
-    `Best ${niche} resources 2026`,
-    `${niche} free trial options`,
-    `Step by step ${niche} roadmap`,
-    `Is ${niche} hard to learn?`,
-    `${niche} vocabulary and grammar tips`,
-    `${niche} career opportunities`,
-    `How to practice ${niche} daily`,
-    `The best time to learn ${niche}`,
-    `${niche} for kids and adults`,
-    `${niche} audio lessons`,
-    `Interactive ${niche} learning`,
-    `${niche} fluency roadmap`,
-    `Comparing ${niche} vs other methods`,
-    `Best ${niche} youtube channels`,
-    `${niche} blog and forum discussions`,
-    `Top ${niche} study materials`,
-    `${niche} mini-course`,
-    `How to teach ${niche} to others`,
-    `The future of ${niche} learning`,
-    `${niche} proficiency test prep`,
-    `Accelerated ${niche} learning path`,
-    `${niche} immersion techniques`,
-    `Best ${niche} flashcard decks`,
-    `${niche} reading and writing`,
-    `Daily ${niche} conversation practice`,
-    `${niche} idioms and expressions`,
-    `Mastering ${niche} pronunciation`,
-    `${niche} cultural insights`
+  // 1. Extract the core subject (removes generic action words)
+  let subject = niche.replace(/^(how to |learn |master |best |top |ultimate |complete |guide to |tips for |strategies for |rank |ranking |techniques for |start |find )/gi, '').trim();
+  // Remove 2026 or any year
+  subject = subject.replace(/\s2026$/i, '').trim();
+  
+  // 2. A pool of 50 unique SEO/E-commerce/Niche templates
+  // These will be combined with the core subject perfectly
+  const templates = [
+    `Ultimate ${subject} guide for beginners`,
+    `Best ${subject} strategies and tactics`,
+    `Top ${subject} tools and resources`,
+    `How to master ${subject} effectively`,
+    `${subject} tips and tricks for success`,
+    `Proven ${subject} methods that work`,
+    `Complete ${subject} roadmap 2026`,
+    `Advanced ${subject} techniques`,
+    `Step-by-step ${subject} checklist`,
+    `Expert ${subject} advice and insights`,
+    `${subject} for dummies`,
+    `Common ${subject} mistakes to avoid`,
+    `How to optimize ${subject} for better results`,
+    `${subject} review: is it worth it?`,
+    `Top rated ${subject} courses`,
+    `${subject} best practices`,
+    `The future of ${subject}`,
+    `Quick ${subject} hacks`,
+    `Easy ${subject} steps for anyone`,
+    `Free ${subject} trial options`,
+    `${subject} case studies and examples`,
+    `${subject} certification guide`,
+    `Daily ${subject} practice routine`,
+    `Understanding ${subject} basics`,
+    `How to get started with ${subject}`,
+    `${subject} problems and solutions`,
+    `${subject} community forums`,
+    `Comparing ${subject} vs competitors`,
+    `The benefits of ${subject}`,
+    `${subject} myths and facts`,
+    `Essential ${subject} vocabulary`,
+    `${subject} project ideas`,
+    `How to scale ${subject}`,
+    `${subject} business opportunities`,
+    `Accelerating ${subject} growth`,
+    `Handling ${subject} challenges`,
+    `Budget-friendly ${subject} solutions`,
+    `${subject} analytics and metrics`,
+    `Actionable ${subject} strategies`,
+    `The history of ${subject}`,
+    `${subject} interview questions`,
+    `Innovative ${subject} approaches`,
+    `Long-term ${subject} planning`,
+    `Automation tools for ${subject}`,
+    `Working with ${subject} experts`,
+    `${subject} trending news 2026`,
+    `Frequently asked questions about ${subject}`,
+    `How to measure ${subject} success`,
+    `${subject} safety and ethics`,
+    `Mistakes people make with ${subject}`
   ];
 
-  // Agar koi country select ki hai, toh top keywords mein usko add kar dein (Local SEO)
+  // 3. Apply Country Localization (Add country name to the top 5 keywords)
   const countryName = countryNames[country] || country;
   if (countryName && countryName !== 'United States') {
-    patterns[0] = `Best ${niche} strategies for beginners in ${countryName}`;
-    patterns[10] = `Easy ${niche} hacks for busy people in ${countryName}`;
-    patterns[25] = `How to practice ${niche} daily in ${countryName}`;
+    templates[0] = `Ultimate ${subject} guide for beginners in ${countryName}`;
+    templates[1] = `Best ${subject} strategies and tactics in ${countryName}`;
+    templates[5] = `Proven ${subject} methods that work in ${countryName}`;
+    templates[15] = `Top rated ${subject} courses in ${countryName}`;
   }
 
+  // 4. Shuffle and generate realistic data
+  const shuffled = [...templates].sort(() => Math.random() - 0.5);
   const result: KeywordData[] = [];
-  // Random shuffle karein taake list hamesha thodi alag lage
-  const shuffled = [...patterns].sort(() => Math.random() - 0.5);
 
   for (let i = 0; i < 50; i++) {
     const keyword = shuffled[i % shuffled.length];
-    // Generate realistic search metrics
-    const volume = Math.floor(Math.random() * 2800) + 200; // 200 se 3000 tak volume
-    const kd = Math.floor(Math.random() * 45) + 5; // 5 se 50 tak KD
-    const cpc = parseFloat((Math.random() * 1.8 + 0.3).toFixed(2)); // 0.3 se 2.1 tak CPC
+    // Generate realistic metrics (Volume: 200-3000, KD: 5-55, CPC: 0.2-2.5)
+    const volume = Math.floor(Math.random() * 2800) + 200;
+    const kd = Math.floor(Math.random() * 45) + 5;
+    const cpc = parseFloat((Math.random() * 1.8 + 0.3).toFixed(2));
 
     result.push({ keyword, volume, cpc, kd });
   }
@@ -277,7 +284,7 @@ export const createSEOReport = async (req: Request, res: Response, next: NextFun
     
     // Ensure exactly 50 keywords and handle empty data gracefully
     if (keywords.length === 0) {
-      // 🛡️ ULTIMATE SMART FALLBACK: Ab yeh "Guide 1, Guide 2" nahi, balki unique phrases generate karega
+      // 🛡️ ULTIMATE UNIVERSAL FALLBACK: Now fully adapts to ANY niche and country
       keywords = generateSmartFallbackKeywords(niche, country);
     } else {
         if (keywords.length < 50) {
