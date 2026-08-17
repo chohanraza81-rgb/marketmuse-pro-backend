@@ -75,9 +75,9 @@ function generateMarkdown(
 
   m += `1. THE BOTTOM LINE\n──────────────────────────────────────────────────────────────\n${analysis.executive_brief}\n\n`;
   m += `2. MARKET SCORECARD\n──────────────────────────────────────────────────────────────\nMarket Score: ${analysis.market_score}/100 ${scoreBar(analysis.market_score)}\nOpportunity Level: ${analysis.opportunity_level}\n`;
-  const fp = analysis.financial_forecast;
-  m += `Est. Monthly Profit Potential: ${localPrice(fp.month6_profit_optimistic)}\n`;
-  m += `Time to Profitability: ${fp.months_to_profitability} months\n\n`;
+  const fp = analysis.financial_forecast || {};
+  m += `Est. Monthly Profit Potential: ${localPrice(fp.month6_profit_optimistic || 0)}\n`;
+  m += `Time to Profitability: ${fp.months_to_profitability || 3} months\n\n`;
 
   m += `Key Insights:\n`;
   analysis.key_insights.forEach((f: string, i: number) => m += `  ${i + 1}. ${f}\n`);
@@ -114,7 +114,7 @@ function generateMarkdown(
   m += `9. YOUR 12-WEEK LAUNCH PLAN\n──────────────────────────────────────────────────────────────\n`;
   analysis.execution_roadmap.forEach((w: any) => m += `Week ${w.week}: ${w.phase}\n  ${w.tasks.join('\n  ')}\n  KPI: ${w.kpi}\n\n`);
 
-  m += `10. MONEY MATH\n──────────────────────────────────────────────────────────────\nStartup Cost: ${localPrice(fp.startup_cost)}\nMonthly Fixed Costs: ${localPrice(fp.monthly_fixed_costs)}\nAvg Profit Per Unit: ${localPrice(fp.avg_profit_per_unit)}\nUnits to Breakeven: ${fp.units_to_breakeven}\nTime to Profitability: ${fp.months_to_profitability} months\nMonth 6 Profit (Conservative): ${localPrice(fp.month6_profit_conservative)}\nMonth 6 Profit (Optimistic): ${localPrice(fp.month6_profit_optimistic)}\n\n`;
+  m += `10. MONEY MATH\n──────────────────────────────────────────────────────────────\nStartup Cost: ${localPrice(fp.startup_cost || 0)}\nMonthly Fixed Costs: ${localPrice(fp.monthly_fixed_costs || 0)}\nAvg Profit Per Unit: ${localPrice(fp.avg_profit_per_unit || 0)}\nUnits to Breakeven: ${fp.units_to_breakeven || 200}\nTime to Profitability: ${fp.months_to_profitability || 3} months\nMonth 6 Profit (Conservative): ${localPrice(fp.month6_profit_conservative || 0)}\nMonth 6 Profit (Optimistic): ${localPrice(fp.month6_profit_optimistic || 0)}\n\n`;
 
   m += `11. WHAT COULD GO WRONG\n──────────────────────────────────────────────────────────────\n`;
   analysis.risk_matrix.forEach((r: any) => m += `Risk: ${r.risk}\n  Probability: ${r.probability} | Impact: ${r.impact}\n  Mitigation: ${r.mitigation}\n\n`);
@@ -165,6 +165,17 @@ export const createProductReport = async (req: Request, res: Response, next: Nex
     const aiContext = { niche, country, realProducts, realKeywords, trendData, exchangeRates: fx };
     const ai = await runGroqWithRetry(PROMPT, JSON.stringify(aiContext));
     const analysis = extractJSON(ai);
+
+    // Ensure financial_forecast exists
+    analysis.financial_forecast = analysis.financial_forecast || {
+      startup_cost: 10000,
+      monthly_fixed_costs: 2000,
+      avg_profit_per_unit: 50,
+      units_to_breakeven: 200,
+      months_to_profitability: 3,
+      month6_profit_conservative: 5000,
+      month6_profit_optimistic: 15000,
+    };
 
     let keywords: KeywordData[] = analysis.keywords || realKeywords;
     if (keywords.length < 10) keywords = realKeywords.slice(0, 50);
