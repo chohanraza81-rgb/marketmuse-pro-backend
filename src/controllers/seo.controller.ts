@@ -194,10 +194,22 @@ export const createSEOReport = async (req: Request, res: Response, next: NextFun
     if (!keywords || keywords.length < 10) {
       keywords = realKeywords.slice(0, 50);
     }
-    // Ensure exactly 50
+    
+    // Ensure exactly 50 keywords (FIXED CODE HERE)
     if (keywords.length < 50) {
-      const filler = analysis.keywords?.filter((k: any) => !keywords.some(rk => rk.keyword === k.keyword));
-      keywords = [...keywords, ...filler].slice(0, 50);
+      // Check if analysis.keywords actually exists and is an array
+      if (analysis.keywords && Array.isArray(analysis.keywords)) {
+        const filler = analysis.keywords.filter((k: any) => 
+          !keywords.some(rk => rk.keyword === k.keyword)
+        );
+        keywords = [...keywords, ...filler].slice(0, 50);
+      } else {
+        // If AI response didn't have proper keywords, fallback to realKeywords
+        const realFiller = realKeywords.filter((k) => 
+          !keywords.some(rk => rk.keyword === k.keyword)
+        );
+        keywords = [...keywords, ...realFiller].slice(0, 50);
+      }
     }
 
     const serpWithMetrics = serp.map((r: any) => ({
