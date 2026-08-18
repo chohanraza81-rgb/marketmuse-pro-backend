@@ -56,10 +56,7 @@ const buildSmartPrompt = (niche: string, country: string, realKeywords: any[], s
   - Imagine 8 realistic competitor websites for this specific niche and country.
   - For each imaginary website, generate: Title, URL, Est. DA, Snippet, Strengths, Weaknesses, and Content Gap.
   
-  **STRICT INSTRUCTION**: Do NOT use undefined or null for any field. Always generate fake but realistic data if real data is missing.
-  
-  **Return valid JSON only**:
-  1. key_insights (3 insights), 2. immediate_actions (3 actions), 3. trend_assessment (3 lines), 4. keywords (50 objects), 5. serp_landscape (top 8), 6. content_roadmap (12 weeks), 7. link_acquisition (Overview, target_sites, guest_post_topics, broken_link_opportunities, outreach_template), 8. onpage_checklist (15), 9. growth_accelerators (5), 10. related_resources (5-8).`;
+  **STRICT INSTRUCTION**: Do NOT use undefined or null. Always generate fake but realistic data. FOR CONTENT ROADMAP, strictly use the given realKeywords list to create unique 12 weekly titles. FORMAT JSON.`;
 };
 
 function generateFullReportFallback(niche: string, country: string, keywords: KeywordData[], serp: any[], relatedQuestions: string[], trendData: number[]) {
@@ -161,10 +158,10 @@ export const createSEOReport = async (req: Request, res: Response, next: NextFun
     const aiResponse = await runGroqWithRetry(prompt, JSON.stringify({ niche, country }));
     
     const rawAnalysis = extractJSON(aiResponse);
-    // ✅ FIXED: Explicitly type analysis as 'any' to avoid strict TS errors
     const analysis: any = (typeof rawAnalysis === 'object' && !Array.isArray(rawAnalysis) && rawAnalysis !== null) ? rawAnalysis : {};
 
-    // 🛡️ ULTIMATE AI DATA SANITIZATION LAYER (Fixes undefined/NULL fields from AI)
+    // 🛡️ ULTIMATE AI DATA SANITIZATION (Fixing commas and duplicates)
+    
     // 1. Sanitize SERP Landscape
     if (!analysis.serp_landscape || !Array.isArray(analysis.serp_landscape) || analysis.serp_landscape.length === 0) {
         analysis.serp_landscape = Array.from({ length: 8 }, (_, idx) => ({
@@ -178,7 +175,6 @@ export const createSEOReport = async (req: Request, res: Response, next: NextFun
             strengths: 'N/A', weaknesses: 'N/A', gap: 'N/A'
         }));
     } else {
-        // ✅ FIXED: Add 'as any[]' cast to prevent 'any' type error
         analysis.serp_landscape = (analysis.serp_landscape as any[]).map((s: any, idx: number) => ({
             position: s.position || idx + 1,
             title: s.title || `Ranked Competitor #${idx + 1}`,
@@ -193,45 +189,54 @@ export const createSEOReport = async (req: Request, res: Response, next: NextFun
         }));
     }
 
-    // 2. Sanitize Content Roadmap (Fix undefined title/keyword)
+    // 2. Sanitize Content Roadmap (Fix duplicates and repetitive titles)
     if (!analysis.content_roadmap || !Array.isArray(analysis.content_roadmap) || analysis.content_roadmap.length === 0) {
         const fb = generateFullReportFallback(niche, country, realKeywords, serp, relatedQuestions, trendData);
         analysis.content_roadmap = fb.content_roadmap;
     } else {
-        // ✅ FIXED: Add 'as any[]' cast
-        analysis.content_roadmap = (analysis.content_roadmap as any[]).map((c: any, idx: number) => ({
-            week: c.week || idx + 1,
-            title: c.title || `Week ${idx + 1}: Mastering ${niche}`,
-            primary_keyword: c.primary_keyword || niche,
-            content_type: c.content_type || c.type || 'Pillar',
-            secondary_keywords: Array.isArray(c.secondary_keywords) ? c.secondary_keywords : [],
-            word_count_target: c.word_count_target || 2200,
-            outline: Array.isArray(c.outline) ? c.outline : ['Introduction', 'Core Strategies', 'Conclusion'],
-            expected_traffic: c.expected_traffic || Math.floor(Math.random() * 800) + 200
-        }));
+        analysis.content_roadmap = (analysis.content_roadmap as any[]).map((c: any, idx: number) => {
+            let rawTitle = c.title || `Week ${idx + 1}: Mastering ${niche}`;
+            // 🛡️ CRITICAL: Clean duplicate "Week X: Week X:" text from AI
+            rawTitle = rawTitle.replace(/^Week \d+: Week \d+:/i, `Week ${idx + 1}:`);
+            return {
+                week: c.week || idx + 1,
+                title: rawTitle,
+                primary_keyword: c.primary_keyword || niche,
+                content_type: c.content_type || c.type || 'Pillar',
+                secondary_keywords: Array.isArray(c.secondary_keywords) ? c.secondary_keywords : [],
+                word_count_target: c.word_count_target || 2200,
+                outline: Array.isArray(c.outline) ? c.outline : ['Introduction', 'Core Strategies', 'Conclusion'],
+                expected_traffic: c.expected_traffic || Math.floor(Math.random() * 800) + 200
+            };
+        });
     }
 
-    // 3. Sanitize Link Acquisition (Fix Target Sites: N/A)
+    // 3. Sanitize Link Acquisition (Fix Broken Links / N/A)
     if (!analysis.link_acquisition) {
         const fb = generateFullReportFallback(niche, country, realKeywords, serp, relatedQuestions, trendData);
         analysis.link_acquisition = fb.link_acquisition;
     } else {
-        // ✅ FIXED: Add 'as any' cast
+        // Force target_sites
         if (!(analysis.link_acquisition as any).target_sites || (analysis.link_acquisition as any).target_sites.length === 0) {
             const fb = generateFullReportFallback(niche, country, realKeywords, serp, relatedQuestions, trendData);
             (analysis.link_acquisition as any).target_sites = fb.link_acquisition.target_sites;
-            (analysis.link_acquisition as any).guest_post_topics = fb.link_acquisition.guest_post_topics;
+        }
+        // 🛡️ CRITICAL: Force Broken Links to avoid N/A
+        if (!(analysis.link_acquisition as any).broken_link_opportunities || (analysis.link_acquisition as any).broken_link_opportunities.every((b:any) => b?.site === 'N/A')) {
+            const fb = generateFullReportFallback(niche, country, realKeywords, serp, relatedQuestions, trendData);
             (analysis.link_acquisition as any).broken_link_opportunities = fb.link_acquisition.broken_link_opportunities;
-            (analysis.link_acquisition as any).outreach_template = fb.link_acquisition.outreach_template;
+        }
+        if (!(analysis.link_acquisition as any).guest_post_topics || (analysis.link_acquisition as any).guest_post_topics.length === 0) {
+            const fb = generateFullReportFallback(niche, country, realKeywords, serp, relatedQuestions, trendData);
+            (analysis.link_acquisition as any).guest_post_topics = fb.link_acquisition.guest_post_topics;
         }
     }
 
-    // 4. Sanitize Related Resources (Fix undefined - N/A)
+    // 4. Sanitize Related Resources
     if (!analysis.related_resources || !Array.isArray(analysis.related_resources) || analysis.related_resources.length === 0) {
         const fb = generateFullReportFallback(niche, country, realKeywords, serp, relatedQuestions, trendData);
         analysis.related_resources = fb.related_resources;
     } else {
-        // ✅ FIXED: Add 'as any[]' cast
         analysis.related_resources = (analysis.related_resources as any[]).filter(r => r).map((r: any, idx: number) => ({
             name: r.name || `Resource ${idx + 1}`,
             url: r.url || 'https://example.com'
@@ -251,25 +256,13 @@ export const createSEOReport = async (req: Request, res: Response, next: NextFun
     }
     keywords = keywords.map((k: any) => {
         if (typeof k === 'string') {
-            return { 
-                keyword: k, 
-                volume: Math.floor(Math.random() * 2000) + 200, 
-                cpc: parseFloat((Math.random() * 1.5 + 0.3).toFixed(2)), 
-                kd: Math.floor(Math.random() * 40) + 5 
-            };
+            return { keyword: k, volume: Math.floor(Math.random() * 2000) + 200, cpc: parseFloat((Math.random() * 1.5 + 0.3).toFixed(2)), kd: Math.floor(Math.random() * 40) + 5 };
         }
-        let vol = k?.volume || 0;
-        let kd = k?.kd || 0;
-        let cpc = k?.cpc || 0;
+        let vol = k?.volume || 0; let kd = k?.kd || 0; let cpc = k?.cpc || 0;
         if (vol === 0) vol = Math.floor(Math.random() * 2000) + 200;
         if (kd === 0) kd = Math.floor(Math.random() * 40) + 5;
         if (cpc === 0) cpc = parseFloat((Math.random() * 1.5 + 0.3).toFixed(2));
-        return { 
-            keyword: k?.keyword || 'Unknown', 
-            volume: vol, 
-            cpc: cpc, 
-            kd: kd 
-        };
+        return { keyword: k?.keyword || 'Unknown', volume: vol, cpc: cpc, kd: kd };
     }).slice(0, 50);
 
     const serpWithMetrics = serp.map((r: any, i: number) => ({
@@ -287,12 +280,20 @@ export const createSEOReport = async (req: Request, res: Response, next: NextFun
     const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
     const reportId = `MKT-${report._id.toString().slice(-6).toUpperCase()}`;
 
+    // --- MARKDOWN GENERATION ---
     let markdown = `MusePRO\nReal-Time Market Research\nIntelligence Division\n──────────────────────────────────────────────────────────────\nSEO RESEARCH REPORT\n\nPrepared For: [Client Name]\nDate: ${today}\nReference: ${reportId}\nClassification: CONFIDENTIAL\n──────────────────────────────────────────────────────────────\n\n`;
     markdown += `1. EXECUTIVE BRIEF\n──────────────────────────────────────────────────────────────\n`;
     (analysis.key_insights || ['No insights generated']).forEach((f: string, i: number) => markdown += `  ${i+1}. ${f}\n`);
     markdown += `\nPriority Actions:\n`; 
     (analysis.immediate_actions || []).forEach((w: string, i: number) => markdown += `  ${i+1}. ${w}\n`);
-    markdown += `\n2. TREND ASSESSMENT\n──────────────────────────────────────────────────────────────\n${analysis.trend_assessment || 'Evergreen trend detected.'}\n\n`;
+    markdown += `\n2. TREND ASSESSMENT\n──────────────────────────────────────────────────────────────\n`;
+    
+    // 🛡️ FIX: Ensure Trend Assessment is a valid string without JSON commas
+    let trendText = analysis.trend_assessment || 'Evergreen trend detected.';
+    if (Array.isArray(trendText)) {
+        trendText = trendText.join(' ').replace(/,,/g, ',').replace(/,\s*/g, ' ');
+    }
+    markdown += `${trendText}\n\n`;
     
     markdown += `3. KEYWORD OPPORTUNITIES (TOP 50)\n──────────────────────────────────────────────────────────────\n| # | Keyword | Volume | CPC | KD | Potential |\n|---|---------|--------|-----|----|----------|\n`;
     keywords.forEach((k, i) => {
@@ -320,7 +321,6 @@ export const createSEOReport = async (req: Request, res: Response, next: NextFun
 
     markdown += `6. LINK ACQUISITION STRATEGY\n──────────────────────────────────────────────────────────────\n${analysis.link_acquisition?.overview || 'N/A'}\n\n`;
     const targetSites = analysis.link_acquisition?.target_sites || [];
-    // ✅ FIXED: Add 'as any[]' cast
     const validTargetSites = (targetSites as any[]).filter((s: any) => s.site && s.site !== 'N/A' && s.site !== 'undefined');
     if (validTargetSites.length > 0) {
       markdown += `Target Sites:\n`;
@@ -346,6 +346,7 @@ export const createSEOReport = async (req: Request, res: Response, next: NextFun
     report.markdown = markdown;
     await report.save();
 
+    // 🛡️ Calculate Traffic Estimates for UI Summary Card
     const monthlyTotal = (analysis.content_roadmap || []).reduce((sum: number, week: any) => {
         return sum + (week.expected_traffic || 0);
     }, 0);
@@ -354,7 +355,8 @@ export const createSEOReport = async (req: Request, res: Response, next: NextFun
     const result = { 
         id: report._id, 
         ...report.toObject(),
-        sixMonthTrafficEstimate 
+        sixMonthTrafficEstimate,
+        trafficEstimate: sixMonthTrafficEstimate // ✅ ALIAS ADDED for frontend "N/A" fix
     };
     cacheService.set(ck, result, 86400);
     return res.status(201).json(result);
