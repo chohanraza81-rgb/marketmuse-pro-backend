@@ -4,8 +4,8 @@ import { cacheService } from '../services/cache';
 import { getRelatedKeywords } from '../services/keywordseverywhere';
 import { getGoogleTrends } from '../services/trends';
 import { getSearchResults, getKeywordSuggestions } from '../services/serpapi';
-import { getSerperResults } from '../services/serper.service'; // ✅ Corrected Import
-import { convertCurrency } from '../services/exchange.service'; // ✅ Corrected Import
+import { getSerperResults } from '../services/serper';
+import { convertCurrency } from '../services/exchange';
 import { runGroqWithRetry } from '../services/groq';
 import { Report } from '../models/Report';
 import { ZodError } from 'zod';
@@ -33,6 +33,7 @@ const extractJSON = (raw: string): any => {
   }
 };
 
+// ✅ EXACT 12 COUNTRIES FROM YOUR SCREENSHOT
 const countryNames: Record<string, string> = {
   us: 'United States', gb: 'United Kingdom', ca: 'Canada', au: 'Australia',
   de: 'Germany', sg: 'Singapore', sa: 'Saudi Arabia', ae: 'United Arab Emirates',
@@ -41,9 +42,7 @@ const countryNames: Record<string, string> = {
 
 interface KeywordData { keyword: string; volume: number; cpc: number; kd: number; }
 
-// ==========================================
-// 🧠 SMART PROMPT FOR GEMINI FLASH (AI Simulator)
-// ==========================================
+// 🧠 SMART PROMPT FOR GEMINI FLASH
 const buildSmartPrompt = (niche: string, country: string, realKeywords: any[], serpData: any[], trendData: any[]) => {
   const countryName = countryNames[country] || country;
   return `You are an elite SEO strategist at MusePRO Intelligence Division.
@@ -63,7 +62,7 @@ const buildSmartPrompt = (niche: string, country: string, realKeywords: any[], s
   1. **key_insights** (Array of 3 actionable insights).
   2. **immediate_actions** (Array of 3 priority actions).
   3. **trend_assessment** (String, realistic summary).
-  4. **keywords** (Array of 50 unique, user-intent based keywords for this niche and country. NO "success framework" or "master in country" garbage. Realistic search terms).
+  4. **keywords** (Array of 50 unique, user-intent based keywords for this niche and country. NO "success framework" or "master in country" garbage).
   5. **serp_landscape** (Analyze the top 8 URLs using the provided or simulated data. Include fields: position, title, link, da, strengths, weaknesses, gap).
   6. **content_roadmap** (12 weeks. Each week must have: week, title, primary_keyword, secondary_keywords, word_count_target, outline, expected_traffic).
   7. **link_acquisition** (Overview, target_sites array, guest_post_topics array, outreach_template).
@@ -74,9 +73,6 @@ const buildSmartPrompt = (niche: string, country: string, realKeywords: any[], s
   Use current year 2026. Never leave any field empty. Make it sound like a senior consultant.`;
 };
 
-// ==========================================
-// 🚀 MAIN CONTROLLER
-// ==========================================
 export const createSEOReport = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { niche, country } = seoReportSchema.parse(req.body);
@@ -84,11 +80,9 @@ export const createSEOReport = async (req: Request, res: Response, next: NextFun
     const cached = cacheService.get(ck);
     if (cached) return res.json(cached);
 
-    // 1. Fetch Data from APIs
     const kweData = await getRelatedKeywords(niche, country).catch(() => null);
     let searchData = await getSearchResults(niche, country).catch(() => null);
     
-    // 2. Emergency Backup: If SerpApi fails, use Serper API
     if (!searchData || !searchData.organic_results) {
       console.log('SerpApi failed. Trying Serper API as backup...');
       searchData = await getSerperResults(niche, country);
@@ -114,19 +108,21 @@ export const createSEOReport = async (req: Request, res: Response, next: NextFun
       snippet: r.snippet || '',
     })) || [];
 
-    // 3. Exchange API: Convert CPC to Local Currency
-    const countryCurrencyMap: Record<string, string> = { us: 'USD', ca: 'CAD', au: 'AUD', sg: 'SGD', in: 'INR', gb: 'GBP', de: 'EUR' };
+    // ✅ UPDATED CURRENCY MAP FOR ALL 12 COUNTRIES
+    const countryCurrencyMap: Record<string, string> = {
+        us: 'USD', gb: 'GBP', ca: 'CAD', au: 'AUD',
+        de: 'EUR', sg: 'SGD', sa: 'SAR', ae: 'AED',
+        pk: 'PKR', in: 'INR', tr: 'TRY', my: 'MYR'
+    };
     const targetCurrency = countryCurrencyMap[country] || 'USD';
     for (let kw of realKeywords) {
       kw.cpc = await convertCurrency(kw.cpc, 'USD', targetCurrency);
     }
 
-    // 4. Gemini Flash Smart Prompt
     const prompt = buildSmartPrompt(niche, country, realKeywords, serp, trendData);
     const aiResponse = await runGroqWithRetry(prompt, JSON.stringify({ niche, country }));
     const analysis = extractJSON(aiResponse);
 
-    // 5. Use AI or Fallback keywords
     let keywords: KeywordData[] = analysis.keywords || realKeywords;
     if (!keywords || keywords.length === 0) {
       keywords = realKeywords.slice(0, 50);
@@ -134,7 +130,7 @@ export const createSEOReport = async (req: Request, res: Response, next: NextFun
 
     const serpWithMetrics = serp.map((r: any, i: number) => ({
       ...r,
-      da: r.da || Math.floor(Math.random() * 50) + 30, // Fallback DA if missing
+      da: r.da || Math.floor(Math.random() * 50) + 30,
       traffic: Math.round(([0.3, 0.15, 0.1, 0.07, 0.05, 0.04, 0.03, 0.02][Math.min(i, 7)] || 0.01) * (keywords[0]?.volume || 1000))
     }));
 
@@ -144,7 +140,6 @@ export const createSEOReport = async (req: Request, res: Response, next: NextFun
       markdown: 'Intelligence report generation in progress...', charts: {},
     });
 
-    // 6. Generate Markdown
     const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
     const reportId = `MKT-${report._id.toString().slice(-6).toUpperCase()}`;
 
