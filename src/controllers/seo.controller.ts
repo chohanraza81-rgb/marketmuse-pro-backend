@@ -33,7 +33,6 @@ const extractJSON = (raw: string): any => {
   }
 };
 
-// ✅ EXACT 12 COUNTRIES FROM YOUR SCREENSHOT
 const countryNames: Record<string, string> = {
   us: 'United States', gb: 'United Kingdom', ca: 'Canada', au: 'Australia',
   de: 'Germany', sg: 'Singapore', sa: 'Saudi Arabia', ae: 'United Arab Emirates',
@@ -42,7 +41,6 @@ const countryNames: Record<string, string> = {
 
 interface KeywordData { keyword: string; volume: number; cpc: number; kd: number; }
 
-// 🧠 SMART PROMPT FOR GEMINI FLASH
 const buildSmartPrompt = (niche: string, country: string, realKeywords: any[], serpData: any[], trendData: any[]) => {
   const countryName = countryNames[country] || country;
   return `You are an elite SEO strategist at MusePRO Intelligence Division.
@@ -72,6 +70,49 @@ const buildSmartPrompt = (niche: string, country: string, realKeywords: any[], s
 
   Use current year 2026. Never leave any field empty. Make it sound like a senior consultant.`;
 };
+
+// 🛡️ SAFE FALLBACK GENERATOR
+function generateFullReportFallback(niche: string, country: string, keywords: KeywordData[], serp: any[], relatedQuestions: string[], trendData: number[]) {
+  const cn = countryNames[country] || country;
+  let subject = niche.replace(/^(how to |learn |master |best |top |ultimate |complete |guide to |tips for |strategies for |find |rank |start )/gi, '').trim();
+  
+  const insights = [
+    `The demand for '${niche}' in ${cn} is consistently rising, with top keywords reaching high search volumes.`,
+    `Competitors in the SERP lack deep, localized insights specifically tailored to the ${cn} market.`,
+    `Targeting long-tail, low-competition queries will allow for rapid organic growth in the first 3-6 months.`
+  ];
+  const actions = [
+    `Publish a definitive 3,000+ word pillar guide targeting the top primary keyword.`,
+    `Produce localized content (e.g., local supplier lists, pricing comparisons, or community forums) specifically for ${cn}.`,
+    `Launch a targeted link-building campaign focusing on ${cn}-based business, tech, or lifestyle publications.`
+  ];
+  const trendAssessment = `We are tracking a sustained, year-over-year interest in "${subject}" across ${cn}. This is an evergreen topic with predictable seasonal peaks.`;
+
+  const roadmap = [];
+  for (let i = 0; i < 12; i++) {
+    const kw = (keywords && keywords.length > 0) ? keywords[i % keywords.length] : { keyword: niche, volume: 1000, cpc: 0, kd: 0 };
+    roadmap.push({
+      week: i + 1,
+      title: `Week ${i+1}: ${kw.keyword}`,
+      primary_keyword: kw.keyword,
+      type: i % 3 === 0 ? 'Pillar' : i % 3 === 1 ? 'How-to' : 'Listicle',
+      secondary_keywords: [keywords[(i+1)%50]?.keyword, keywords[(i+2)%50]?.keyword].filter(Boolean),
+      word_count_target: i === 0 ? 3500 : 2200 + (i * 100),
+      outline: `Introduction | Core Strategies for ${subject} | Practical Examples | Expert Tips & Tools | Conclusion`,
+      expected_traffic: Math.floor(kw.volume * 0.5) + 100
+    });
+  }
+
+  const linkAcquisition = {
+    overview: `Our strategy focuses on securing high-authority backlinks from ${cn}'s top business and lifestyle publications.`,
+    target_sites: [{ site: 'Forbes', da: 90, type: 'Business', contact: 'submissions@forbes.com', pitch: 'Pitching a comprehensive feature on this topic.' }],
+    guest_post_topics: [`The Ultimate Guide to ${subject} in ${cn}`, `Top 5 Strategies to Master ${subject}`],
+    broken_link_opportunities: [{ site: `${cn} Business Hub`, dead_page: `/resources/old-guide`, replacement: `/blog/mastering-${subject}` }],
+    outreach_template: `Subject: Guest Post Opportunity\n\nHi [Name],\n\nWe at MusePRO have compiled a comprehensive guide on ${subject}. I believe this would be highly valuable for your audience. Would you be open to a guest post collaboration?`
+  };
+
+  return { key_insights: insights, immediate_actions: actions, trend_analysis: trendAssessment, trend_assessment: 'Evergreen', content_roadmap: roadmap, link_acquisition: linkAcquisition, onpage_checklist: ['Optimize meta titles with primary keywords.', 'Implement Schema markup for FAQs.', 'Ensure mobile responsiveness.'], growth_accelerators: ['Repurpose content into YouTube Shorts.', 'Create a free downloadable checklist.'], related_resources: [{ name: 'Google Trends', url: 'https://trends.google.com' }] };
+}
 
 export const createSEOReport = async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -108,7 +149,6 @@ export const createSEOReport = async (req: Request, res: Response, next: NextFun
       snippet: r.snippet || '',
     })) || [];
 
-    // ✅ UPDATED CURRENCY MAP FOR ALL 12 COUNTRIES
     const countryCurrencyMap: Record<string, string> = {
         us: 'USD', gb: 'GBP', ca: 'CAD', au: 'AUD',
         de: 'EUR', sg: 'SGD', sa: 'SAR', ae: 'AED',
@@ -123,9 +163,11 @@ export const createSEOReport = async (req: Request, res: Response, next: NextFun
     const aiResponse = await runGroqWithRetry(prompt, JSON.stringify({ niche, country }));
     const analysis = extractJSON(aiResponse);
 
+    // 🛡️ CRITICAL FIX: Keywords ko hamesha Array banayein
     let keywords: KeywordData[] = analysis.keywords || realKeywords;
-    if (!keywords || keywords.length === 0) {
-      keywords = realKeywords.slice(0, 50);
+    // Agar analysis.keywords undefined, object, ya null hai, toh fallback use karein
+    if (!keywords || !Array.isArray(keywords) || keywords.length === 0) {
+      keywords = (realKeywords && Array.isArray(realKeywords)) ? realKeywords.slice(0, 50) : [];
     }
 
     const serpWithMetrics = serp.map((r: any, i: number) => ({
