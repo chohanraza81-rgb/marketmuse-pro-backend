@@ -62,7 +62,7 @@ const buildSmartPrompt = (niche: string, country: string, realKeywords: any[], s
   3. **trend_assessment** (String, realistic summary).
   4. **keywords** (Array of 50 unique keywords. FORMAT MUST BE: \`[{"keyword": "exact search term", "volume": 1234, "cpc": 1.23, "kd": 35}]\`. Do not return a simple array of strings).
   5. **serp_landscape** (Analyze the top 8 URLs using the provided or simulated data. Include fields: position, title, link, da, strengths, weaknesses, gap).
-  6. **content_roadmap** (12 weeks. Each week must have: week, title, primary_keyword, secondary_keywords, word_count_target, outline, expected_traffic).
+  6. **content_roadmap** (12 weeks. Each week must have: week, title, primary_keyword, content_type, secondary_keywords, word_count_target, outline, expected_traffic).
   7. **link_acquisition** (Overview, target_sites array, guest_post_topics array, outreach_template).
   8. **onpage_checklist** (15 actionable points).
   9. **growth_accelerators** (5 actionable growth tips).
@@ -71,7 +71,7 @@ const buildSmartPrompt = (niche: string, country: string, realKeywords: any[], s
   Use current year 2026. Never leave any field empty. Make it sound like a senior consultant.`;
 };
 
-// 🛡️ SAFE FALLBACK GENERATOR (Used if AI returns nothing)
+// 🛡️ ULTIMATE FALLBACK GENERATOR
 function generateFullReportFallback(niche: string, country: string, keywords: KeywordData[], serp: any[], relatedQuestions: string[], trendData: number[]) {
   const cn = countryNames[country] || country;
   let subject = niche.replace(/^(how to |learn |master |best |top |ultimate |complete |guide to |tips for |strategies for |find |rank |start )/gi, '').trim();
@@ -96,17 +96,20 @@ function generateFullReportFallback(niche: string, country: string, keywords: Ke
       week: i + 1,
       title: `Week ${i+1}: ${kw.keyword}`,
       primary_keyword: kw.keyword,
-      type: i % 3 === 0 ? 'Pillar' : i % 3 === 1 ? 'How-to' : 'Listicle',
-      secondary_keywords: [],
+      content_type: i % 3 === 0 ? 'Pillar' : i % 3 === 1 ? 'How-to' : 'Listicle', // FIXED KEY
+      secondary_keywords: [safeKeywords[(i+1)%safeKeywords.length]?.keyword, safeKeywords[(i+2)%safeKeywords.length]?.keyword].filter(Boolean),
       word_count_target: i === 0 ? 3500 : 2200 + (i * 100),
-      outline: `Introduction | Core Strategies for ${subject} | Practical Examples | Expert Tips & Tools | Conclusion`,
+      outline: [`Introduction`, `Core Strategies for ${subject}`, `Practical Examples`, `Expert Tips & Tools`, `Conclusion`], // FIXED: ARRAY
       expected_traffic: Math.floor(kw.volume * 0.5) + 100
     });
   }
 
   const linkAcquisition = {
     overview: `Our strategy focuses on securing high-authority backlinks from ${cn}'s top business and lifestyle publications.`,
-    target_sites: [{ site: 'Forbes', da: 90, type: 'Business', contact: 'submissions@forbes.com', pitch: 'Pitching a comprehensive feature on this topic.' }],
+    target_sites: [
+        { site: 'Forbes', da: 90, type: 'Business', contact: 'submissions@forbes.com', pitch: 'Pitching a comprehensive feature on this topic.' },
+        { site: 'Entrepreneur.com', da: 82, type: 'Business', contact: 'editor@entrepreneur.com', pitch: 'Offering a localized deep-dive for ${cn} entrepreneurs.' }
+    ],
     guest_post_topics: [`The Ultimate Guide to ${subject} in ${cn}`, `Top 5 Strategies to Master ${subject}`],
     broken_link_opportunities: [{ site: `${cn} Business Hub`, dead_page: `/resources/old-guide`, replacement: `/blog/mastering-${subject}` }],
     outreach_template: `Subject: Guest Post Opportunity\n\nHi [Name],\n\nWe at MusePRO have compiled a comprehensive guide on ${subject}. I believe this would be highly valuable for your audience. Would you be open to a guest post collaboration?`
@@ -143,7 +146,6 @@ export const createSEOReport = async (req: Request, res: Response, next: NextFun
       }));
     }
 
-    // 🛡️ FIXED SAFE SERP PARSING
     const organic = searchData?.organic_results;
     const serp = (Array.isArray(organic) ? organic.slice(0, 8) : []).map((r: any) => ({
       position: r.position,
@@ -166,10 +168,8 @@ export const createSEOReport = async (req: Request, res: Response, next: NextFun
     const aiResponse = await runGroqWithRetry(prompt, JSON.stringify({ niche, country }));
     
     const rawAnalysis = extractJSON(aiResponse);
-    // 🛡️ FIXED: Ensure analysis is always an object
     const analysis = (typeof rawAnalysis === 'object' && !Array.isArray(rawAnalysis) && rawAnalysis !== null) ? rawAnalysis : {};
 
-    // 🛡️ FIXED: Convert AI's string array to valid object array
     let keywords: KeywordData[] = Array.isArray(analysis.keywords) ? analysis.keywords : realKeywords;
     if (!keywords || !Array.isArray(keywords) || keywords.length === 0) {
       keywords = (realKeywords && Array.isArray(realKeywords)) ? realKeywords.slice(0, 50) : [];
@@ -215,14 +215,29 @@ export const createSEOReport = async (req: Request, res: Response, next: NextFun
       markdown += `Position #${i+1}: ${s.title}\n  URL: ${s.link}\n  Est. DA: ${s.da}\n  Strengths: ${s.strengths || 'N/A'}\n  Weaknesses: ${s.weaknesses || 'N/A'}\n  Gap: ${s.gap || 'N/A'}\n\n`;
     });
 
+    // 🛡️ FIXED: SAFE ROADMAP GENERATION (Mimics 13 August perfectly)
     markdown += `5. CONTENT ROADMAP (12 WEEKS)\n──────────────────────────────────────────────────────────────\n`;
-    (analysis.content_roadmap || []).forEach((c: any) => markdown += `Week ${c.week}: ${c.title}\n  Keyword: ${c.primary_keyword} | Type: ${c.content_type}\n  Target Words: ${c.word_count_target}\n  Est. Traffic: ${c.expected_traffic?.toLocaleString()}/mo\n\n`);
+    (analysis.content_roadmap || []).forEach((c: any) => {
+      // Fallback keys to prevent "undefined"
+      const contentType = c.content_type || c.type || 'Guide';
+      const secondary = (c.secondary_keywords && c.secondary_keywords.length > 0) ? c.secondary_keywords.join(', ') : '';
+      
+      markdown += `Week ${c.week}: ${c.title}\n  Keyword: ${c.primary_keyword} | Type: ${contentType}\n`;
+      if (secondary) markdown += `  Secondary: ${secondary}\n`;
+      markdown += `  Target Words: ${c.word_count_target || 2000}\n`;
+      if (c.outline && Array.isArray(c.outline)) markdown += `  Outline: ${c.outline.join(' | ')}\n`;
+      else if (c.outline && typeof c.outline === 'string') markdown += `  Outline: ${c.outline}\n`;
+      markdown += `  Est. Traffic: ${(c.expected_traffic || 0).toLocaleString()}/mo\n\n`;
+    });
 
-    markdown += `6. LINK ACQUISITION STRATEGY\n──────────────────────────────────────────────────────────────\n${analysis.link_acquisition?.overview || ''}\n\n`;
-    (analysis.link_acquisition?.target_sites || []).forEach((s: any, i: number) => markdown += `  ${i+1}. ${s.site}\n     Contact: ${s.contact}\n     Pitch: ${s.pitch}\n\n`);
+    markdown += `6. LINK ACQUISITION STRATEGY\n──────────────────────────────────────────────────────────────\n${analysis.link_acquisition?.overview || 'N/A'}\n\n`;
+    (analysis.link_acquisition?.target_sites || []).forEach((s: any, i: number) => {
+        // 🛡️ FIXED: Safely handling undefined fields
+        markdown += `  ${i+1}. ${s.site || 'N/A'}\n     Contact: ${s.contact || 'N/A'}\n     Pitch: ${s.pitch || 'N/A'}\n\n`;
+    });
 
     markdown += `7. ON-PAGE OPTIMIZATION CHECKLIST\n──────────────────────────────────────────────────────────────\n`;
-    (analysis.onpage_checklist || []).forEach((item: string, i: number) => markdown += `${i+1}. ${item}\n`);
+    (analysis.onpage_checklist || []).forEach((item: string, i: number) => markdown += `${i+1}. ${item || 'N/A'}\n`);
 
     report.markdown = markdown;
     await report.save();
