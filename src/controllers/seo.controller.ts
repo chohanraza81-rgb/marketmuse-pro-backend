@@ -4,9 +4,9 @@ import { cacheService } from '../services/cache';
 import { getRelatedKeywords } from '../services/keywordseverywhere';
 import { getGoogleTrends } from '../services/trends';
 import { getSearchResults, getKeywordSuggestions } from '../services/serpapi';
-import { getSerperResults } from '../services/serper'; // New Import
-import { convertCurrency } from '../services/exchange'; // New Import
-import { runGroqWithRetry } from '../services/groq'; // Actually calling Gemini Flash
+import { getSerperResults } from '../services/serper.service'; // ✅ Corrected Import
+import { convertCurrency } from '../services/exchange.service'; // ✅ Corrected Import
+import { runGroqWithRetry } from '../services/groq';
 import { Report } from '../models/Report';
 import { ZodError } from 'zod';
 
@@ -129,7 +129,6 @@ export const createSEOReport = async (req: Request, res: Response, next: NextFun
     // 5. Use AI or Fallback keywords
     let keywords: KeywordData[] = analysis.keywords || realKeywords;
     if (!keywords || keywords.length === 0) {
-      // AI se fallback keywords bhi generate karwaye, ab robotic templates nahi
       keywords = realKeywords.slice(0, 50);
     }
 
