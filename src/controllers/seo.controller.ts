@@ -56,14 +56,18 @@ const buildSmartPrompt = (niche: string, country: string, realKeywords: any[], s
   - Imagine 8 realistic competitor websites for this specific niche and country.
   - For each imaginary website, generate: Title, URL, Est. DA, Snippet, Strengths, Weaknesses, and Content Gap.
   
+  **STRICT INSTRUCTION FOR LINK ACQUISITION**:
+  - Generate 5 target sites. If you don't know exact local sites, generate 5 realistic fictional sites relevant to this niche and country.
+  - For each site, provide: site, da, type, contact, and a professional pitch. **DO NOT use "N/A" under any circumstance**. Invent a realistic name and email.
+  
   **Requirements (Return valid JSON only)**:
   1. **key_insights** (Array of 3 actionable insights).
   2. **immediate_actions** (Array of 3 priority actions).
   3. **trend_assessment** (String, realistic summary).
-  4. **keywords** (Array of 50 unique keywords. FORMAT MUST BE: \`[{"keyword": "exact search term", "volume": 1234, "cpc": 1.23, "kd": 35}]\`. Do not return a simple array of strings).
-  5. **serp_landscape** (Analyze the top 8 URLs using the provided or simulated data. Include fields: position, title, link, da, strengths, weaknesses, gap).
-  6. **content_roadmap** (12 weeks. Each week must have: week, title, primary_keyword, content_type, secondary_keywords, word_count_target, outline, expected_traffic).
-  7. **link_acquisition** (Overview, target_sites array, guest_post_topics array, outreach_template).
+  4. **keywords** (Array of 50 unique keywords. FORMAT: \`[{"keyword": "...", "volume": 1234, "cpc": 1.23, "kd": 35}]\`).
+  5. **serp_landscape** (Analyze the top 8 URLs. Include: position, title, link, da, strengths, weaknesses, gap).
+  6. **content_roadmap** (12 weeks. Must have: week, title, primary_keyword, content_type, secondary_keywords, word_count_target, outline, expected_traffic).
+  7. **link_acquisition** (Overview, target_sites array, guest_post_topics array, broken_link_opportunities array, outreach_template).
   8. **onpage_checklist** (15 actionable points).
   9. **growth_accelerators** (5 actionable growth tips).
   10. **related_resources** (5 helpful URLs).
@@ -71,7 +75,7 @@ const buildSmartPrompt = (niche: string, country: string, realKeywords: any[], s
   Use current year 2026. Never leave any field empty. Make it sound like a senior consultant.`;
 };
 
-// 🛡️ ULTIMATE FALLBACK GENERATOR
+// 🛡️ 100% CUSTOM FALLBACK (No hardcoded lists, generates fictional but real-looking data)
 function generateFullReportFallback(niche: string, country: string, keywords: KeywordData[], serp: any[], relatedQuestions: string[], trendData: number[]) {
   const cn = countryNames[country] || country;
   let subject = niche.replace(/^(how to |learn |master |best |top |ultimate |complete |guide to |tips for |strategies for |find |rank |start )/gi, '').trim();
@@ -96,21 +100,19 @@ function generateFullReportFallback(niche: string, country: string, keywords: Ke
       week: i + 1,
       title: `Week ${i+1}: ${kw.keyword}`,
       primary_keyword: kw.keyword,
-      content_type: i % 3 === 0 ? 'Pillar' : i % 3 === 1 ? 'How-to' : 'Listicle', // FIXED KEY
+      content_type: i % 3 === 0 ? 'Pillar' : i % 3 === 1 ? 'How-to' : 'Listicle', 
       secondary_keywords: [safeKeywords[(i+1)%safeKeywords.length]?.keyword, safeKeywords[(i+2)%safeKeywords.length]?.keyword].filter(Boolean),
       word_count_target: i === 0 ? 3500 : 2200 + (i * 100),
-      outline: [`Introduction`, `Core Strategies for ${subject}`, `Practical Examples`, `Expert Tips & Tools`, `Conclusion`], // FIXED: ARRAY
+      outline: [`Introduction`, `Core Strategies for ${subject}`, `Practical Examples`, `Expert Tips & Tools`, `Conclusion`],
       expected_traffic: Math.floor(kw.volume * 0.5) + 100
     });
   }
 
+  // GENERIC CUSTOM FALLBACK FOR LINK ACQUISITION (Prevents N/A)
   const linkAcquisition = {
-    overview: `Our strategy focuses on securing high-authority backlinks from ${cn}'s top business and lifestyle publications.`,
-    target_sites: [
-        { site: 'Forbes', da: 90, type: 'Business', contact: 'submissions@forbes.com', pitch: 'Pitching a comprehensive feature on this topic.' },
-        { site: 'Entrepreneur.com', da: 82, type: 'Business', contact: 'editor@entrepreneur.com', pitch: 'Offering a localized deep-dive for ${cn} entrepreneurs.' }
-    ],
-    guest_post_topics: [`The Ultimate Guide to ${subject} in ${cn}`, `Top 5 Strategies to Master ${subject}`],
+    overview: `We will secure high-authority backlinks from top ${cn} publications and business directories.`,
+    target_sites: [{ site: `${cn} Business Insider`, da: 65, type: 'Blog', contact: 'editor@cnbusinessinsider.com', pitch: 'Pitching a deep-dive guide on mastering this niche.' }],
+    guest_post_topics: [`The Ultimate Guide to ${subject} in ${cn}`],
     broken_link_opportunities: [{ site: `${cn} Business Hub`, dead_page: `/resources/old-guide`, replacement: `/blog/mastering-${subject}` }],
     outreach_template: `Subject: Guest Post Opportunity\n\nHi [Name],\n\nWe at MusePRO have compiled a comprehensive guide on ${subject}. I believe this would be highly valuable for your audience. Would you be open to a guest post collaboration?`
   };
@@ -174,7 +176,6 @@ export const createSEOReport = async (req: Request, res: Response, next: NextFun
     if (!keywords || !Array.isArray(keywords) || keywords.length === 0) {
       keywords = (realKeywords && Array.isArray(realKeywords)) ? realKeywords.slice(0, 50) : [];
     }
-    // Map strings to objects if AI sent strings
     keywords = keywords.map((k: any) => {
         if (typeof k === 'string') {
             return { keyword: k, volume: Math.floor(Math.random() * 2000) + 200, cpc: parseFloat((Math.random() * 1.5 + 0.3).toFixed(2)), kd: Math.floor(Math.random() * 40) + 5 };
@@ -197,6 +198,7 @@ export const createSEOReport = async (req: Request, res: Response, next: NextFun
     const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
     const reportId = `MKT-${report._id.toString().slice(-6).toUpperCase()}`;
 
+    // 13 August Style Markdown Generation
     let markdown = `MusePRO\nReal-Time Market Research\nIntelligence Division\n──────────────────────────────────────────────────────────────\nSEO RESEARCH REPORT\n\nPrepared For: [Client Name]\nDate: ${today}\nReference: ${reportId}\nClassification: CONFIDENTIAL\n──────────────────────────────────────────────────────────────\n\n`;
     markdown += `1. EXECUTIVE BRIEF\n──────────────────────────────────────────────────────────────\n`;
     (analysis.key_insights || ['No insights generated']).forEach((f: string, i: number) => markdown += `  ${i+1}. ${f}\n`);
@@ -204,7 +206,8 @@ export const createSEOReport = async (req: Request, res: Response, next: NextFun
     (analysis.immediate_actions || []).forEach((w: string, i: number) => markdown += `  ${i+1}. ${w}\n`);
     markdown += `\n2. TREND ASSESSMENT\n──────────────────────────────────────────────────────────────\n${analysis.trend_assessment || 'Evergreen trend detected.'}\n\n`;
     
-    markdown += `3. KEYWORD OPPORTUNITIES (TOP 50)\n──────────────────────────────────────────────────────────────\n| # | Keyword | Volume | CPC | KD | Potential |\n|---|---------|--------|-----|----|----------|\n`;
+    markdown += `3. KEYWORD OPPORTUNITIES (TOP 50)\n──────────────────────────────────────────────────────────────\n`;
+    markdown += `| # | Keyword | Volume | CPC | KD | Potential |\n|---|---------|--------|-----|----|----------|\n`;
     keywords.forEach((k, i) => {
       const p = k.kd < 30 ? 'Easy Win' : k.kd < 60 ? 'Moderate' : 'Long Game';
       markdown += `| ${i+1} | ${k.keyword} | ${k.volume.toLocaleString()} | $${k.cpc.toFixed(2)} | ${k.kd} | ${p} |\n`;
@@ -212,13 +215,11 @@ export const createSEOReport = async (req: Request, res: Response, next: NextFun
     
     markdown += `\n4. SERP LANDSCAPE\n──────────────────────────────────────────────────────────────\n`;
     (analysis.serp_landscape || serpWithMetrics || []).forEach((s: any, i: number) => {
-      markdown += `Position #${i+1}: ${s.title}\n  URL: ${s.link}\n  Est. DA: ${s.da}\n  Strengths: ${s.strengths || 'N/A'}\n  Weaknesses: ${s.weaknesses || 'N/A'}\n  Gap: ${s.gap || 'N/A'}\n\n`;
+      markdown += `Position #${i+1}: ${s.title}\n  URL: ${s.link}\n  DA: ${s.da} | Words: ${s.words || 'N/A'} | Backlinks: ${s.backlinks || 'N/A'}\n  Est. Traffic: ${s.traffic?.toLocaleString() || 0}/mo\n  Strengths: ${s.strengths || 'N/A'}\n  Weaknesses: ${s.weaknesses || 'N/A'}\n  Gap: ${s.gap || 'N/A'}\n\n`;
     });
 
-    // 🛡️ FIXED: SAFE ROADMAP GENERATION (Mimics 13 August perfectly)
     markdown += `5. CONTENT ROADMAP (12 WEEKS)\n──────────────────────────────────────────────────────────────\n`;
     (analysis.content_roadmap || []).forEach((c: any) => {
-      // Fallback keys to prevent "undefined"
       const contentType = c.content_type || c.type || 'Guide';
       const secondary = (c.secondary_keywords && c.secondary_keywords.length > 0) ? c.secondary_keywords.join(', ') : '';
       
@@ -230,11 +231,27 @@ export const createSEOReport = async (req: Request, res: Response, next: NextFun
       markdown += `  Est. Traffic: ${(c.expected_traffic || 0).toLocaleString()}/mo\n\n`;
     });
 
-    markdown += `6. LINK ACQUISITION STRATEGY\n──────────────────────────────────────────────────────────────\n${analysis.link_acquisition?.overview || 'N/A'}\n\n`;
-    (analysis.link_acquisition?.target_sites || []).forEach((s: any, i: number) => {
-        // 🛡️ FIXED: Safely handling undefined fields
-        markdown += `  ${i+1}. ${s.site || 'N/A'}\n     Contact: ${s.contact || 'N/A'}\n     Pitch: ${s.pitch || 'N/A'}\n\n`;
-    });
+    markdown += `6. LINK ACQUISITION STRATEGY\n──────────────────────────────────────────────────────────────\n`;
+    markdown += `${analysis.link_acquisition?.overview || 'N/A'}\n\n`;
+    
+    // 🛡️ CRITICAL FIX: Filter out any sites that returned "N/A" or undefined from AI
+    const targetSites = analysis.link_acquisition?.target_sites || [];
+    const validTargetSites = targetSites.filter((s: any) => s.site && s.site !== 'N/A' && s.site !== 'undefined');
+
+    if (validTargetSites.length > 0) {
+      markdown += `Target Sites:\n`;
+      validTargetSites.forEach((s: any, i: number) => {
+        markdown += `  ${i+1}. ${s.site} (DA: ${s.da || 'N/A'})\n     Type: ${s.type || 'N/A'} | Contact: ${s.contact || 'N/A'}\n     Pitch: ${s.pitch || 'N/A'}\n\n`;
+      });
+    } else {
+      markdown += `Target Sites: No specific sites identified, will leverage high-authority local publications.\n\n`;
+    }
+
+    markdown += `Guest Post Topics:\n`;
+    (analysis.link_acquisition?.guest_post_topics || []).forEach((t: string, i: number) => markdown += `  ${i+1}. ${t}\n`);
+    markdown += `\nBroken Link Opportunities:\n`;
+    (analysis.link_acquisition?.broken_link_opportunities || []).forEach((b: any) => markdown += `  - ${b.site || 'N/A'}: ${b.dead_page || 'N/A'} → ${b.replacement || 'N/A'}\n`);
+    markdown += `\nOutreach Template:\n${analysis.link_acquisition?.outreach_template || 'N/A'}\n\n`;
 
     markdown += `7. ON-PAGE OPTIMIZATION CHECKLIST\n──────────────────────────────────────────────────────────────\n`;
     (analysis.onpage_checklist || []).forEach((item: string, i: number) => markdown += `${i+1}. ${item || 'N/A'}\n`);
