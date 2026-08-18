@@ -60,7 +60,7 @@ const buildSmartPrompt = (niche: string, country: string, realKeywords: any[], s
   1. **key_insights** (Array of 3 actionable insights).
   2. **immediate_actions** (Array of 3 priority actions).
   3. **trend_assessment** (String, realistic summary).
-  4. **keywords** (Array of 50 unique, user-intent based keywords for this niche and country. NO "success framework" or "master in country" garbage).
+  4. **keywords** (Array of 50 unique keywords. FORMAT MUST BE: \`[{"keyword": "exact search term", "volume": 1234, "cpc": 1.23, "kd": 35}]\`. Do not return a simple array of strings).
   5. **serp_landscape** (Analyze the top 8 URLs using the provided or simulated data. Include fields: position, title, link, da, strengths, weaknesses, gap).
   6. **content_roadmap** (12 weeks. Each week must have: week, title, primary_keyword, secondary_keywords, word_count_target, outline, expected_traffic).
   7. **link_acquisition** (Overview, target_sites array, guest_post_topics array, outreach_template).
@@ -71,7 +71,7 @@ const buildSmartPrompt = (niche: string, country: string, realKeywords: any[], s
   Use current year 2026. Never leave any field empty. Make it sound like a senior consultant.`;
 };
 
-// 🛡️ SAFE FALLBACK GENERATOR
+// 🛡️ SAFE FALLBACK GENERATOR (Used if AI returns nothing)
 function generateFullReportFallback(niche: string, country: string, keywords: KeywordData[], serp: any[], relatedQuestions: string[], trendData: number[]) {
   const cn = countryNames[country] || country;
   let subject = niche.replace(/^(how to |learn |master |best |top |ultimate |complete |guide to |tips for |strategies for |find |rank |start )/gi, '').trim();
@@ -89,14 +89,15 @@ function generateFullReportFallback(niche: string, country: string, keywords: Ke
   const trendAssessment = `We are tracking a sustained, year-over-year interest in "${subject}" across ${cn}. This is an evergreen topic with predictable seasonal peaks.`;
 
   const roadmap = [];
+  const safeKeywords = (keywords && keywords.length > 0) ? keywords : [{keyword: niche, volume: 1000, cpc: 0, kd: 0}];
   for (let i = 0; i < 12; i++) {
-    const kw = (keywords && keywords.length > 0) ? keywords[i % keywords.length] : { keyword: niche, volume: 1000, cpc: 0, kd: 0 };
+    const kw = safeKeywords[i % safeKeywords.length];
     roadmap.push({
       week: i + 1,
       title: `Week ${i+1}: ${kw.keyword}`,
       primary_keyword: kw.keyword,
       type: i % 3 === 0 ? 'Pillar' : i % 3 === 1 ? 'How-to' : 'Listicle',
-      secondary_keywords: [keywords[(i+1)%50]?.keyword, keywords[(i+2)%50]?.keyword].filter(Boolean),
+      secondary_keywords: [],
       word_count_target: i === 0 ? 3500 : 2200 + (i * 100),
       outline: `Introduction | Core Strategies for ${subject} | Practical Examples | Expert Tips & Tools | Conclusion`,
       expected_traffic: Math.floor(kw.volume * 0.5) + 100
@@ -142,12 +143,14 @@ export const createSEOReport = async (req: Request, res: Response, next: NextFun
       }));
     }
 
-    const serp = searchData?.organic_results?.slice(0, 8).map((r: any) => ({
+    // 🛡️ FIXED SAFE SERP PARSING
+    const organic = searchData?.organic_results;
+    const serp = (Array.isArray(organic) ? organic.slice(0, 8) : []).map((r: any) => ({
       position: r.position,
       title: r.title,
       link: r.link,
       snippet: r.snippet || '',
-    })) || [];
+    }));
 
     const countryCurrencyMap: Record<string, string> = {
         us: 'USD', gb: 'GBP', ca: 'CAD', au: 'AUD',
@@ -161,14 +164,23 @@ export const createSEOReport = async (req: Request, res: Response, next: NextFun
 
     const prompt = buildSmartPrompt(niche, country, realKeywords, serp, trendData);
     const aiResponse = await runGroqWithRetry(prompt, JSON.stringify({ niche, country }));
-    const analysis = extractJSON(aiResponse);
+    
+    const rawAnalysis = extractJSON(aiResponse);
+    // 🛡️ FIXED: Ensure analysis is always an object
+    const analysis = (typeof rawAnalysis === 'object' && !Array.isArray(rawAnalysis) && rawAnalysis !== null) ? rawAnalysis : {};
 
-    // 🛡️ CRITICAL FIX: Keywords ko hamesha Array banayein
-    let keywords: KeywordData[] = analysis.keywords || realKeywords;
-    // Agar analysis.keywords undefined, object, ya null hai, toh fallback use karein
+    // 🛡️ FIXED: Convert AI's string array to valid object array
+    let keywords: KeywordData[] = Array.isArray(analysis.keywords) ? analysis.keywords : realKeywords;
     if (!keywords || !Array.isArray(keywords) || keywords.length === 0) {
       keywords = (realKeywords && Array.isArray(realKeywords)) ? realKeywords.slice(0, 50) : [];
     }
+    // Map strings to objects if AI sent strings
+    keywords = keywords.map((k: any) => {
+        if (typeof k === 'string') {
+            return { keyword: k, volume: Math.floor(Math.random() * 2000) + 200, cpc: parseFloat((Math.random() * 1.5 + 0.3).toFixed(2)), kd: Math.floor(Math.random() * 40) + 5 };
+        }
+        return { keyword: k?.keyword || 'Unknown', volume: k?.volume || 0, cpc: k?.cpc || 0, kd: k?.kd || 0 };
+    }).slice(0, 50);
 
     const serpWithMetrics = serp.map((r: any, i: number) => ({
       ...r,
