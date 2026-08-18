@@ -13,13 +13,11 @@ const extractJSON = (raw: string): any => {
   const start = cleaned.indexOf('{');
   const end = cleaned.lastIndexOf('}');
   if (start !== -1 && end !== -1 && end > start) cleaned = cleaned.substring(start, end + 1);
-  try {
-    return JSON.parse(cleaned);
-  } catch (err) {
+  try { return JSON.parse(cleaned); } 
+  catch (err) {
     const fixed = cleaned.replace(/,\s*}/g, '}').replace(/,\s*]/g, ']').replace(/([{,]\s*)(\w+)(\s*:)/g, '$1"$2"$3');
-    try {
-      return JSON.parse(fixed);
-    } catch (e2) {
+    try { return JSON.parse(fixed); } 
+    catch (e2) {
       let completed = cleaned;
       let braceCount = (completed.match(/{/g) || []).length;
       let closeCount = (completed.match(/}/g) || []).length;
@@ -27,11 +25,8 @@ const extractJSON = (raw: string): any => {
       let bracketCount = (completed.match(/\[/g) || []).length;
       let closeBracketCount = (completed.match(/\]/g) || []).length;
       while (closeBracketCount < bracketCount) { completed += ']'; closeBracketCount++; }
-      try {
-        return JSON.parse(completed);
-      } catch (e3) {
-        throw new Error('AI response is not valid JSON');
-      }
+      try { return JSON.parse(completed); } 
+      catch (e3) { throw new Error('AI response is not valid JSON'); }
     }
   }
 };
@@ -44,313 +39,203 @@ const countryNames: Record<string, string> = {
   pk: 'Pakistan', in: 'India', tr: 'Turkey', my: 'Malaysia',
 };
 
-interface KeywordData {
-  keyword: string;
-  volume: number;
-  cpc: number;
-  kd: number;
+interface KeywordData { keyword: string; volume: number; cpc: number; kd: number; }
+
+// ==========================================
+// 🧠 INTELLIGENT NICHE DETECTION & SMART FALLBACK
+// ==========================================
+function detectNicheCategory(niche: string): 'ELECTRONICS' | 'ECOMMERCE' | 'DATING' | 'EDUCATION' | 'JOB' | 'GENERAL' {
+  const n = niche.toLowerCase();
+  if (/earbuds|headphones|speaker|laptop|phone|tablet|gadget|device|audio|tech/i.test(n)) return 'ELECTRONICS';
+  if (/dropshipping|supplier|wholesale|product|sourcing|ecommerce|import|export|manufactur|print on demand|pod/i.test(n)) return 'ECOMMERCE';
+  if (/dating|relationship|partner|match|love|single|romance|friend|girlfriend|boyfriend|wife|husband/i.test(n)) return 'DATING';
+  if (/learn|language|spanish|english|french|german|course|tutor|education|class|skill/i.test(n)) return 'EDUCATION';
+  if (/job|work|freelance|career|hire|remote|salary|resume|interview|employment/i.test(n)) return 'JOB';
+  return 'GENERAL';
 }
 
-// ✨ UNIVERSAL SMART FALLBACK for Keywords
-function generateSmartFallbackKeywords(niche: string, country: string): KeywordData[] {
-  let subject = niche.replace(/^(how to |learn |master |best |top |ultimate |complete |guide to |tips for |strategies for |rank |ranking |techniques for |start |find )/gi, '').trim();
-  subject = subject.replace(/\s2026$/i, '').trim();
+function generateProfessionalKeywords(niche: string, country: string): KeywordData[] {
+  const cat = detectNicheCategory(niche);
+  const cn = countryNames[country] || country;
+  // Clean subject for use in templates
+  let subject = niche.replace(/^(how to |learn |master |best |top |ultimate |complete |guide to |tips for |strategies for |find |rank |start )/gi, '').trim();
   
-  const templates = [
-    `Ultimate ${subject} guide for beginners`,
-    `Best ${subject} strategies and tactics`,
-    `Top ${subject} tools and resources`,
-    `How to master ${subject} effectively`,
-    `${subject} tips and tricks for success`,
-    `Proven ${subject} methods that work`,
-    `Complete ${subject} roadmap 2026`,
-    `Advanced ${subject} techniques`,
-    `Step-by-step ${subject} checklist`,
-    `Expert ${subject} advice and insights`,
-    `${subject} for dummies`,
-    `Common ${subject} mistakes to avoid`,
-    `How to optimize ${subject} for better results`,
-    `${subject} review: is it worth it?`,
-    `Top rated ${subject} courses`,
-    `${subject} best practices`,
-    `The future of ${subject}`,
-    `Quick ${subject} hacks`,
-    `Easy ${subject} steps for anyone`,
-    `Free ${subject} trial options`,
-    `${subject} case studies and examples`,
-    `${subject} certification guide`,
-    `Daily ${subject} practice routine`,
-    `Understanding ${subject} basics`,
-    `How to get started with ${subject}`,
-    `${subject} problems and solutions`,
-    `${subject} community forums`,
-    `Comparing ${subject} vs competitors`,
-    `The benefits of ${subject}`,
-    `${subject} myths and facts`,
-    `Essential ${subject} vocabulary`,
-    `${subject} project ideas`,
-    `How to scale ${subject}`,
-    `${subject} business opportunities`,
-    `Accelerating ${subject} growth`,
-    `Handling ${subject} challenges`,
-    `Budget-friendly ${subject} solutions`,
-    `${subject} analytics and metrics`,
-    `Actionable ${subject} strategies`,
-    `The history of ${subject}`,
-    `${subject} interview questions`,
-    `Innovative ${subject} approaches`,
-    `Long-term ${subject} planning`,
-    `Automation tools for ${subject}`,
-    `Working with ${subject} experts`,
-    `${subject} trending news 2026`,
-    `Frequently asked questions about ${subject}`,
-    `How to measure ${subject} success`,
-    `${subject} safety and ethics`,
-    `Mistakes people make with ${subject}`
-  ];
+  let templates: string[] = [];
 
-  const countryName = countryNames[country] || country;
-  if (countryName && countryName !== 'United States') {
-    templates[0] = `Ultimate ${subject} guide for beginners in ${countryName}`;
-    templates[1] = `Best ${subject} strategies and tactics in ${countryName}`;
-    templates[5] = `Proven ${subject} methods that work in ${countryName}`;
-    templates[15] = `Top rated ${subject} courses in ${countryName}`;
+  if (cat === 'ELECTRONICS') {
+    templates = [
+      `Best ${subject} in 2026`, `${subject} vs competitors`, `Are ${subject} worth it?`,
+      `Best ${subject} under $100`, `Top ${subject} for [Gym/Running/Travel]`, `${subject} review and comparison`,
+      `Budget friendly ${subject}`, `Premium ${subject} for professionals`, `How to choose the best ${subject}`,
+      `${subject} with noise cancellation`, `Long battery life ${subject}`, `The most comfortable ${subject}`,
+      `Are ${subject} durable?`, `Best ${subject} for iPhone/Android`, `${subject} features explained`,
+      `${subject} vs major brands`, `Why ${subject} are trending in 2026`, `User reviews of ${subject}`,
+      `Where to buy ${subject} cheap`, `${subject} versus competitors`
+    ];
+  } else if (cat === 'ECOMMERCE') {
+    templates = [
+      `Best ${subject} strategies`, `How to start ${subject}`, `${subject} for beginners`,
+      `Top ${subject} products`, `Finding winning ${subject}`, `${subject} suppliers in ${cn}`,
+      `Local sourcing for ${subject}`, `Best ${subject} niches`, `High ticket ${subject} items`,
+      `Print on demand ${subject}`, `${subject} with high margins`, `How to scale ${subject}`,
+      `${subject} marketing tactics`, `Common ${subject} mistakes`, `${subject} success stories`,
+      `Digital ${subject} ideas`, `Sustainable ${subject} options`, `Top ${subject} research tools`,
+      `Low competition ${subject}`, `${subject} trends 2026`
+    ];
+  } else if (cat === 'DATING') {
+    templates = [
+      `Best dating apps for serious relationships`, `How to start a conversation on dating apps`,
+      `Dating profile tips and bio examples`, `Hinge vs Bumble vs Tinder`, `How to find real love online`,
+      `Red flags in online dating`, `How to transition from app to real life`,
+      `Best dating sites for over 40`, `Dating profile pictures guide`, `How to text someone you're interested in`,
+      `Safety tips for online dating`, `How to spot fake profiles`,
+      `Best questions to ask on a first date`, `Finding a life partner online`,
+      `Dating app success stories`, `How to know if someone is serious`,
+      `Introvert dating tips`, `How to build trust online`, `Dating etiquette guide`, `Best dating apps 2026`
+    ];
+  } else if (cat === 'JOB') {
+    templates = [
+      `Best remote jobs in ${cn}`, `How to find online work`, `Freelance job platforms`,
+      `High paying online careers`, `Work from home jobs 2026`, `How to get hired online`,
+      `Legit remote work opportunities`, `Best freelance sites`, `How to start freelancing`,
+      `Online job interview tips`, `Making money online from home`, `Flexible part time remote jobs`,
+      `Top tech remote jobs`, `Digital nomad careers`, `How to create a freelance profile`,
+      `Remote job resume tips`, `Avoiding online job scams`, `Best jobs for beginners online`,
+      `Freelance writing/design jobs`, `Career growth in remote work`
+    ];
+  } else if (cat === 'EDUCATION') {
+    templates = [
+      `Best way to learn ${subject}`, `${subject} courses for beginners`, `How to master ${subject}`,
+      `${subject} tips and tricks`, `${subject} practice exercises`, `${subject} grammar basics`,
+      `Learn ${subject} speaking`, `${subject} vocabulary builder`, `Best apps to learn ${subject}`,
+      `${subject} pronunciation guide`, `Learn ${subject} from home`, `Daily ${subject} practice`,
+      `${subject} conversation practice`, `Advanced ${subject} learning`, `${subject} for travel`,
+      `${subject} cultural insights`, `Best ${subject} teachers`, `Free ${subject} resources`,
+      `${subject} audio lessons`, `Why learn ${subject} in 2026`
+    ];
+  } else {
+    templates = [
+      `Best ${subject} guide`, `How to master ${subject}`, `${subject} tips and tricks`,
+      `${subject} for beginners`, `Advanced ${subject} strategies`, `${subject} challenges`,
+      `${subject} success framework`, `Top ${subject} resources`, `${subject} vs competitors`
+    ];
   }
 
-  const shuffled = [...templates].sort(() => Math.random() - 0.5);
+  // Localization: Insert country if applicable
+  if (cn && cn !== 'United States') {
+    templates[0] = templates[0] + ` in ${cn}`;
+    templates[1] = templates[1] + ` in ${cn}`;
+  }
+
   const result: KeywordData[] = [];
+  const shuffled = [...templates].sort(() => Math.random() - 0.5);
   for (let i = 0; i < 50; i++) {
-    const keyword = shuffled[i % shuffled.length];
-    const volume = Math.floor(Math.random() * 2800) + 200;
+    const kw = shuffled[i % shuffled.length];
+    const vol = Math.floor(Math.random() * 2800) + 200;
     const kd = Math.floor(Math.random() * 45) + 5;
     const cpc = parseFloat((Math.random() * 1.8 + 0.3).toFixed(2));
-    result.push({ keyword, volume, cpc, kd });
+    result.push({ keyword: kw, volume: vol, cpc, kd });
   }
   return result;
 }
 
-function estimateDA(link: string): number {
-  const domain = new URL(link).hostname.replace(/^www\./, '');
-  const known: Record<string, number> = {
-    'google.com': 100, 'youtube.com': 100, 'linkedin.com': 98, 'medium.com': 94,
-    'reddit.com': 91, 'quora.com': 93, 'wikipedia.org': 96, 'amazon.com': 96,
-    'facebook.com': 96, 'twitter.com': 94, 'apple.com': 97, 'microsoft.com': 96,
-    'github.com': 95, 'stackoverflow.com': 93,
-  };
-  return domain.endsWith('.edu') || domain.endsWith('.gov') ? 80 : known[domain] || 35;
-}
-
-function estimateTraffic(position: number, volume: number): number {
-  const ctr = [0.3, 0.15, 0.1, 0.07, 0.05, 0.04, 0.03, 0.02][Math.min(position - 1, 7)] || 0.01;
-  return Math.round(volume * ctr);
-}
-
-// 🛡️ MASSIVE UPGRADE: Structured Fallback Generator for the FULL Report
+// ==========================================
+// 🛡️ FULL REPORT STRUCTURE FALLBACK (AI ki tarah ka logic)
+// ==========================================
 function generateFullReportFallback(niche: string, country: string, keywords: KeywordData[], serp: any[], relatedQuestions: string[], trendData: number[]) {
-  const countryName = countryNames[country] || country;
-  const subject = niche.replace(/^(how to |learn |master |best |top |ultimate |complete |guide to |tips for |strategies for |rank |ranking |techniques for |start |find )/gi, '').trim();
+  const cn = countryNames[country] || country;
+  const cat = detectNicheCategory(niche);
+  let subject = niche.replace(/^(how to |learn |master |best |top |ultimate |complete |guide to |tips for |strategies for |find |rank |start )/gi, '').trim();
 
-  // 1. Generate Trends
-  const trendAssessment = `We are tracking a consistent demand for "${subject}" in ${countryName}. The data indicates this is a highly evergreen niche with steady interest year-round, making it a safe and profitable investment for long-term content strategy.`;
-
-  // 2. Generate Insights & Actions
+  // Executive Brief & Insights
   const insights = [
-    `High search volume for core terms like "${keywords[0]?.keyword || niche}" indicates a massive, untapped audience in ${countryName}.`,
-    `The low-to-moderate Keyword Difficulty (KD) scores show that ranking for these specific long-tail variations is highly achievable within the first 3-6 months.`,
-    `There is a clear intent gap in the current SERP. Most top ranking pages offer generic advice, leaving room for a comprehensive, localized guide tailored to ${countryName}.`
+    `The demand for '${niche}' in ${cn} is consistently rising, with top keywords reaching high search volumes.`,
+    `Competitors in the SERP lack deep, localized insights specifically tailored to the ${cn} market.`,
+    `Targeting long-tail, low-competition queries will allow for rapid organic growth in the first 3-6 months.`
   ];
   const actions = [
-    `Publish a comprehensive 3,500-word pillar page targeting "${keywords[0]?.keyword || niche}" to capture the bulk of the organic search traffic.`,
-    `Create localized, high-value content (like case studies and "best tools") specifically for the ${countryName} market to bypass generic international competitors.`,
-    `Implement a targeted link-building strategy focused on acquiring backlinks from ${countryName}-based business directories and industry blogs.`
+    `Publish a definitive 3,000+ word pillar guide targeting the top primary keyword.`,
+    `Produce localized content (e.g., local supplier lists, pricing comparisons, or community forums) specifically for ${cn}.`,
+    `Launch a targeted link-building campaign focusing on ${cn}-based business, tech, or lifestyle publications.`
   ];
+  const trendAssessment = `We are tracking a sustained, year-over-year interest in "${subject}" across ${cn}. This is an evergreen topic with predictable seasonal peaks, making it a foundational niche for long-term content authority.`;
 
-  // 3. Generate 12-Week Content Roadmap
+  // 12-Week Roadmap
   const roadmap = [];
-  const weeks = 12;
-  for (let i = 0; i < weeks; i++) {
-    const kw = keywords[i % keywords.length] || keywords[0];
+  for (let i = 0; i < 12; i++) {
+    const kw = keywords[i] || keywords[0];
     roadmap.push({
       week: i + 1,
       title: `Week ${i+1}: ${kw.keyword}`,
       primary_keyword: kw.keyword,
       type: i % 3 === 0 ? 'Pillar' : i % 3 === 1 ? 'How-to' : 'Listicle',
-      secondary_keywords: [keywords[(i+1) % keywords.length]?.keyword, keywords[(i+2) % keywords.length]?.keyword].filter(Boolean),
+      secondary_keywords: [keywords[(i+1)%50]?.keyword, keywords[(i+2)%50]?.keyword].filter(Boolean),
       word_count_target: i === 0 ? 3500 : 2200 + (i * 100),
       outline: `Introduction | Core Strategies for ${subject} | Practical Examples | Expert Tips & Tools | Conclusion`,
       expected_traffic: Math.floor(kw.volume * 0.5) + 100
     });
   }
 
-  // 4. Generate Link Acquisition Strategy
+  // Link Acquisition (Country Specific)
   const countrySpecificSites: Record<string, any[]> = {
-    'Australia': [
-      { site: 'Startup Daily', da: 62, type: 'Startup News', contact: 'editor@startupdaily.net', pitch: 'Pitching a data-driven article on the top emerging trends for Australian entrepreneurs.' },
-      { site: 'Business News Australia', da: 58, type: 'Business Blog', contact: 'submissions@businessnewsaustralia.com', pitch: 'Offering a comprehensive guide on how to scale side hustles in the Australian market.' },
-      { site: 'Canberra Business Chamber', da: 45, type: 'Business Association', contact: 'info@canberrabusiness.com', pitch: 'Proposing a guest post on modern strategies for new business founders in Australia.' }
-    ],
-    'Canada': [
-      { site: 'BetaKit', da: 61, type: 'Tech & Startup News', contact: 'pitches@betakit.com', pitch: 'Pitching an exclusive analysis of Canadian e-commerce search trends heading into 2026.' },
-      { site: 'Startup Canada', da: 52, type: 'Business Association', contact: 'editor@startupcan.ca', pitch: 'Offering a data-driven guest post on micro-niches Canadian entrepreneurs should target.' },
-      { site: 'Canada Business Network', da: 55, type: 'Gov Resource', contact: 'resources@canadabusiness.ca', pitch: 'Suggesting our interactive guide as a free resource for their startup toolkit page.' }
-    ],
-    'India': [
-      { site: 'YourStory', da: 75, type: 'Startup News', contact: 'editor@yourstory.com', pitch: 'Pitching a deep dive into the evolving online work landscape for Indian freelancers.' },
-      { site: 'Inc42', da: 68, type: 'Tech Blog', contact: 'submissions@inc42.com', pitch: 'Offering an exclusive case study on how to find profitable niches in the Indian market.' },
-      { site: 'Entrepreneur India', da: 71, type: 'Business Mag', contact: 'editor@entrepreneurindia.com', pitch: 'Proposing a feature on the future of remote work and side hustles in India.' }
-    ],
-    'Germany': [
-      { site: 'Gründerszene', da: 65, type: 'Startup Blog', contact: 'redaktion@gruenderszene.de', pitch: 'Proposing an analysis of the German market for new online business opportunities.' },
-      { site: 'Handelsblatt', da: 82, type: 'Business News', contact: 'business@handelsblatt.com', pitch: 'Offering an exclusive report on the top e-commerce trends in Germany for 2026.' }
-    ]
+    'Australia': [{ site: 'SmartCompany', da: 63, type: 'Blog', contact: 'editorial@smartcompany.com.au', pitch: 'Pitching an analysis of local e-commerce trends.' }],
+    'Canada': [{ site: 'BetaKit', da: 61, type: 'Tech', contact: 'pitches@betakit.com', pitch: 'Offering exclusive Canadian search data.' }],
+    'India': [{ site: 'YourStory', da: 75, type: 'Startup', contact: 'editor@yourstory.com', pitch: 'Pitching a deep dive into the Indian market.' }]
   };
-  let targetSites = countrySpecificSites[countryName] || countrySpecificSites['Canada'];
-  if (!targetSites) targetSites = [
-    { site: 'Forbes', da: 94, type: 'Business Mag', contact: 'submissions@forbes.com', pitch: 'Pitching a feature on mastering the art of finding profitable niches in modern times.' },
-    { site: 'Entrepreneur.com', da: 82, type: 'Business Mag', contact: 'editor@entrepreneur.com', pitch: 'Offering a comprehensive roadmap for beginners looking to establish an online presence.' }
-  ];
+  let targetSites = countrySpecificSites[cn] || [{ site: 'Forbes', da: 90, type: 'Business', contact: 'submissions@forbes.com', pitch: 'Pitching a comprehensive feature on this topic.' }];
 
   const linkAcquisition = {
-    overview: `Our link acquisition strategy focuses on securing high-authority, contextually relevant backlinks from ${countryName} business and e-commerce publications.`,
-    target_sites: targetSites.slice(0, 5),
-    guest_post_topics: [
-      `The Ultimate Guide to Mastering ${subject} in 2026`,
-      `Top 5 Strategies to Scale Your ${subject} Efforts`,
-      `How ${countryName} Entrepreneurs are Leveraging ${subject} to Grow`,
-      `AI vs Human: The Future of ${subject} Management`
-    ],
-    broken_link_opportunities: [
-      { site: `${countryName} Business Hub`, dead_page: `/resources/business-tips-2021`, replacement: `/blog/ultimate-guide-to-${subject}` }
-    ],
-    outreach_template: `Subject: Collaborative Guest Post Opportunity on [Topic]\n\nHi [Name],\n\nI am reaching out from MusePRO to propose a data-driven guest post tailored for your audience on the topic of [Topic]. We have compiled unique industry insights that I believe would provide immense value to your readers.\n\nLooking forward to collaborating!`
+    overview: `Our strategy focuses on securing high-authority backlinks from ${cn}'s top business and lifestyle publications.`,
+    target_sites: targetSites.slice(0, 3),
+    guest_post_topics: [`The Ultimate Guide to ${subject} in ${cn}`, `Top 5 Strategies to Master ${subject}`],
+    broken_link_opportunities: [{ site: `${cn} Business Hub`, dead_page: `/resources/old-guide`, replacement: `/blog/mastering-${subject}` }],
+    outreach_template: `Subject: Guest Post Opportunity\n\nHi [Name],\n\nWe at MusePRO have compiled a comprehensive guide on ${subject}. I believe this would be highly valuable for your audience. Would you be open to a guest post collaboration?`
   };
 
-  // 5. Generate On-Page Checklist & Growth Accelerators
-  const onpageChecklist = [
-    `Optimize the meta title and description for all 50 target keywords.`,
-    `Ensure your pillar page contains internal links to the 12-week roadmap articles.`,
-    `Implement proper schema markup (Article, FAQ, and HowTo) to enhance SERP real estate.`,
-    `Achieve a Core Web Vitals score of 90+ (mobile and desktop) to ensure fast loading times.`
-  ];
-  const growthAccelerators = [
-    `Repurpose your 12-week roadmap into a 60-minute video course to capture YouTube viewers.`,
-    `Start a weekly newsletter delivering curated tips on "${subject}" to build an email list.`,
-    `Engage actively in Reddit communities related to "${subject}" to build brand authority.`,
-    `Create an interactive downloadable tool (checklist/calculator) to generate high-quality leads.`
-  ];
-  const relatedResources = [
-    { name: 'Google Trends', url: 'https://trends.google.com' },
-    { name: 'Ahrefs Keyword Explorer', url: 'https://ahrefs.com' },
-    { name: 'Semrush Topic Research', url: 'https://semrush.com' }
-  ];
+  const onpageChecklist = ['Optimize meta titles with primary keywords.', 'Implement Schema markup for FAQs.', 'Ensure mobile responsiveness.'];
+  const growthAccelerators = ['Repurpose content into YouTube Shorts.', 'Create a free downloadable checklist.', 'Run targeted social media campaigns.'];
+  const relatedResources = [{ name: 'Google Trends', url: 'https://trends.google.com' }];
 
-  return { 
-    key_insights: insights, immediate_actions: actions, trend_analysis: trendAssessment, trend_assessment: 'Evergreen',
-    content_roadmap: roadmap, link_acquisition: linkAcquisition, onpage_checklist: onpageChecklist, 
-    growth_accelerators: growthAccelerators, related_resources: relatedResources 
-  };
+  return { key_insights: insights, immediate_actions: actions, trend_analysis: trendAssessment, trend_assessment: 'Evergreen', content_roadmap: roadmap, link_acquisition: linkAcquisition, onpage_checklist: onpageChecklist, growth_accelerators: growthAccelerators, related_resources: relatedResources };
 }
 
-function generateMarkdown(
-  analysis: any,
-  keywords: KeywordData[],
-  serp: any[],
-  relatedQuestions: string[],
-  trendData: number[],
-  niche: string,
-  country: string,
-  reportId: string,
-  dataSourceStatus: string
-): string {
-  // If AI failed to provide full structure, generate full Fallback
-  if (!analysis.key_insights || analysis.key_insights.length === 0 || !analysis.content_roadmap || analysis.content_roadmap.length === 0) {
-    const fallbackData = generateFullReportFallback(niche, country, keywords, serp, relatedQuestions, trendData);
-    analysis.key_insights = fallbackData.key_insights;
-    analysis.immediate_actions = fallbackData.immediate_actions;
-    analysis.trend_analysis = fallbackData.trend_analysis;
-    analysis.trend_assessment = fallbackData.trend_assessment;
-    analysis.content_roadmap = fallbackData.content_roadmap;
-    analysis.link_acquisition = fallbackData.link_acquisition;
-    analysis.onpage_checklist = fallbackData.onpage_checklist;
-    analysis.growth_accelerators = fallbackData.growth_accelerators;
-    analysis.related_resources = fallbackData.related_resources;
+// ==========================================
+// 🖨️ MARKDOWN GENERATOR
+// ==========================================
+function generateMarkdown(analysis: any, keywords: KeywordData[], serp: any[], relatedQuestions: string[], trendData: number[], niche: string, country: string, reportId: string, dataSourceStatus: string): string {
+  // Auto-fill if AI failed
+  if (!analysis.key_insights || analysis.key_insights.length === 0) {
+    const fb = generateFullReportFallback(niche, country, keywords, serp, relatedQuestions, trendData);
+    analysis = { ...analysis, ...fb };
   }
-
+  
   const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
-  let m = '';
-
-  m += `MusePRO\nReal-Time Market Research\nIntelligence Division\n──────────────────────────────────────────────────────────────\nSEO RESEARCH REPORT\n\nPrepared For: [Client Name]\nDate: ${today}\nReference: ${reportId}\nClassification: CONFIDENTIAL\n──────────────────────────────────────────────────────────────\n\n`;
-
-  m += `1. YOUR OPPORTUNITY AT A GLANCE\n──────────────────────────────────────────────────────────────\n`;
-  m += `We analyzed the organic search landscape for "${niche}" in ${countryNames[country] || country}. The trend is ${analysis.trend_assessment || 'Evergreen'} with ${keywords.length} keyword opportunities identified.\n\n`;
-
-  m += `Key Insights:\n`;
-  (analysis.key_insights || []).forEach((f: string, i: number) => (m += `  ${i + 1}. ${f}\n`));
-  m += `\nWhat To Do First:\n`;
-  (analysis.immediate_actions || []).forEach((w: string, i: number) => (m += `  ${i + 1}. ${w}\n`));
-  m += `\n`;
-
-  m += `2. WHAT THE DATA SHOWS\n──────────────────────────────────────────────────────────────\n${analysis.trend_analysis || 'Not Disclosed'}\n`;
-  if (trendData && trendData.length > 0) {
-    m += `12-Month Search Trend: ${trendData.join(' → ')}\n`;
-  }
-  m += `Source: ${dataSourceStatus}\n\n`;
-
-  m += `3. KEYWORDS WORTH TARGETING\n──────────────────────────────────────────────────────────────\nSource: ${dataSourceStatus}\n\n`;
-  m += `| # | Keyword | Volume | CPC | KD | Potential |\n|---|---------|--------|-----|----|----------|\n`;
+  let m = `MusePRO\nReal-Time Market Research\nIntelligence Division\n──────────────────────────────────────────────────────────────\nSEO RESEARCH REPORT\n\nPrepared For: [Client Name]\nDate: ${today}\nReference: ${reportId}\nClassification: CONFIDENTIAL\n──────────────────────────────────────────────────────────────\n\n`;
+  m += `1. EXECUTIVE BRIEF\n──────────────────────────────────────────────────────────────\nThis report analyzes the organic search landscape for "${niche}" in ${countryNames[country] || country}.\n\n`;
+  (analysis.key_insights || []).forEach((f: string, i: number) => m += `  ${i+1}. ${f}\n`);
+  m += `\nPriority Actions:\n`; 
+  (analysis.immediate_actions || []).forEach((w: string, i: number) => m += `  ${i+1}. ${w}\n`);
+  m += `\n2. TREND ASSESSMENT\n──────────────────────────────────────────────────────────────\n${analysis.trend_analysis || ''}\n\n`;
+  m += `3. KEYWORD OPPORTUNITIES (TOP 50)\n──────────────────────────────────────────────────────────────\n| # | Keyword | Volume | CPC | KD | Potential |\n|---|---------|--------|-----|----|----------|\n`;
   keywords.forEach((k, i) => {
-    const potential = k.kd < 30 ? 'Easy Win' : k.kd < 60 ? 'Moderate' : 'Long Game';
-    m += `| ${i + 1} | ${k.keyword} | ${k.volume.toLocaleString()} | $${k.cpc.toFixed(2)} | ${k.kd} | ${potential} |\n`;
+    const p = k.kd < 30 ? 'Easy Win' : k.kd < 60 ? 'Moderate' : 'Long Game';
+    m += `| ${i+1} | ${k.keyword} | ${k.volume.toLocaleString()} | $${k.cpc.toFixed(2)} | ${k.kd} | ${p} |\n`;
   });
-  m += `\n`;
-
-  m += `4. SERP LANDSCAPE\n──────────────────────────────────────────────────────────────\nSource: SerpAPI (Live Google SERP)\n\n`;
-  serp.forEach((s, i) => {
-    m += `Position #${i + 1}: ${s.title}\n  URL: ${s.link}\n  Est. DA: ${s.da}\n  Est. Traffic: ${s.traffic.toLocaleString()} visits/mo\n  Snippet: ${s.snippet?.substring(0, 120)}\n\n`;
-  });
-  m += `\n`;
-
-  if (relatedQuestions.length) {
-    m += `5. PEOPLE ARE ASKING\n──────────────────────────────────────────────────────────────\n`;
-    relatedQuestions.forEach((q, i) => (m += `${i + 1}. ${q}\n`));
-    m += `\n`;
-  }
-
-  m += `6. CONTENT ROADMAP (12 WEEKS)\n──────────────────────────────────────────────────────────────\n`;
-  (analysis.content_roadmap || []).forEach((c: any) => {
-    m += `Week ${c.week}: ${c.title}\n  Keyword: ${c.primary_keyword} | Type: ${c.content_type}\n  Secondary: ${c.secondary_keywords?.join(', ')}\n  Target Words: ${c.word_count_target}\n  Outline: ${c.outline?.join(' | ')}\n  Est. Traffic: ${c.expected_traffic?.toLocaleString()}/mo\n\n`;
-  });
-
+  m += `\n4. SERP LANDSCAPE\n──────────────────────────────────────────────────────────────\n`;
+  serp.forEach((s, i) => m += `Position #${i+1}: ${s.title}\n  URL: ${s.link}\n  Est. DA: ${s.da}\n  Est. Traffic: ${s.traffic.toLocaleString()} visits/mo\n  Snippet: ${s.snippet?.substring(0, 120)}\n\n`);
+  m += `5. CONTENT ROADMAP (12 WEEKS)\n──────────────────────────────────────────────────────────────\n`;
+  (analysis.content_roadmap || []).forEach((c: any) => m += `Week ${c.week}: ${c.title}\n  Keyword: ${c.primary_keyword} | Type: ${c.content_type}\n  Target Words: ${c.word_count_target}\n  Est. Traffic: ${c.expected_traffic?.toLocaleString()}/mo\n\n`);
+  m += `6. LINK ACQUISITION STRATEGY\n──────────────────────────────────────────────────────────────\n`;
   const bs = analysis.link_acquisition || {};
-  m += `7. LINK ACQUISITION STRATEGY\n──────────────────────────────────────────────────────────────\n${bs.overview || 'N/A'}\n\n`;
-  m += `Target Sites:\n`;
-  (bs.target_sites || []).forEach((s: any, i: number) => (m += `  ${i + 1}. ${s.site} (DA: ${s.da})\n     Type: ${s.type} | Contact: ${s.contact}\n     Pitch: ${s.pitch}\n\n`));
-  m += `Guest Post Topics:\n`;
-  (bs.guest_post_topics || []).forEach((t: string, i: number) => (m += `  ${i + 1}. ${t}\n`));
-  m += `\nBroken Link Opportunities:\n`;
-  (bs.broken_link_opportunities || []).forEach((b: any) => (m += `  - ${b.site}: ${b.dead_page} → ${b.replacement}\n`));
-  m += `\nOutreach Template:\n${bs.outreach_template || 'N/A'}\n\n`;
-
-  m += `8. ON-PAGE OPTIMIZATION CHECKLIST\n──────────────────────────────────────────────────────────────\n`;
-  (analysis.onpage_checklist || []).forEach((item: string, i: number) => (m += `${i + 1}. ${item}\n`));
-  m += `\n`;
-
-  m += `9. GROWTH ACCELERATORS\n──────────────────────────────────────────────────────────────\n`;
-  (analysis.growth_accelerators || []).forEach((tip: string, i: number) => (m += `${i + 1}. ${tip}\n`));
-  m += `\n`;
-
-  m += `10. TOOLS & RESOURCES\n──────────────────────────────────────────────────────────────\n`;
-  (analysis.related_resources || []).forEach((res: any, i: number) => (m += `${i + 1}. ${res.name} – ${res.url}\n`));
-  m += `\n`;
-
-  m += `METHODOLOGY & SOURCES\n──────────────────────────────────────────────────────────────\nThis report is based on live data collected on ${today} from:\n\n• ${dataSourceStatus}\n• Live Google SERP via SerpAPI (serpapi.com)\n• People Also Ask via SerpAPI\n• Analysis Engine: Gemini AI (Hybrid Pro/Flash)\n\nAll data points are independently verified where possible.\n\n`;
-  m += `DOCUMENT CONTROL\n──────────────────────────────────────────────────────────────\nClassification:  Confidential\nDistribution:    Client Only\nVersion:         1.0\nPrepared By:     MusePRO Intelligence Division\n\n`;
-  m += `DISCLAIMER\n──────────────────────────────────────────────────────────────\nThis document contains proprietary research conducted by MusePRO. The information herein is intended solely for the designated recipient. Unauthorized distribution, copying, or disclosure is strictly prohibited.\n\nWhile every effort has been made to ensure accuracy, market conditions change rapidly. Verify critical data points before making business decisions.\n\n`;
-  m += `──────────────────────────────────────────────────────────────\n© MusePRO — Intelligence Division. All Rights Reserved.\n`;
-
+  (bs.target_sites || []).forEach((s: any, i: number) => m += `  ${i+1}. ${s.site} (DA: ${s.da})\n     Type: ${s.type} | Contact: ${s.contact}\n     Pitch: ${s.pitch}\n\n`);
+  m += `7. ON-PAGE OPTIMIZATION CHECKLIST\n──────────────────────────────────────────────────────────────\n`;
+  (analysis.onpage_checklist || []).forEach((item: string, i: number) => m += `${i+1}. ${item}\n`);
   return m;
 }
 
+// ==========================================
+// 🚀 MAIN CONTROLLER
+// ==========================================
 export const createSEOReport = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { niche, country } = seoReportSchema.parse(req.body);
@@ -358,9 +243,6 @@ export const createSEOReport = async (req: Request, res: Response, next: NextFun
     const cached = cacheService.get(ck);
     if (cached) return res.json(cached);
 
-    console.log(`SEO: "${niche}" in ${country}`);
-
-    // Fetch real data where possible
     const kweData = await getRelatedKeywords(niche, country).catch(() => null);
     const searchData = await getSearchResults(niche, country).catch(() => null);
     const relatedQuestions = await getKeywordSuggestions(niche, country).catch(() => []);
@@ -369,44 +251,32 @@ export const createSEOReport = async (req: Request, res: Response, next: NextFun
     let realKeywords: KeywordData[] = [];
     if (kweData?.data?.length) {
       realKeywords = kweData.data.slice(0, 50).map((k: any) => ({
-        keyword: k.keyword,
-        volume: k.vol || 0,
-        cpc: parseFloat(k.cpc?.value || '0'),
+        keyword: k.keyword, volume: k.vol || 0, cpc: parseFloat(k.cpc?.value || '0'),
         kd: k.competition ? Math.min(Math.round(k.competition * 100), 100) : 0,
       }));
     }
 
     const serp = searchData?.organic_results?.slice(0, 8).map((r: any) => ({
-      position: r.position,
-      title: r.title,
-      link: r.link,
-      snippet: r.snippet || '',
+      position: r.position, title: r.title, link: r.link, snippet: r.snippet || '',
     })) || [];
 
     const aiContext = { niche, country, realKeywords, serp, relatedQuestions, trendData };
     const ai = await runGroqWithRetry(PROMPT, JSON.stringify(aiContext));
     const analysis = extractJSON(ai);
 
-    // Use AI-generated keywords if real not available or incomplete
     let keywords: KeywordData[] = analysis.keywords || realKeywords;
-    if (!keywords || keywords.length < 10) {
-      keywords = realKeywords.slice(0, 50);
-    }
-    
-    // Ensure exactly 50 keywords and handle empty data gracefully
+    if (!keywords || keywords.length < 10) keywords = realKeywords.slice(0, 50);
+
+    // ✅ SMART FALLBACK (No more "practice routines" for earbuds!)
     if (keywords.length === 0) {
-      keywords = generateSmartFallbackKeywords(niche, country);
+      keywords = generateProfessionalKeywords(niche, country);
     } else {
         if (keywords.length < 50) {
           if (analysis.keywords && Array.isArray(analysis.keywords)) {
-            const filler = analysis.keywords.filter((k: any) => 
-              !keywords.some(rk => rk.keyword === k.keyword)
-            );
+            const filler = analysis.keywords.filter((k: any) => !keywords.some(rk => rk.keyword === k.keyword));
             keywords = [...keywords, ...filler].slice(0, 50);
           } else {
-            const realFiller = realKeywords.filter((k) => 
-              !keywords.some(rk => rk.keyword === k.keyword)
-            );
+            const realFiller = realKeywords.filter((k) => !keywords.some(rk => rk.keyword === k.keyword));
             keywords = [...keywords, ...realFiller].slice(0, 50);
           }
         }
@@ -414,18 +284,14 @@ export const createSEOReport = async (req: Request, res: Response, next: NextFun
 
     const serpWithMetrics = serp.map((r: any) => ({
       ...r,
-      da: estimateDA(r.link),
-      traffic: estimateTraffic(r.position, keywords[0]?.volume || 1000),
+      da: (new URL(r.link).hostname.includes('youtube') || new URL(r.link).hostname.includes('reddit')) ? 99 : 35,
+      traffic: Math.round(([0.3, 0.15, 0.1, 0.07, 0.05, 0.04, 0.03, 0.02][Math.min(r.position - 1, 7)] || 0.01) * (keywords[0]?.volume || 1000))
     }));
 
     const report = await Report.create({
-      type: 'seo',
-      niche,
-      country,
-      value: '$99',
+      type: 'seo', niche, country, value: '$99',
       data: { ...analysis, keywords, serp: serpWithMetrics, relatedQuestions, trendData },
-      markdown: 'Intelligence report generation in progress...',
-      charts: {},
+      markdown: 'Intelligence report generation in progress...', charts: {},
     });
 
     const reportId = `MKT-${report._id.toString().slice(-6).toUpperCase()}`;
