@@ -8,13 +8,11 @@ export const convertCurrency = async (amount: number, from: string = 'USD', to: 
     if (!rate) return amount;
     return parseFloat((amount * rate).toFixed(2));
   } catch (error) {
-    // Error type unknown ko handle kiya
     console.warn('Exchange API failed:', error instanceof Error ? error.message : String(error));
     return amount;
   }
 };
 
-// ✅ Product controller ke liye required exports
 export const getExchangeRates = async (base: string = 'USD'): Promise<any> => {
   try {
     const response = await axios.get(`https://api.exchangerate-api.com/v4/latest/${base}`);
