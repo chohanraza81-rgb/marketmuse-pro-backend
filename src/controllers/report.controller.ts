@@ -22,7 +22,7 @@ export const getReports = async (req: Request, res: Response, next: NextFunction
       .sort({ createdAt: -1 })
       .skip((query.page - 1) * query.limit)
       .limit(query.limit)
-      .select('-data -markdown -charts -chart_data') // clean projection
+      .select('-data -markdown -charts -chart_data')
       .lean();
 
     res.json({
@@ -42,7 +42,7 @@ export const getReports = async (req: Request, res: Response, next: NextFunction
   }
 };
 
-// GET /api/reports/stats - Get report statistics
+// GET /api/reports/stats
 export const getReportStats = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const filter = { type: { $in: ['product', 'seo'] } };
@@ -55,13 +55,12 @@ export const getReportStats = async (req: Request, res: Response, next: NextFunc
   } catch (err) { next(err); }
 };
 
-// GET /api/reports/:id - Get single report by ID
+// GET /api/reports/:id
 export const getReportById = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const report = await Report.findById(req.params.id);
     if (!report) return res.status(404).json({ error: 'Report not found' });
 
-    // Ensure frontend gets computed fields
     const returnReport = {
       ...report.toObject(),
       sixMonthTrafficEstimate: (report as any).traffic_estimate || (report as any).sixMonthTrafficEstimate || 0,
@@ -72,7 +71,7 @@ export const getReportById = async (req: Request, res: Response, next: NextFunct
   } catch (err) { next(err); }
 };
 
-// DELETE /api/reports/:id - Delete single report
+// DELETE /api/reports/:id
 export const deleteReport = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const report = await Report.findByIdAndDelete(req.params.id);
@@ -81,7 +80,7 @@ export const deleteReport = async (req: Request, res: Response, next: NextFuncti
   } catch (err) { next(err); }
 };
 
-// POST /api/reports/export-zip - Bulk export as ZIP (Restored)
+// ✅ RESTORED: POST /api/reports/export-zip (Bulk export)
 export const bulkExportZip = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { ids } = req.body;
@@ -112,7 +111,7 @@ export const bulkExportZip = async (req: Request, res: Response, next: NextFunct
   } catch (err) { next(err); }
 };
 
-// DELETE /api/reports/cleanup - Clean invalid/old reports (Restored)
+// ✅ RESTORED: DELETE /api/reports/cleanup
 export const cleanupOldReports = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const result = await (Report as any).cleanupInvalid();
@@ -125,7 +124,7 @@ export const cleanupOldReports = async (req: Request, res: Response, next: NextF
   } catch (err) { next(err); }
 };
 
-// DELETE /api/reports/bulk-delete - Delete multiple reports (Restored)
+// ✅ RESTORED: DELETE /api/reports/bulk-delete
 export const bulkDeleteReports = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { ids } = req.body;
@@ -145,7 +144,7 @@ export const bulkDeleteReports = async (req: Request, res: Response, next: NextF
   } catch (err) { next(err); }
 };
 
-// GET /api/reports/search - Search reports by niche (Restored)
+// ✅ RESTORED: GET /api/reports/search
 export const searchReports = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { q, limit = 20 } = req.query;
