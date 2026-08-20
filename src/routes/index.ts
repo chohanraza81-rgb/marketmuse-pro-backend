@@ -1,80 +1,27 @@
 import { Router } from 'express';
-import mongoose from 'mongoose';
-import { createProductReport, getProductReport } from '../controllers/product.controller';
-import { createSEOReport, getSEOReport } from '../controllers/seo.controller';
-import {
-  getReports,
-  getReportById,
-  deleteReport,
+import { 
+  getReports, 
+  getReportStats, 
+  getReportById, 
+  deleteReport, 
   bulkExportZip,
   cleanupOldReports,
-  getReportStats,
   bulkDeleteReports,
-  searchReports,
+  searchReports
 } from '../controllers/report.controller';
-import { sendReportEmail } from '../services/email';
-import { Report } from '../models/Report';
 
 const router = Router();
 
-// === Health Check ===
-router.get('/health', (req, res) => {
-  res.json({
-    status: 'ok',
-    timestamp: new Date().toISOString(),
-    service: 'MusePRO',
-    version: '1.0.0',
-  });
-});
+// Report management routes
+router.get('/', getReports);
+router.get('/stats', getReportStats);
+router.get('/search', searchReports); // Search by niche
+router.get('/:id', getReportById);
+router.delete('/:id', deleteReport);
 
-// === Product Research ===
-router.post('/product-research', createProductReport);
-router.get('/product-research/:id', getProductReport);
-
-// === SEO Report ===
-router.post('/seo-report', createSEOReport);
-router.get('/seo-report/:id', getSEOReport);
-
-// === Reports CRUD ===
-router.get('/reports/search', searchReports);
-router.get('/reports/stats', getReportStats);
-router.get('/reports', getReports);
-router.get('/reports/:id', getReportById);
-router.delete('/reports/cleanup', cleanupOldReports);
-router.delete('/reports/bulk-delete', bulkDeleteReports);
-router.delete('/reports/:id', deleteReport);
-router.post('/reports/export-zip', bulkExportZip);
-
-// === Send Report via Email (Brevo) ===
-router.post('/send-report', async (req, res, next) => {
-  try {
-    const { email, reportId } = req.body;
-
-    if (!email || !reportId) {
-      return res.status(400).json({ error: 'email and reportId are required' });
-    }
-
-    // Validate ObjectId format
-    if (!mongoose.Types.ObjectId.isValid(reportId)) {
-      return res.status(400).json({ error: 'Invalid report ID' });
-    }
-
-    const report = await Report.findById(reportId);
-    if (!report) {
-      return res.status(404).json({ error: 'Report not found' });
-    }
-
-    await sendReportEmail(
-      email,
-      `Your Market Research Report: ${report.niche}`,
-      report.markdown,
-      `${report.type} - ${report.niche}`
-    );
-
-    res.json({ success: true, message: 'Report emailed successfully' });
-  } catch (err) {
-    next(err);
-  }
-});
+// Bulk operations
+router.post('/export-zip', bulkExportZip);
+router.delete('/cleanup', cleanupOldReports);
+router.delete('/bulk-delete', bulkDeleteReports);
 
 export default router;
