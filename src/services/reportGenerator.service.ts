@@ -101,7 +101,8 @@ export async function generateReport(niche: string, country: string, type: 'seo'
   markdown += `1. EXECUTIVE BRIEF\n──────────────────────────────────────────────────────────────\n`;
   (analysis.key_insights || []).forEach((f: string, i: number) => markdown += `  ${i+1}. ${f}\n`);
   markdown += `\nPriority Actions:\n`;
-  (analysis.immediate_actions || []).forEach((w: string, i: number) => markdown += `  ${i+1}. ${w}\n`;
+  // ✅ FIXED: Added closing parenthesis ')' at the end of the line below
+  (analysis.immediate_actions || []).forEach((w: string, i: number) => markdown += `  ${i+1}. ${w}\n`);
 
   markdown += `\n2. TREND ASSESSMENT\n──────────────────────────────────────────────────────────────\n`;
   let trendText = analysis.trend_assessment || 'Steady market growth detected.';
