@@ -6,6 +6,7 @@ import {
   getReports,
   getReportStats,
   getReportById,
+  updateReport, // ✅ New Import
   deleteReport,
   bulkExportZip,
   cleanupOldReports,
@@ -40,6 +41,7 @@ router.get('/reports/search', searchReports);
 router.get('/reports/stats', getReportStats);
 router.get('/reports', getReports);
 router.get('/reports/:id', getReportById);
+router.patch('/reports/:id', updateReport); // ✅ New Edit Route
 router.delete('/reports/cleanup', cleanupOldReports);
 router.delete('/reports/bulk-delete', bulkDeleteReports);
 router.delete('/reports/:id', deleteReport);
