@@ -170,7 +170,7 @@ export async function generateReport(niche: string, country: string, type: 'seo'
   
   if (analysis.link_acquisition?.guest_post_topics) markdown += `Guest Post Topics:\n` + (analysis.link_acquisition.guest_post_topics as string[]).map((t, i) => `  ${i+1}. ${t}`).join('\n') + '\n\n';
   
-  // ✅ ULTIMATE FIX: Cast array to any[] first to satisfy TypeScript's strict mode
+  // ✅ ULTIMATE FIX: Cast to any[] to explicitly satisfy TypeScript strict mode
   const rawBrokenLinks: any[] = (analysis.link_acquisition?.broken_link_opportunities || []) as any[];
   let brokenLinks = rawBrokenLinks.filter((b: any) => b && b.site && b.site !== 'N/A' && b.dead_page && b.dead_page !== 'N/A');
 
@@ -195,7 +195,8 @@ export async function generateReport(niche: string, country: string, type: 'seo'
   }
   
   if (brokenLinks.length > 0) {
-      markdown += `Broken Link Opportunities:\n` + brokenLinks.map((b: any) => `  - ${b.site}: ${b.dead_page} → ${b.replacement || 'N/A'}`).join('\n') + '\n\n';
+      // 🛡️ Cast to any[] before map to ensure TypeScript never complains about 'b'
+      markdown += `Broken Link Opportunities:\n` + (brokenLinks as any[]).map((b: any) => `  - ${b.site}: ${b.dead_page} → ${b.replacement || 'N/A'}`).join('\n') + '\n\n';
   } else {
       markdown += `Broken Link Opportunities: N/A\n\n`;
   }
