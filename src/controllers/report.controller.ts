@@ -3,12 +3,10 @@ import { Report } from '../models/Report';
 import { reportQuerySchema } from '../validators/report';
 import { ZodError } from 'zod';
 
-// GET /api/reports - List reports with pagination & filters
 export const getReports = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const query = reportQuerySchema.parse(req.query);
     const filter: any = { type: { $in: ['product', 'seo'] } };
-    
     if (query.type) filter.type = query.type;
     if (query.country) filter.country = query.country.toLowerCase();
     if (query.startDate || query.endDate) {
@@ -31,6 +29,7 @@ export const getReports = async (req: Request, res: Response, next: NextFunction
         type: r.type,
         niche: r.niche,
         country: r.country,
+        clientName: r.clientName || 'Client Name',
         value: r.type === 'product' ? '$149' : '$99',
         createdAt: r.createdAt,
       })),
@@ -42,7 +41,6 @@ export const getReports = async (req: Request, res: Response, next: NextFunction
   }
 };
 
-// GET /api/reports/stats
 export const getReportStats = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const filter = { type: { $in: ['product', 'seo'] } };
@@ -55,7 +53,6 @@ export const getReportStats = async (req: Request, res: Response, next: NextFunc
   } catch (err) { next(err); }
 };
 
-// GET /api/reports/:id
 export const getReportById = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const report = await Report.findById(req.params.id);
@@ -71,30 +68,21 @@ export const getReportById = async (req: Request, res: Response, next: NextFunct
   } catch (err) { next(err); }
 };
 
-// ✅ NEW: PATCH /api/reports/:id - Update client name & content (No Duplicates)
+// ✅ NEW: PUT /api/reports/:id - Update report metadata and/or markdown
 export const updateReport = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { clientName, markdown } = req.body;
-    
-    // Build the update object
     const updateData: any = {};
-    if (clientName !== undefined) updateData.clientName = clientName;
-    if (markdown !== undefined) updateData.markdown = markdown;
 
-    const report = await Report.findByIdAndUpdate(
-      req.params.id,
-      updateData,
-      { new: true, runValidators: true }
-    );
+    if (clientName) updateData.clientName = clientName;
+    if (markdown) updateData.markdown = markdown;
 
+    const report = await Report.findByIdAndUpdate(req.params.id, updateData, { new: true });
     if (!report) return res.status(404).json({ error: 'Report not found' });
     res.json(report);
-  } catch (err) {
-    next(err);
-  }
+  } catch (err) { next(err); }
 };
 
-// DELETE /api/reports/:id
 export const deleteReport = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const report = await Report.findByIdAndDelete(req.params.id);
@@ -103,98 +91,58 @@ export const deleteReport = async (req: Request, res: Response, next: NextFuncti
   } catch (err) { next(err); }
 };
 
-// ✅ RESTORED: POST /api/reports/export-zip (Bulk export)
 export const bulkExportZip = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { ids } = req.body;
     if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: 'Provide array of report IDs' });
     if (ids.length > 50) return res.status(400).json({ error: 'Maximum 50 reports per export' });
 
-    const reports = await Report.find({
-      _id: { $in: ids },
-      type: { $in: ['product', 'seo'] }
-    }).lean();
-
+    const reports = await Report.find({ _id: { $in: ids }, type: { $in: ['product', 'seo'] } }).lean();
     if (reports.length === 0) return res.status(404).json({ error: 'No valid reports found' });
 
     const JSZip = require('jszip');
     const zip = new JSZip();
-
     reports.forEach((report: any) => {
       const content = report.markdown || JSON.stringify(report.data, null, 2);
       zip.file(`report_${report.niche}_${report.country}_${report._id}.md`, content);
     });
 
     const zipBuffer = await zip.generateAsync({ type: 'nodebuffer' });
-    res.set({
-      'Content-Type': 'application/zip',
-      'Content-Disposition': `attachment; filename=marketmuse_reports_${Date.now()}.zip`,
-    });
+    res.set({ 'Content-Type': 'application/zip', 'Content-Disposition': `attachment; filename=marketmuse_reports_${Date.now()}.zip` });
     res.send(zipBuffer);
   } catch (err) { next(err); }
 };
 
-// ✅ RESTORED: DELETE /api/reports/cleanup
 export const cleanupOldReports = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const result = await (Report as any).cleanupInvalid();
-    res.json({
-      success: true,
-      message: 'Database cleaned successfully',
-      deletedCount: result.deletedCount || 0,
-      timestamp: new Date().toISOString(),
-    });
+    res.json({ success: true, message: 'Database cleaned successfully', deletedCount: result.deletedCount || 0, timestamp: new Date().toISOString() });
   } catch (err) { next(err); }
 };
 
-// ✅ RESTORED: DELETE /api/reports/bulk-delete
 export const bulkDeleteReports = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { ids } = req.body;
     if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: 'Provide array of report IDs' });
     if (ids.length > 100) return res.status(400).json({ error: 'Maximum 100 reports per bulk delete' });
 
-    const result = await Report.deleteMany({
-      _id: { $in: ids },
-      type: { $in: ['product', 'seo'] }
-    });
-
-    res.json({
-      success: true,
-      message: `${result.deletedCount} reports deleted successfully`,
-      deletedCount: result.deletedCount,
-    });
+    const result = await Report.deleteMany({ _id: { $in: ids }, type: { $in: ['product', 'seo'] } });
+    res.json({ success: true, message: `${result.deletedCount} reports deleted successfully`, deletedCount: result.deletedCount });
   } catch (err) { next(err); }
 };
 
-// ✅ RESTORED: GET /api/reports/search
 export const searchReports = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { q, limit = 20 } = req.query;
-    if (!q || typeof q !== 'string' || q.length < 2) {
-      return res.status(400).json({ error: 'Search query must be at least 2 characters' });
-    }
+    if (!q || typeof q !== 'string' || q.length < 2) return res.status(400).json({ error: 'Search query must be at least 2 characters' });
 
-    const reports = await Report.find({
-      niche: { $regex: q, $options: 'i' },
-      type: { $in: ['product', 'seo'] }
-    })
-      .sort({ createdAt: -1 })
-      .limit(Number(limit))
-      .select('-data -markdown -charts -chart_data')
-      .lean();
+    const reports = await Report.find({ niche: { $regex: q, $options: 'i' }, type: { $in: ['product', 'seo'] } })
+      .sort({ createdAt: -1 }).limit(Number(limit)).select('-data -markdown -charts -chart_data').lean();
 
     res.json({
       query: q,
       results: reports.length,
-      reports: reports.map((r: any) => ({
-        _id: r._id,
-        type: r.type,
-        niche: r.niche,
-        country: r.country,
-        value: r.type === 'product' ? '$149' : '$99',
-        createdAt: r.createdAt,
-      })),
+      reports: reports.map((r: any) => ({ _id: r._id, type: r.type, niche: r.niche, country: r.country, value: r.type === 'product' ? '$149' : '$99', createdAt: r.createdAt })),
     });
   } catch (err) { next(err); }
 };
