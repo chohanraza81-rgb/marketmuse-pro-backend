@@ -170,8 +170,8 @@ export async function generateReport(niche: string, country: string, type: 'seo'
   
   if (analysis.link_acquisition?.guest_post_topics) markdown += `Guest Post Topics:\n` + (analysis.link_acquisition.guest_post_topics as string[]).map((t, i) => `  ${i+1}. ${t}`).join('\n') + '\n\n';
   
-  // 🛑 ULTIMATE FALLBACK: Force at least 4 Broken Links
-  let brokenLinks = (analysis.link_acquisition?.broken_link_opportunities || []).filter((b: any) => b && b.site && b.site !== 'N/A' && b.dead_page && b.dead_page !== 'N/A');
+  // 🛑 ULTIMATE FALLBACK: Strict type fix to eliminate `b: any` error
+  let brokenLinks = (analysis.link_acquisition?.broken_link_opportunities || []).filter((b: { site?: string; dead_page?: string; replacement?: string }) => b && b.site && b.site !== 'N/A' && b.dead_page && b.dead_page !== 'N/A');
 
   // Force at least 4 fallback links if AI missed them
   if (brokenLinks.length < 4) {
@@ -195,7 +195,7 @@ export async function generateReport(niche: string, country: string, type: 'seo'
   }
   
   if (brokenLinks.length > 0) {
-      markdown += `Broken Link Opportunities:\n` + brokenLinks.map((b: any) => `  - ${b.site}: ${b.dead_page} → ${b.replacement || b.replacement_link || 'N/A'}`).join('\n') + '\n\n';
+      markdown += `Broken Link Opportunities:\n` + brokenLinks.map((b: { site?: string; dead_page?: string; replacement?: string }) => `  - ${b.site}: ${b.dead_page} → ${b.replacement || 'N/A'}`).join('\n') + '\n\n';
   } else {
       markdown += `Broken Link Opportunities: N/A\n\n`;
   }
