@@ -57,6 +57,9 @@ const buildUnifiedPrompt = (niche: string, country: string, type: 'seo' | 'produ
   9. onpage_checklist: (Array of 15 specific strings, NOT objects).
   10. growth_accelerators: (Array of 5 specific tips).
   11. related_resources: (Array of 5-8 resources with name and url).
+  12. **EXTRA SECTION - PRACTICAL VALUE**:
+      - If type === 'product': Add "customer_persona" (Array of 2-3 detailed buyer personas for this niche, including demographics, pain points, goals, and buying triggers).
+      - If type === 'seo': Add "quick_wins_implementation" (Array of 3-4 actionable, low-effort tasks that can be executed within 30 days to improve search performance).
   
   🛑 CRITICAL INSTRUCTION FOR LINK ACQUISITION:
   Do NOT use "N/A" for any target sites or broken links. 
@@ -157,7 +160,8 @@ export async function generateReport(niche: string, country: string, type: 'seo'
   });
 
   // 🛡️ LINK ACQUISITION + BROKEN LINKS FALLBACK
-  markdown += `6. LINK ACQUISITION STRATEGY\n──────────────────────────────────────────────────────────────\n${analysis.link_acquisition?.overview || 'N/A'}\n\n`;
+  const overviewText = analysis.link_acquisition?.overview || '';
+  markdown += `6. LINK ACQUISITION STRATEGY\n──────────────────────────────────────────────────────────────\n${overviewText !== 'N/A' ? overviewText : ''}\n\n`;
   const targetSites = (analysis.link_acquisition?.target_sites || []).filter((s: any) => s.site && s.site !== 'N/A');
   if (targetSites.length > 0) {
       markdown += `Target Sites:\n`;
@@ -170,11 +174,9 @@ export async function generateReport(niche: string, country: string, type: 'seo'
   
   if (analysis.link_acquisition?.guest_post_topics) markdown += `Guest Post Topics:\n` + (analysis.link_acquisition.guest_post_topics as string[]).map((t, i) => `  ${i+1}. ${t}`).join('\n') + '\n\n';
   
-  // ✅ ULTIMATE FIX: Cast to any[] to explicitly satisfy TypeScript strict mode
   const rawBrokenLinks: any[] = (analysis.link_acquisition?.broken_link_opportunities || []) as any[];
   let brokenLinks = rawBrokenLinks.filter((b: any) => b && b.site && b.site !== 'N/A' && b.dead_page && b.dead_page !== 'N/A');
 
-  // Force at least 4 fallback links if AI missed them
   if (brokenLinks.length < 4) {
       const safeCountry = countryNames[country] || 'Local';
       const safeNiche = niche.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase();
@@ -195,7 +197,6 @@ export async function generateReport(niche: string, country: string, type: 'seo'
   }
   
   if (brokenLinks.length > 0) {
-      // 🛡️ Cast to any[] before map to ensure TypeScript never complains about 'b'
       markdown += `Broken Link Opportunities:\n` + (brokenLinks as any[]).map((b: any) => `  - ${b.site}: ${b.dead_page} → ${b.replacement || 'N/A'}`).join('\n') + '\n\n';
   } else {
       markdown += `Broken Link Opportunities: N/A\n\n`;
@@ -209,9 +210,32 @@ export async function generateReport(niche: string, country: string, type: 'seo'
     markdown += `${i+1}. ${text}\n`;
   });
 
-  markdown += `\n8. GROWTH ACCELERATORS\n──────────────────────────────────────────────────────────────\n`;
+  // 🚀 NEW EXCITING SECTIONS: Customer Persona (for Product) or Quick Wins (for SEO)
+  if (type === 'product' && analysis.customer_persona && Array.isArray(analysis.customer_persona)) {
+    markdown += `\n8. CUSTOMER PERSONA\n──────────────────────────────────────────────────────────────\n`;
+    analysis.customer_persona.forEach((persona: any, idx: number) => {
+      markdown += `Persona #${idx+1}: ${persona.name || 'Ideal Buyer'}\n`;
+      if (persona.demographics) markdown += `  Demographics: ${persona.demographics}\n`;
+      if (persona.pain_points) markdown += `  Pain Points: ${persona.pain_points}\n`;
+      if (persona.goals) markdown += `  Goals: ${persona.goals}\n`;
+      if (persona.buying_triggers) markdown += `  Buying Triggers: ${persona.buying_triggers}\n\n`;
+    });
+    // Shift remaining sections numbers
+    markdown += `9. GROWTH ACCELERATORS\n──────────────────────────────────────────────────────────────\n`;
+  } else {
+    markdown += `\n8. GROWTH ACCELERATORS\n──────────────────────────────────────────────────────────────\n`;
+  }
   (analysis.growth_accelerators || []).slice(0, 5).forEach((tip: string, i: number) => markdown += `${i+1}. ${tip}\n`);
-  markdown += `\n9. RELATED RESOURCES\n──────────────────────────────────────────────────────────────\n`;
+
+  if (type === 'seo' && analysis.quick_wins_implementation && Array.isArray(analysis.quick_wins_implementation)) {
+    markdown += `\n9. QUICK WINS IMPLEMENTATION (30-Day Plan)\n──────────────────────────────────────────────────────────────\n`;
+    analysis.quick_wins_implementation.forEach((win: string, i: number) => {
+      markdown += `${i+1}. ${win}\n`;
+    });
+    markdown += `\n10. RELATED RESOURCES\n──────────────────────────────────────────────────────────────\n`;
+  } else {
+    markdown += `\n9. RELATED RESOURCES\n──────────────────────────────────────────────────────────────\n`;
+  }
   (analysis.related_resources || []).slice(0, 8).forEach((res: any, i: number) => markdown += `${i+1}. ${res.name || res.url} – ${res.url}\n`);
 
   markdown += `\nMETHODOLOGY & SOURCES\n──────────────────────────────────────────────────────────────\nThis report is based on live data collected on ${today} from:\n\n• Google Search Results via SerpAPI/ScraperAPI\n• Currency via Exchange API\n• Analysis Engine: Gemini AI\n\n`;
