@@ -71,6 +71,29 @@ export const getReportById = async (req: Request, res: Response, next: NextFunct
   } catch (err) { next(err); }
 };
 
+// ✅ NEW: PATCH /api/reports/:id - Update client name & content (No Duplicates)
+export const updateReport = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { clientName, markdown } = req.body;
+    
+    // Build the update object
+    const updateData: any = {};
+    if (clientName !== undefined) updateData.clientName = clientName;
+    if (markdown !== undefined) updateData.markdown = markdown;
+
+    const report = await Report.findByIdAndUpdate(
+      req.params.id,
+      updateData,
+      { new: true, runValidators: true }
+    );
+
+    if (!report) return res.status(404).json({ error: 'Report not found' });
+    res.json(report);
+  } catch (err) {
+    next(err);
+  }
+};
+
 // DELETE /api/reports/:id
 export const deleteReport = async (req: Request, res: Response, next: NextFunction) => {
   try {
