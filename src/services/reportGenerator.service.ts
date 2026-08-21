@@ -1,9 +1,10 @@
-import { getGoogleTrends } from '../services/trends';
-import { getSearchResults, getKeywordSuggestions } from '../services/serpapi';
-import { getSerperResults } from '../services/serper';
-import { getScraperAPISearch } from '../services/scraperapi';
-import { convertCurrency } from '../services/exchange';
-import { runGroqWithRetry } from '../services/groq';
+import { cacheService } from './cache';
+import { getGoogleTrends } from './trends';
+import { getSearchResults, getKeywordSuggestions } from './serpapi';
+import { getSerperResults } from './serper';
+import { getScraperAPISearch } from './scraperapi';
+import { convertCurrency } from './exchange';
+import { runGroqWithRetry } from './groq';
 
 const countryNames: Record<string, string> = {
   us: 'United States', gb: 'United Kingdom', ca: 'Canada', au: 'Australia',
@@ -45,12 +46,11 @@ const buildUnifiedPrompt = (niche: string, country: string, type: 'seo' | 'produ
   Input Trend Data: ${JSON.stringify(trendData)}.
 
   Return ONLY valid JSON with the following strict fields:
-  1. key_insights: (3 professional, data-backed insights).
-  2. immediate_actions: (3 actionable priority steps).
+  1. key_insights: (Array of 3 STRINGS, NOT objects).
+  2. immediate_actions: (Array of 3 STRINGS, NOT objects).
   3. trend_summary: (A crisp 1-sentence summary for the top UI card).
   4. trend_assessment: (A 3-4 sentence professional paragraph for the report body).
-  5. keywords: (50 objects with keyword, volume, cpc, kd, intent, potential). 
-     🛑 CRITICAL: Ensure 'cpc' values are realistic for this specific niche. (e.g., for an Indian hosting niche, keep it between $0.50 to $5.00. Do NOT generate unrealistic $40+ CPC values).
+  5. keywords: (50 objects with keyword, volume, cpc, kd, intent, potential).
   6. serp_landscape: (8 objects with position, title, link, da, words, backlinks, traffic, strengths, weaknesses, gap).
   7. content_roadmap: (12 weeks with week, title, primary_keyword, type, secondary_keywords, word_count_target, outline, expected_traffic).
   8. link_acquisition: (Overview, target_sites, guest_post_topics, broken_link_opportunities, outreach_template).
@@ -61,12 +61,19 @@ const buildUnifiedPrompt = (niche: string, country: string, type: 'seo' | 'produ
   🛑 CRITICAL INSTRUCTION FOR LINK ACQUISITION:
   Do NOT use "N/A" for any target sites or broken links. 
   If you do not know exact local publications, INVENT 5 realistic, authoritative local blog/company names.
-  If you do not know real Broken Link Opportunities, INVENT 3 realistic examples of old guides and their new replacements. (Format: "Old Guide 2022" -> "New Guide 2026"). 
-  All sites, contacts, and pitches must sound completely professional and human-written.`;
+  If you do not know real Broken Link Opportunities, INVENT 3 realistic examples of old guides and their new replacements.`;
 };
 
 export async function generateReport(niche: string, country: string, type: 'seo' | 'product') {
-  // 1. Fetch SERP & Trends
+  // 🛡️ 1. CACHE CHECK: Return cached data instantly to save API credits during testing
+  const cacheKey = `${type}_${niche}_${country}`;
+  const cached = cacheService.get(cacheKey);
+  if (cached) {
+    console.log(`Returning cached ${type} report for ${niche} - ${country}`);
+    return cached;
+  }
+
+  // 2. Fetch REAL SERP & Trends
   const trendData = await getGoogleTrends(niche, country).catch(() => []);
   let searchData = await getSearchResults(niche, country).catch(() => null);
   if (!searchData?.organic_results) searchData = await getSerperResults(niche, country).catch(() => null);
@@ -74,12 +81,24 @@ export async function generateReport(niche: string, country: string, type: 'seo'
 
   const serpLinks = searchData?.organic_results?.slice(0, 8).map((r: any) => r.link) || [];
 
-  // 2. Call Gemini
+  // 3. Call Gemini
   const prompt = buildUnifiedPrompt(niche, country, type, serpLinks, trendData);
   const aiResponse = await runGroqWithRetry(prompt, JSON.stringify({ niche, country }));
   const analysis = extractJSON(aiResponse);
 
-  // 3. Process Keywords & Exchange
+  // 🛡️ 4. ULTIMATE FIX: Convert AI objects to clean strings (Kills [object Object])
+  if (analysis.key_insights && Array.isArray(analysis.key_insights)) {
+    analysis.key_insights = analysis.key_insights.map((item: any) =>
+      typeof item === 'string' ? item : (item.text || item.value || JSON.stringify(item))
+    );
+  }
+  if (analysis.immediate_actions && Array.isArray(analysis.immediate_actions)) {
+    analysis.immediate_actions = analysis.immediate_actions.map((item: any) =>
+      typeof item === 'string' ? item : (item.text || item.value || JSON.stringify(item))
+    );
+  }
+
+  // 5. Process Keywords & Exchange (Real Currency Conversion)
   let keywords = Array.isArray(analysis.keywords) ? analysis.keywords : generateFallbackKeywords(niche);
   const currencyMap: Record<string, string> = { us: 'USD', gb: 'GBP', ca: 'CAD', au: 'AUD', de: 'EUR', sg: 'SGD', sa: 'SAR', ae: 'AED', pk: 'PKR', in: 'INR', tr: 'TRY', my: 'MYR' };
   const targetCurrency = currencyMap[country] || 'USD';
@@ -87,21 +106,21 @@ export async function generateReport(niche: string, country: string, type: 'seo'
     kw.cpc = await convertCurrency(kw.cpc || 0, 'USD', targetCurrency);
   }
 
-  // 4. Build Chart Data for Frontend
+  // 6. Build Chart Data for Frontend
   const chartData = {
     trend_12m: trendData.map((v, i) => ({ month: `M${i + 1}`, value: v })),
     traffic_forecast_6m: (analysis.content_roadmap || []).slice(0, 6).map((c: any, i: number) => ({ month: `M${i + 1}`, traffic: c.expected_traffic || 0 })),
     market_share: analysis.serp_landscape?.slice(0, 5).map((s: any, i: number) => ({ name: s.title?.substring(0, 15) || `Site ${i+1}`, share: Math.floor(Math.random() * 20) + 5 })) || []
   };
 
-  // 5. Compute 6-Month Traffic Estimate (Eliminates N/A)
+  // 7. Compute 6-Month Traffic Estimate (Eliminates N/A)
   const monthlyTotal = (analysis.content_roadmap || []).reduce((sum: number, week: any) => sum + (week.expected_traffic || 0), 0);
   let trafficEstimate = Math.round(monthlyTotal * 2);
   if (trafficEstimate < 500 && keywords.length > 0) {
     trafficEstimate = Math.max(500, Math.round(keywords[0].volume * 0.4 * 6));
   }
 
-  // 6. Generate Human-Toned Markdown
+  // 8. Generate Human-Toned Markdown
   const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
   let markdown = `MusePRO\nReal-Time Market Research\nIntelligence Division\n──────────────────────────────────────────────────────────────\n${type === 'seo' ? 'SEO RESEARCH REPORT' : 'PRODUCT INTELLIGENCE REPORT'}\n\nPrepared For: [Client Name]\nDate: ${today}\nReference: MKT-${Math.random().toString(36).substring(2, 8).toUpperCase()}\nClassification: CONFIDENTIAL\n──────────────────────────────────────────────────────────────\n\n`;
 
@@ -116,18 +135,18 @@ export async function generateReport(niche: string, country: string, type: 'seo'
   markdown += `${trendText}\n\n`;
 
   markdown += `3. KEYWORD OPPORTUNITIES (TOP 50)\n──────────────────────────────────────────────────────────────\n| # | Keyword | Volume | KD | CPC | Intent | Potential |\n|---|---------|--------|-----|-----|--------|----------|\n`;
-  keywords.forEach((k: any, i: number) => {
+  keywords.slice(0, 50).forEach((k: any, i: number) => {
     const potential = k.kd < 30 ? 'Easy Win' : k.kd < 60 ? 'Moderate' : 'Long Game';
     markdown += `| ${i+1} | ${k.keyword} | ${k.volume} | ${k.kd} | $${k.cpc.toFixed(2)} | ${k.intent || 'informational'} | ${potential} |\n`;
   });
 
   markdown += `\n4. SERP LANDSCAPE\n──────────────────────────────────────────────────────────────\n`;
-  (analysis.serp_landscape || []).forEach((s: any, i: number) => {
+  (analysis.serp_landscape || []).slice(0, 8).forEach((s: any, i: number) => {
     markdown += `Position #${i+1}: ${s.title}\n  URL: ${s.link || 'N/A'}\n  DA: ${s.da || 'N/A'} | Words: ${s.words || 'N/A'} | Backlinks: ${s.backlinks || 'N/A'}\n  Est. Traffic: ${(s.traffic || 0).toLocaleString()}/mo\n  Strengths: ${s.strengths || 'N/A'}\n  Weaknesses: ${s.weaknesses || 'N/A'}\n  Gap: ${s.gap || 'N/A'}\n\n`;
   });
 
   markdown += `5. CONTENT ROADMAP (12 WEEKS)\n──────────────────────────────────────────────────────────────\n`;
-  (analysis.content_roadmap || []).forEach((c: any) => {
+  (analysis.content_roadmap || []).slice(0, 12).forEach((c: any) => {
     let title = c.title || `Week ${c.week}: Mastering ${niche}`;
     title = title.replace(/^Week \d+: Week \d+:/i, `Week ${c.week}:`);
     markdown += `Week ${c.week}: ${title}\n  Keyword: ${c.primary_keyword || niche} | Type: ${c.type || 'Pillar'}\n`;
@@ -137,10 +156,9 @@ export async function generateReport(niche: string, country: string, type: 'seo'
     markdown += `  Est. Traffic: ${(c.expected_traffic || 0).toLocaleString()}/mo\n\n`;
   });
 
-  // 🛡️ FIX: LINK ACQUISITION - Filter out "N/A" and force Broken Link fallback
+  // 🛡️ LINK ACQUISITION + BROKEN LINKS FALLBACK
   markdown += `6. LINK ACQUISITION STRATEGY\n──────────────────────────────────────────────────────────────\n${analysis.link_acquisition?.overview || 'N/A'}\n\n`;
-  
-  const targetSites = (analysis.link_acquisition?.target_sites || []).filter((s: any) => s.site && s.site !== 'N/A' && s.site !== 'undefined');
+  const targetSites = (analysis.link_acquisition?.target_sites || []).filter((s: any) => s.site && s.site !== 'N/A');
   if (targetSites.length > 0) {
       markdown += `Target Sites:\n`;
       targetSites.forEach((s: any, i: number) => {
@@ -152,16 +170,7 @@ export async function generateReport(niche: string, country: string, type: 'seo'
   
   if (analysis.link_acquisition?.guest_post_topics) markdown += `Guest Post Topics:\n` + (analysis.link_acquisition.guest_post_topics as string[]).map((t, i) => `  ${i+1}. ${t}`).join('\n') + '\n\n';
   
-  // 🛑 ULTIMATE FALLBACK: If Broken Links are N/A or empty, force generate them
-  let brokenLinks = (analysis.link_acquisition?.broken_link_opportunities || []).filter((b: any) => b && b.site && b.site !== 'N/A' && b.dead_page && b.dead_page !== 'N/A');
-  if (brokenLinks.length === 0) {
-      brokenLinks = [
-          { site: `Previous ${niche} Guide`, dead_page: `/blog/old-vps-guide-2022`, replacement: `/blog/new-affordable-vps-guide-2026` },
-          { site: `Outdated Hosting Comparison`, dead_page: `/resources/cloud-comparison-2023`, replacement: `/blog/best-budget-hosting-for-india-2026` },
-          { site: `Defunct Tutorial Site`, dead_page: `/tutorials/deploy-python-legacy`, replacement: `/guides/host-fastapi-on-cheap-vps` }
-      ];
-  }
-  
+  const brokenLinks = (analysis.link_acquisition?.broken_link_opportunities || []).filter((b: any) => b.site && b.site !== 'N/A' && b.dead_page && b.dead_page !== 'N/A');
   if (brokenLinks.length > 0) {
       markdown += `Broken Link Opportunities:\n` + brokenLinks.map((b: any) => `  - ${b.site}: ${b.dead_page} → ${b.replacement || b.replacement_link || 'N/A'}`).join('\n') + '\n\n';
   } else {
@@ -171,28 +180,33 @@ export async function generateReport(niche: string, country: string, type: 'seo'
   if (analysis.link_acquisition?.outreach_template) markdown += `Outreach Template:\n${analysis.link_acquisition.outreach_template}\n\n`;
 
   markdown += `7. ON-PAGE OPTIMIZATION CHECKLIST\n──────────────────────────────────────────────────────────────\n`;
-  (analysis.onpage_checklist || []).forEach((item: any, i: number) => {
+  (analysis.onpage_checklist || []).slice(0, 15).forEach((item: any, i: number) => {
     const text = typeof item === 'string' ? item : item?.text || item?.value || JSON.stringify(item);
     markdown += `${i+1}. ${text}\n`;
   });
 
   markdown += `\n8. GROWTH ACCELERATORS\n──────────────────────────────────────────────────────────────\n`;
-  (analysis.growth_accelerators || []).forEach((tip: string, i: number) => markdown += `${i+1}. ${tip}\n`);
+  (analysis.growth_accelerators || []).slice(0, 5).forEach((tip: string, i: number) => markdown += `${i+1}. ${tip}\n`);
   markdown += `\n9. RELATED RESOURCES\n──────────────────────────────────────────────────────────────\n`;
-  (analysis.related_resources || []).forEach((res: any, i: number) => markdown += `${i+1}. ${res.name || res.url} – ${res.url}\n`);
+  (analysis.related_resources || []).slice(0, 8).forEach((res: any, i: number) => markdown += `${i+1}. ${res.name || res.url} – ${res.url}\n`);
 
   markdown += `\nMETHODOLOGY & SOURCES\n──────────────────────────────────────────────────────────────\nThis report is based on live data collected on ${today} from:\n\n• Google Search Results via SerpAPI/ScraperAPI\n• Currency via Exchange API\n• Analysis Engine: Gemini AI\n\n`;
 
-  return {
+  // 9. Prepare Final Result & Save to Cache
+  const result = {
     niche,
     country,
     type,
     data: analysis,
-    keywords,
+    keywords: keywords.slice(0, 50),
     serp_landscape: analysis.serp_landscape || [],
     markdown,
     trend_summary: analysis.trend_summary || 'Steady market interest.',
     chart_data: chartData,
     traffic_estimate: trafficEstimate,
   };
+
+  // Cache for 24 hours (86400 seconds) to prevent API burning
+  cacheService.set(cacheKey, result, 86400);
+  return result;
 }
