@@ -6,8 +6,8 @@ import {
   getReports,
   getReportStats,
   getReportById,
-  updateReport, // ✅ New Import
   deleteReport,
+  updateReport,
   bulkExportZip,
   cleanupOldReports,
   bulkDeleteReports,
@@ -20,12 +20,7 @@ const router = Router();
 
 // Health Check
 router.get('/health', (req, res) => {
-  res.json({
-    status: 'ok',
-    timestamp: new Date().toISOString(),
-    service: 'MusePRO',
-    version: '1.0.0',
-  });
+  res.json({ status: 'ok', timestamp: new Date().toISOString(), service: 'MusePRO', version: '1.0.0' });
 });
 
 // Product Research
@@ -36,42 +31,27 @@ router.get('/product-research/:id', getProductReport);
 router.post('/seo-report', createSEOReport);
 router.get('/seo-report/:id', getSEOReport);
 
-// Reports (CRUD)
+// Reports (CRUD + Update)
 router.get('/reports/search', searchReports);
 router.get('/reports/stats', getReportStats);
 router.get('/reports', getReports);
 router.get('/reports/:id', getReportById);
-router.patch('/reports/:id', updateReport); // ✅ New Edit Route
+router.put('/reports/:id', updateReport); // ✅ NEW UPDATE ROUTE
 router.delete('/reports/cleanup', cleanupOldReports);
 router.delete('/reports/bulk-delete', bulkDeleteReports);
 router.delete('/reports/:id', deleteReport);
 router.post('/reports/export-zip', bulkExportZip);
 
-// Send Report via Email (Brows)
+// Send Report via Email
 router.post('/send-report', async (req, res, next) => {
   const { email, reportId } = req.body;
-
-  if (!email || !reportId) {
-    return res.status(400).json({ error: 'Email and reportId are required' });
-  }
-
-  // Validate ObjectId format
-  if (!mongoose.Types.ObjectId.isValid(reportId)) {
-    return res.status(400).json({ error: 'Invalid report ID' });
-  }
+  if (!email || !reportId) return res.status(400).json({ error: 'Email and reportId are required' });
+  if (!mongoose.Types.ObjectId.isValid(reportId)) return res.status(400).json({ error: 'Invalid report ID' });
 
   const report = await Report.findById(reportId);
-  if (!report) {
-    return res.status(404).json({ error: 'Report not found' });
-  }
+  if (!report) return res.status(404).json({ error: 'Report not found' });
 
-  await sendReportEmail(
-    email,
-    `Your Market Research Report: ${report.niche}`,
-    report.markdown,
-    `Report type: ${report.niche}`
-  );
-
+  await sendReportEmail(email, `Your Market Research Report: ${report.niche}`, report.markdown, `Report type: ${report.type}`);
   res.json({ success: true, message: 'Report emailed successfully' });
 });
 
