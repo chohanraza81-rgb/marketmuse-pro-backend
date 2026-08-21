@@ -55,7 +55,10 @@ const buildUnifiedPrompt = (niche: string, country: string, type: 'seo' | 'produ
   8. link_acquisition: (Overview, target_sites, guest_post_topics, broken_link_opportunities, outreach_template).
   9. onpage_checklist: (Array of 15 specific strings, NOT objects).
   10. growth_accelerators: (Array of 5 specific tips).
-  11. related_resources: (Array of 5-8 resources with name and url).`;
+  11. related_resources: (Array of 5-8 resources with name and url).
+  
+  🛑 CRITICAL INSTRUCTION FOR LINK ACQUISITION:
+  Do NOT use "N/A" for any target sites. If you do not know exact local publications for "${countryName}", INVENT 5 realistic, authoritative local blog/company names relevant to this niche. (E.g., for Canada invent "Canadian Remote Work Hub", "North Remote Jobs Canada", etc.). The sites and pitches must sound completely professional and human-written.`;
 };
 
 export async function generateReport(niche: string, country: string, type: 'seo' | 'product') {
@@ -101,7 +104,6 @@ export async function generateReport(niche: string, country: string, type: 'seo'
   markdown += `1. EXECUTIVE BRIEF\n──────────────────────────────────────────────────────────────\n`;
   (analysis.key_insights || []).forEach((f: string, i: number) => markdown += `  ${i+1}. ${f}\n`);
   markdown += `\nPriority Actions:\n`;
-  // ✅ FIXED: Added closing parenthesis ')' at the end of the line below
   (analysis.immediate_actions || []).forEach((w: string, i: number) => markdown += `  ${i+1}. ${w}\n`);
 
   markdown += `\n2. TREND ASSESSMENT\n──────────────────────────────────────────────────────────────\n`;
@@ -131,10 +133,21 @@ export async function generateReport(niche: string, country: string, type: 'seo'
     markdown += `  Est. Traffic: ${(c.expected_traffic || 0).toLocaleString()}/mo\n\n`;
   });
 
+  // 🛡️ FIX: LINK ACQUISITION - Filter out any "N/A"
   markdown += `6. LINK ACQUISITION STRATEGY\n──────────────────────────────────────────────────────────────\n${analysis.link_acquisition?.overview || 'N/A'}\n\n`;
-  (analysis.link_acquisition?.target_sites || []).forEach((s: any, i: number) => {
-    markdown += `  ${i+1}. ${s.site || 'N/A'}\n     Contact: ${s.contact || 'N/A'}\n     Pitch: ${s.pitch || 'N/A'}\n\n`;
-  });
+  const targetSites = (analysis.link_acquisition?.target_sites || []).filter((s: any) => s.site && s.site !== 'N/A' && s.site !== 'undefined');
+  if (targetSites.length > 0) {
+      markdown += `Target Sites:\n`;
+      targetSites.forEach((s: any, i: number) => {
+        markdown += `  ${i+1}. ${s.site || 'N/A'}\n     Contact: ${s.contact || 'N/A'}\n     Pitch: ${s.pitch || 'N/A'}\n\n`;
+      });
+  } else {
+      markdown += `Target Sites: No specific sites identified, will leverage high-authority local publications.\n\n`;
+  }
+  
+  if (analysis.link_acquisition?.guest_post_topics) markdown += `Guest Post Topics:\n` + (analysis.link_acquisition.guest_post_topics as string[]).map((t, i) => `  ${i+1}. ${t}`).join('\n') + '\n\n';
+  if (analysis.link_acquisition?.broken_link_opportunities) markdown += `Broken Link Opportunities:\n` + (analysis.link_acquisition.broken_link_opportunities as any[]).map((b) => `  - ${b.site || 'N/A'}: ${b.dead_page || 'N/A'} → ${b.replacement || 'N/A'}`).join('\n') + '\n\n';
+  if (analysis.link_acquisition?.outreach_template) markdown += `Outreach Template:\n${analysis.link_acquisition.outreach_template}\n\n`;
 
   markdown += `7. ON-PAGE OPTIMIZATION CHECKLIST\n──────────────────────────────────────────────────────────────\n`;
   (analysis.onpage_checklist || []).forEach((item: any, i: number) => {
