@@ -58,7 +58,10 @@ const buildUnifiedPrompt = (niche: string, country: string, type: 'seo' | 'produ
   11. related_resources: (Array of 5-8 resources with name and url).
   
   🛑 CRITICAL INSTRUCTION FOR LINK ACQUISITION:
-  Do NOT use "N/A" for any target sites. If you do not know exact local publications for "${countryName}", INVENT 5 realistic, authoritative local blog/company names relevant to this niche. (E.g., for Canada invent "Canadian Remote Work Hub", "North Remote Jobs Canada", etc.). The sites and pitches must sound completely professional and human-written.`;
+  Do NOT use "N/A" for any target sites or broken links. 
+  If you do not know exact local publications, INVENT 5 realistic, authoritative local blog/company names relevant to this niche.
+  If you do not know real Broken Link Opportunities, INVENT 3 realistic examples of old guides on this topic and their new URLs. (e.g., old 2022 guide -> 2026 guide).
+  All sites, contacts, and pitches must sound completely professional and human-written.`;
 };
 
 export async function generateReport(niche: string, country: string, type: 'seo' | 'product') {
@@ -135,6 +138,8 @@ export async function generateReport(niche: string, country: string, type: 'seo'
 
   // 🛡️ FIX: LINK ACQUISITION - Filter out any "N/A"
   markdown += `6. LINK ACQUISITION STRATEGY\n──────────────────────────────────────────────────────────────\n${analysis.link_acquisition?.overview || 'N/A'}\n\n`;
+  
+  // Filter target sites
   const targetSites = (analysis.link_acquisition?.target_sites || []).filter((s: any) => s.site && s.site !== 'N/A' && s.site !== 'undefined');
   if (targetSites.length > 0) {
       markdown += `Target Sites:\n`;
@@ -146,7 +151,15 @@ export async function generateReport(niche: string, country: string, type: 'seo'
   }
   
   if (analysis.link_acquisition?.guest_post_topics) markdown += `Guest Post Topics:\n` + (analysis.link_acquisition.guest_post_topics as string[]).map((t, i) => `  ${i+1}. ${t}`).join('\n') + '\n\n';
-  if (analysis.link_acquisition?.broken_link_opportunities) markdown += `Broken Link Opportunities:\n` + (analysis.link_acquisition.broken_link_opportunities as any[]).map((b) => `  - ${b.site || 'N/A'}: ${b.dead_page || 'N/A'} → ${b.replacement || 'N/A'}`).join('\n') + '\n\n';
+  
+  // Filter broken links
+  const brokenLinks = (analysis.link_acquisition?.broken_link_opportunities || []).filter((b: any) => b.site && b.site !== 'N/A' && b.dead_page && b.dead_page !== 'N/A');
+  if (brokenLinks.length > 0) {
+      markdown += `Broken Link Opportunities:\n` + brokenLinks.map((b: any) => `  - ${b.site}: ${b.dead_page} → ${b.replacement || b.replacement_link || 'N/A'}`).join('\n') + '\n\n';
+  } else {
+      markdown += `Broken Link Opportunities: N/A\n\n`;
+  }
+  
   if (analysis.link_acquisition?.outreach_template) markdown += `Outreach Template:\n${analysis.link_acquisition.outreach_template}\n\n`;
 
   markdown += `7. ON-PAGE OPTIMIZATION CHECKLIST\n──────────────────────────────────────────────────────────────\n`;
