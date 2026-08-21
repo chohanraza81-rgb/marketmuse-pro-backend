@@ -13,6 +13,7 @@ import {
   bulkDeleteReports,
   searchReports
 } from '../controllers/report.controller';
+import { getAgencySettings, updateAgencySettings } from '../controllers/agency.controller';
 import { sendReportEmail } from '../services/email';
 import { Report } from '../models/Report';
 
@@ -36,11 +37,15 @@ router.get('/reports/search', searchReports);
 router.get('/reports/stats', getReportStats);
 router.get('/reports', getReports);
 router.get('/reports/:id', getReportById);
-router.put('/reports/:id', updateReport); // ✅ NEW UPDATE ROUTE
+router.put('/reports/:id', updateReport);
 router.delete('/reports/cleanup', cleanupOldReports);
 router.delete('/reports/bulk-delete', bulkDeleteReports);
 router.delete('/reports/:id', deleteReport);
 router.post('/reports/export-zip', bulkExportZip);
+
+// Agency Settings (White-Label)
+router.get('/agency-settings', getAgencySettings);
+router.put('/agency-settings', updateAgencySettings);
 
 // Send Report via Email
 router.post('/send-report', async (req, res, next) => {
