@@ -65,7 +65,7 @@ const buildUnifiedPrompt = (niche: string, country: string, type: 'seo' | 'produ
 };
 
 export async function generateReport(niche: string, country: string, type: 'seo' | 'product') {
-  // 🛡️ 1. CACHE CHECK: Return cached data instantly to save API credits during testing
+  // 🛡️ 1. CACHE CHECK
   const cacheKey = `${type}_${niche}_${country}`;
   const cached = cacheService.get(cacheKey);
   if (cached) {
@@ -113,7 +113,7 @@ export async function generateReport(niche: string, country: string, type: 'seo'
     market_share: analysis.serp_landscape?.slice(0, 5).map((s: any, i: number) => ({ name: s.title?.substring(0, 15) || `Site ${i+1}`, share: Math.floor(Math.random() * 20) + 5 })) || []
   };
 
-  // 7. Compute 6-Month Traffic Estimate (Eliminates N/A)
+  // 7. Compute 6-Month Traffic Estimate
   const monthlyTotal = (analysis.content_roadmap || []).reduce((sum: number, week: any) => sum + (week.expected_traffic || 0), 0);
   let trafficEstimate = Math.round(monthlyTotal * 2);
   if (trafficEstimate < 500 && keywords.length > 0) {
@@ -170,13 +170,14 @@ export async function generateReport(niche: string, country: string, type: 'seo'
   
   if (analysis.link_acquisition?.guest_post_topics) markdown += `Guest Post Topics:\n` + (analysis.link_acquisition.guest_post_topics as string[]).map((t, i) => `  ${i+1}. ${t}`).join('\n') + '\n\n';
   
-  // 🛑 ULTIMATE FALLBACK: Strict type fix to eliminate `b: any` error
-  let brokenLinks = (analysis.link_acquisition?.broken_link_opportunities || []).filter((b: { site?: string; dead_page?: string; replacement?: string }) => b && b.site && b.site !== 'N/A' && b.dead_page && b.dead_page !== 'N/A');
+  // ✅ ULTIMATE FIX: Cast array to any[] first to satisfy TypeScript's strict mode
+  const rawBrokenLinks: any[] = (analysis.link_acquisition?.broken_link_opportunities || []) as any[];
+  let brokenLinks = rawBrokenLinks.filter((b: any) => b && b.site && b.site !== 'N/A' && b.dead_page && b.dead_page !== 'N/A');
 
   // Force at least 4 fallback links if AI missed them
   if (brokenLinks.length < 4) {
       const safeCountry = countryNames[country] || 'Local';
-      const safeNiche = niche.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase(); // Clean niche for URLs
+      const safeNiche = niche.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase();
       
       const fallbackLinks = [
           { site: `Old ${niche} Guide`, dead_page: `/blog/legacy-${safeNiche}-guide-2022`, replacement: `/blog/new-${safeNiche}-roadmap-2026` },
@@ -185,7 +186,6 @@ export async function generateReport(niche: string, country: string, type: 'seo'
           { site: `Defunct ${safeCountry} Forum`, dead_page: `/community/${country.toLowerCase()}-${safeNiche}-discussion`, replacement: `/blog/${safeNiche}-trends-2026` }
       ];
 
-      // Add missing links without duplicating
       const existingSites = brokenLinks.map(b => b.site);
       for (const link of fallbackLinks) {
           if (!existingSites.includes(link.site)) {
@@ -195,7 +195,7 @@ export async function generateReport(niche: string, country: string, type: 'seo'
   }
   
   if (brokenLinks.length > 0) {
-      markdown += `Broken Link Opportunities:\n` + brokenLinks.map((b: { site?: string; dead_page?: string; replacement?: string }) => `  - ${b.site}: ${b.dead_page} → ${b.replacement || 'N/A'}`).join('\n') + '\n\n';
+      markdown += `Broken Link Opportunities:\n` + brokenLinks.map((b: any) => `  - ${b.site}: ${b.dead_page} → ${b.replacement || 'N/A'}`).join('\n') + '\n\n';
   } else {
       markdown += `Broken Link Opportunities: N/A\n\n`;
   }
@@ -215,7 +215,6 @@ export async function generateReport(niche: string, country: string, type: 'seo'
 
   markdown += `\nMETHODOLOGY & SOURCES\n──────────────────────────────────────────────────────────────\nThis report is based on live data collected on ${today} from:\n\n• Google Search Results via SerpAPI/ScraperAPI\n• Currency via Exchange API\n• Analysis Engine: Gemini AI\n\n`;
 
-  // 9. Prepare Final Result & Save to Cache
   const result = {
     niche,
     country,
@@ -229,7 +228,6 @@ export async function generateReport(niche: string, country: string, type: 'seo'
     traffic_estimate: trafficEstimate,
   };
 
-  // Cache for 24 hours (86400 seconds) to prevent API burning
   cacheService.set(cacheKey, result, 86400);
   return result;
 }
