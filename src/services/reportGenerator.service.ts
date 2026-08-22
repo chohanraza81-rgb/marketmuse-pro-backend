@@ -175,7 +175,8 @@ export async function generateReport(niche: string, country: string, type: 'seo'
           { site: `Local Contractor Connect`, da: 33, type: 'Local Directory', contact: `hello@localcontractorconnect.com`, pitch: `Providing a resource guide for ${safeNiche}.` }
       ];
 
-      const existingSites = targetSites.map(s => s.site);
+      // ✅ FIX: Explicitly type the map parameter as 'any'
+      const existingSites = targetSites.map((s: any) => s.site);
       for (const t of fallbackTargets) {
           if (!existingSites.includes(t.site)) {
               targetSites.push(t);
@@ -192,7 +193,7 @@ export async function generateReport(niche: string, country: string, type: 'seo'
       markdown += `Target Sites: No specific sites identified, will leverage high-authority local publications.\n\n`;
   }
   
-  if (analysis.link_acquisition?.guest_post_topics) markdown += `Guest Post Topics:\n` + (analysis.link_acquisition.guest_post_topics as string[]).map((t, i) => `  ${i+1}. ${t}`).join('\n') + '\n\n';
+  if (analysis.link_acquisition?.guest_post_topics) markdown += `Guest Post Topics:\n` + (analysis.link_acquisition.guest_post_topics as string[]).map((t: any, i: number) => `  ${i+1}. ${t}`).join('\n') + '\n\n';
   
   const rawBrokenLinks: any[] = (analysis.link_acquisition?.broken_link_opportunities || []) as any[];
   let brokenLinks = rawBrokenLinks.filter((b: any) => b && b.site && b.site !== 'N/A' && b.dead_page && b.dead_page !== 'N/A');
@@ -208,7 +209,8 @@ export async function generateReport(niche: string, country: string, type: 'seo'
           { site: `Defunct ${safeCountry} Forum`, dead_page: `/community/${country.toLowerCase()}-${safeNiche}-discussion`, replacement: `/blog/${safeNiche}-trends-2026` }
       ];
 
-      const existingSites = brokenLinks.map(b => b.site);
+      // ✅ FIX: Explicitly type the map parameter as 'any'
+      const existingSites = brokenLinks.map((b: any) => b.site);
       for (const link of fallbackLinks) {
           if (!existingSites.includes(link.site)) {
               brokenLinks.push(link);
