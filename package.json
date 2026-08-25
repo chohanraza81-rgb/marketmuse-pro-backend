@@ -9,12 +9,7 @@
     "dev": "nodemon src/server.ts",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "keywords": [
-    "seo",
-    "product-research",
-    "gemini",
-    "ai-reports"
-  ],
+  "keywords": ["seo", "product-research", "gemini", "ai-reports"],
   "author": "MusePRO",
   "license": "ISC",
   "dependencies": {
