@@ -26,13 +26,7 @@ export const getShoppingResults = async (query: string, country: string = 'us'):
 
   const data = await withRetry(() =>
     axios.get('https://serpapi.com/search.json', {
-      params: {
-        api_key: env.SERPAPI_KEY,
-        q: query,
-        tbm: 'shop',
-        gl,
-        num: 10,
-      },
+      params: { api_key: env.SERPAPI_KEY, q: query, tbm: 'shop', gl, num: 10 },
     }).then(res => res.data)
   );
   cacheService.set(cacheKey, data, 86400);
@@ -47,12 +41,7 @@ export const getSearchResults = async (query: string, country: string = 'us'): P
 
   const data = await withRetry(() =>
     axios.get('https://serpapi.com/search.json', {
-      params: {
-        api_key: env.SERPAPI_KEY,
-        q: query,
-        gl,
-        num: 10,
-      },
+      params: { api_key: env.SERPAPI_KEY, q: query, gl, num: 10 },
     }).then(res => res.data)
   );
   cacheService.set(cacheKey, data, 86400);
@@ -67,11 +56,7 @@ export const getKeywordSuggestions = async (query: string, country: string = 'us
 
   const data: any = await withRetry(() =>
     axios.get('https://serpapi.com/search.json', {
-      params: {
-        api_key: env.SERPAPI_KEY,
-        q: query,
-        gl,
-      },
+      params: { api_key: env.SERPAPI_KEY, q: query, gl },
     }).then(res => res.data)
   );
   const suggestions = data.related_questions?.map((q: any) => q.question) ?? [];
