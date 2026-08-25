@@ -25,7 +25,7 @@
     "node-cache": "^5.1.2",
     "node-cron": "^3.0.3",
     "nodemailer": "^6.9.13",
-    "p-limit": "^6.1.0",
+    "p-limit": "^4.0.0",
     "serpapi": "^1.0.0",
     "zod": "^3.23.8"
   },
