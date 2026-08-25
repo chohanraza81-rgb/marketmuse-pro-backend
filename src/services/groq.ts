@@ -1,7 +1,7 @@
 import Groq from 'groq-sdk';
-import { env } from '../config/env';
 
-const groq = new Groq({ apiKey: env.GROQ_API_KEY });
+// ✅ Use process.env directly (no need to modify env.ts)
+const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
 const MODELS = [
   'gemini-3.5-flash',
@@ -16,8 +16,8 @@ export async function runGroqWithRetry(prompt: string, context: string): Promise
   for (const model of MODELS) {
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
-        // Strict 90 second timeout for each model
-        const completion = await Promise.race([
+        // ✅ Strict 90 second timeout
+        const completion: any = await Promise.race([
           groq.chat.completions.create({
             messages: [
               { role: 'system', content: prompt },
@@ -30,7 +30,7 @@ export async function runGroqWithRetry(prompt: string, context: string): Promise
           new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout after 90s')), 90000))
         ]);
 
-        const content = completion.choices[0]?.message?.content;
+        const content = completion?.choices?.[0]?.message?.content;
         if (content) {
           console.log(`✅ Success with ${model}`);
           return content;
@@ -38,7 +38,6 @@ export async function runGroqWithRetry(prompt: string, context: string): Promise
       } catch (error: any) {
         lastError = error;
         
-        // Agar model busy/limited hai, 15 sec wait karo aur retry karo
         if (error.message?.includes('busy') || error.message?.includes('limited') || error.message?.includes('Timeout')) {
           console.warn(`⏳ ${model} busy/timeout, retrying in 15 seconds...`);
           await wait(15000);
