@@ -1,11 +1,8 @@
-import { getJson } from 'serpapi';
+import axios from 'axios';
 import { env } from '../config/env';
 import { cacheService } from './cache';
-import pLimit from 'p-limit';
 
-const limit = pLimit(5);
-
-const VALID_GL = ['us', 'gb', 'ae', 'sa', 'pk'];
+const VALID_GL = ['us', 'gb', 'ae', 'sa', 'pk', 'ca', 'au', 'de', 'sg', 'in', 'tr', 'my'];
 
 const normalizeCountry = (country: string): string => {
   const c = country.toLowerCase().trim();
@@ -27,16 +24,16 @@ export const getShoppingResults = async (query: string, country: string = 'us'):
   const cached = cacheService.get(cacheKey);
   if (cached) return cached;
 
-  const data = await limit(() =>
-    withRetry(() =>
-      getJson({
+  const data = await withRetry(() =>
+    axios.get('https://serpapi.com/search.json', {
+      params: {
         api_key: env.SERPAPI_KEY,
         q: query,
         tbm: 'shop',
         gl,
         num: 10,
-      })
-    )
+      },
+    }).then(res => res.data)
   );
   cacheService.set(cacheKey, data, 86400);
   return data;
@@ -48,15 +45,15 @@ export const getSearchResults = async (query: string, country: string = 'us'): P
   const cached = cacheService.get(cacheKey);
   if (cached) return cached;
 
-  const data = await limit(() =>
-    withRetry(() =>
-      getJson({
+  const data = await withRetry(() =>
+    axios.get('https://serpapi.com/search.json', {
+      params: {
         api_key: env.SERPAPI_KEY,
         q: query,
         gl,
         num: 10,
-      })
-    )
+      },
+    }).then(res => res.data)
   );
   cacheService.set(cacheKey, data, 86400);
   return data;
@@ -68,14 +65,14 @@ export const getKeywordSuggestions = async (query: string, country: string = 'us
   const cached = cacheService.get<string[]>(cacheKey);
   if (cached) return cached;
 
-  const data: any = await limit(() =>
-    withRetry(() =>
-      getJson({
+  const data: any = await withRetry(() =>
+    axios.get('https://serpapi.com/search.json', {
+      params: {
         api_key: env.SERPAPI_KEY,
         q: query,
         gl,
-      })
-    )
+      },
+    }).then(res => res.data)
   );
   const suggestions = data.related_questions?.map((q: any) => q.question) ?? [];
   cacheService.set(cacheKey, suggestions, 86400);
