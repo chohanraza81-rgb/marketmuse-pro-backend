@@ -28,6 +28,7 @@
     "mongoose": "^8.4.0",
     "node-cache": "^5.1.2",
     "node-cron": "^3.0.3",
+    "nodemailer": "^6.9.13",
     "p-limit": "^6.1.0",
     "zod": "^3.23.8"
   },
@@ -36,6 +37,7 @@
     "@types/express": "^4.17.21",
     "@types/node": "^20.14.0",
     "@types/node-cache": "^4.2.5",
+    "@types/nodemailer": "^6.4.15",
     "@types/p-limit": "^2.2.0",
     "nodemon": "^3.1.0",
     "ts-node": "^10.9.2",
