@@ -1,37 +1,31 @@
-import nodemailer from 'nodemailer';
+import { env } from '../config/env';
 
-// Brevo SMTP Configuration
-const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST || 'smtp-relay.brevo.com',
-  port: parseInt(process.env.SMTP_PORT || '587', 10),
-  secure: false, // true for 465, false for other ports
-  auth: {
-    user: process.env.SMTP_USER, // Your Brevo login email
-    pass: process.env.SMTP_PASS, // Your Brevo SMTP Key
-  },
-});
+export async function sendReportEmail(to: string, subject: string, markdown: string, reportTitle: string) {
+  const response = await fetch('https://api.brevo.com/v3/smtp/email', {
+    method: 'POST',
+    headers: {
+      'api-key': env.BREVO_API_KEY,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      sender: { email: 'reports@musepro.com', name: 'MusePRO' },
+      to: [{ email: to }],
+      subject,
+      htmlContent: `<p>Dear Client,</p><p>Please find your report attached.</p><p><strong>${reportTitle}</strong></p>`,
+      attachment: [
+        {
+          name: `${reportTitle.replace(/\s+/g, '_')}.md`,
+          content: Buffer.from(markdown).toString('base64'),
+          contentType: 'text/markdown',
+        },
+      ],
+    }),
+  });
 
-export const sendReportEmail = async (
-  to: string,
-  subject: string,
-  content: string,
-  text: string
-): Promise<void> => {
-  try {
-    // Agar SMTP details set nahi hain, toh server crash nahi karega, sirf log karega
-    if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {
-      console.log(`[Email Service] Email to ${to}: ${subject}`);
-      return;
-    }
-    await transporter.sendMail({
-      from: `"MusePRO" <${process.env.SMTP_USER}>`,
-      to: to,
-      subject: subject,
-      text: text,
-      html: content,
-    });
-    console.log(`Email sent successfully to ${to}`);
-  } catch (error) {
-    console.error('Error sending email:', error);
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(`Brevo error: ${JSON.stringify(err)}`);
   }
-};
+
+  return response.json();
+}
