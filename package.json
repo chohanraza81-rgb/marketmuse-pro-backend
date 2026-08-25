@@ -26,6 +26,7 @@
     "node-cron": "^3.0.3",
     "nodemailer": "^6.9.13",
     "p-limit": "^7.3.0",
+    "serpapi": "^1.1.0",
     "zod": "^3.23.8"
   },
   "devDependencies": {
