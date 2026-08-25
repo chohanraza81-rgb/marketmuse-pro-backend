@@ -36,7 +36,7 @@ const generateFallbackKeywords = (niche: string) => {
   return keywords;
 };
 
-// 🧠 HUMAN TONE PROTOCOL APPLIED
+// 🧠 FINAL HUMAN TONE + STRICT COUNTRY/YEAR LOCK PROMPT
 const buildUnifiedPrompt = (niche: string, country: string, type: 'seo' | 'product', serpLinks: string[], trendData: number[]) => {
   const countryName = countryNames[country] || country;
   return `You are a veteran senior consultant at MusePRO Intelligence Division with 15 years of experience. Your writing must be indistinguishable from a human expert.
@@ -48,29 +48,16 @@ const buildUnifiedPrompt = (niche: string, country: string, type: 'seo' | 'produ
   4. DO NOT use AI words: 'furthermore', 'moreover', 'delve', 'landscape', 'realm', 'robust', 'testament', 'leverage'.
   5. Use human consultant phrases: 'The reality is', 'Here's the kicker', 'Let's cut to the chase', 'You need to understand', 'The smart money is on'.
   6. Address the reader as 'you' and your team as 'we'. Add a specific opinion about the data.
-  7. Use a tone of excitement and value. Highlight opportunities clearly.
 
+  **CRITICAL SETTINGS**:
+  - The CURRENT YEAR is ALWAYS 2026. NEVER use 2024 or 2025 for current trends. If discussing past guides, use 2023 or earlier.
+  - The target country is ${countryName} (${country}). 
+  - **STRICT COUNTRY LOCK**: Do NOT mention the US, UK, or any other country. Only ${countryName}. For websites, ALWAYS use domains relevant to ${countryName} (e.g., for Germany use .de or local-sounding companies, for Saudi use .sa). Do not invent generic names like 'Home Services Gazette'. Invent specific sounding local names.
+  
   Create a premium ${type === 'seo' ? 'SEO Research' : 'Product Intelligence'} report for "${niche}" in "${countryName}".
-  Input SERP links: ${JSON.stringify(serpLinks)}.
-  Input Trend Data: ${JSON.stringify(trendData)}.
-
-  Return ONLY valid JSON with the following strict fields:
-  1. key_insights: (Array of 3 STRINGS, NOT objects).
-  2. immediate_actions: (Array of 3 STRINGS, NOT objects).
-  3. trend_summary: (A crisp 1-sentence summary for the top UI card).
-  4. trend_assessment: (A 3-4 sentence professional paragraph for the report body).
-  5. keywords: (50 objects with keyword, volume, cpc, kd, intent, potential).
-  6. serp_landscape: (8 objects with position, title, link, da, words, backlinks, traffic, strengths, weaknesses, gap).
-  7. content_roadmap: (12 weeks with week, title, primary_keyword, type, secondary_keywords, word_count_target, outline, expected_traffic).
-  8. link_acquisition: (Overview, target_sites, guest_post_topics, broken_link_opportunities, outreach_template).
-  9. onpage_checklist: (Array of 15 specific strings, NOT objects).
-  10. growth_accelerators: (Array of 5 specific tips).
-  11. related_resources: (Array of 5-8 resources with name and url).
-
-  🛑 CRITICAL INSTRUCTION FOR LINK ACQUISITION:
-  Do NOT use "N/A" for any target sites or broken links. 
-  If you do not know exact local publications, INVENT 5 realistic, authoritative local blog/company names.
-  If you do not know real Broken Link Opportunities, INVENT 3 realistic examples of old guides and their new replacements.`;
+  
+  **RETURN ONLY VALID JSON**:
+  1. key_insights (3 strings), 2. immediate_actions (3 strings), 3. trend_summary (1 string), 4. trend_assessment (paragraph), 5. keywords (50 objects), 6. serp_landscape (8 objects), 7. content_roadmap (12 weeks), 8. link_acquisition (Overview, target_sites, guest_post_topics, broken_links, outreach), 9. onpage_checklist (15 strings), 10. growth_accelerators (5 strings), 11. related_resources (5-8), 12. local_market_context (Array of 3 strings explaining specific local regulations, terminology, and nuances specific to ${countryName}).`;
 };
 
 export async function generateReport(niche: string, country: string, type: 'seo' | 'product') {
@@ -95,19 +82,28 @@ export async function generateReport(niche: string, country: string, type: 'seo'
   const aiResponse = await runGroqWithRetry(prompt, JSON.stringify({ niche, country }));
   const analysis = extractJSON(aiResponse);
 
-  // 🛡️ 4. ULTIMATE FIX: Convert AI objects to clean strings (Kills [object Object])
+  // 🛡️ 4. POST-PROCESSING: FIX YEAR TO 2026
+  const replaceYears = (text: string) => text.replace(/\b(2024|2025)\b/g, '2026');
+  
   if (analysis.key_insights && Array.isArray(analysis.key_insights)) {
-    analysis.key_insights = analysis.key_insights.map((item: any) =>
-      typeof item === 'string' ? item : (item.text || item.value || JSON.stringify(item))
-    );
+    analysis.key_insights = analysis.key_insights.map((item: any) => {
+      const str = typeof item === 'string' ? item : (item.text || item.value || JSON.stringify(item));
+      return replaceYears(str);
+    });
   }
   if (analysis.immediate_actions && Array.isArray(analysis.immediate_actions)) {
-    analysis.immediate_actions = analysis.immediate_actions.map((item: any) =>
-      typeof item === 'string' ? item : (item.text || item.value || JSON.stringify(item))
-    );
+    analysis.immediate_actions = analysis.immediate_actions.map((item: any) => {
+      const str = typeof item === 'string' ? item : (item.text || item.value || JSON.stringify(item));
+      return replaceYears(str);
+    });
+  }
+  if (analysis.trend_assessment) analysis.trend_assessment = replaceYears(String(analysis.trend_assessment));
+  if (analysis.trend_summary) analysis.trend_summary = replaceYears(String(analysis.trend_summary));
+  if (analysis.local_market_context && Array.isArray(analysis.local_market_context)) {
+    analysis.local_market_context = analysis.local_market_context.map((s: any) => replaceYears(String(s)));
   }
 
-  // 5. Process Keywords & Exchange (Real Currency Conversion)
+  // 5. Process Keywords & Exchange
   let keywords = Array.isArray(analysis.keywords) ? analysis.keywords : generateFallbackKeywords(niche);
   const currencyMap: Record<string, string> = { us: 'USD', gb: 'GBP', ca: 'CAD', au: 'AUD', de: 'EUR', sg: 'SGD', sa: 'SAR', ae: 'AED', pk: 'PKR', in: 'INR', tr: 'TRY', my: 'MYR' };
   const targetCurrency = currencyMap[country] || 'USD';
@@ -115,7 +111,7 @@ export async function generateReport(niche: string, country: string, type: 'seo'
     kw.cpc = await convertCurrency(kw.cpc || 0, 'USD', targetCurrency);
   }
 
-  // 6. Build Chart Data for Frontend
+  // 6. Build Chart Data
   const chartData = {
     trend_12m: trendData.map((v, i) => ({ month: `M${i + 1}`, value: v })),
     traffic_forecast_6m: (analysis.content_roadmap || []).slice(0, 6).map((c: any, i: number) => ({ month: `M${i + 1}`, traffic: c.expected_traffic || 0 })),
@@ -129,7 +125,7 @@ export async function generateReport(niche: string, country: string, type: 'seo'
     trafficEstimate = Math.max(500, Math.round(keywords[0].volume * 0.4 * 6));
   }
 
-  // 8. Generate Human-Toned Markdown
+  // 8. Generate Markdown
   const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
   let markdown = `MusePRO\nReal-Time Market Research\nIntelligence Division\n──────────────────────────────────────────────────────────────\n${type === 'seo' ? 'SEO RESEARCH REPORT' : 'PRODUCT INTELLIGENCE REPORT'}\n\nPrepared For: [Client Name]\nDate: ${today}\nReference: MKT-${Math.random().toString(36).substring(2, 8).toUpperCase()}\nClassification: CONFIDENTIAL\n──────────────────────────────────────────────────────────────\n\n`;
 
@@ -154,10 +150,19 @@ export async function generateReport(niche: string, country: string, type: 'seo'
     markdown += `Position #${i+1}: ${s.title}\n  URL: ${s.link || 'N/A'}\n  DA: ${s.da || 'N/A'} | Words: ${s.words || 'N/A'} | Backlinks: ${s.backlinks || 'N/A'}\n  Est. Traffic: ${(s.traffic || 0).toLocaleString()}/mo\n  Strengths: ${s.strengths || 'N/A'}\n  Weaknesses: ${s.weaknesses || 'N/A'}\n  Gap: ${s.gap || 'N/A'}\n\n`;
   });
 
-  markdown += `5. CONTENT ROADMAP (12 WEEKS)\n──────────────────────────────────────────────────────────────\n`;
+  // 🚀 NEW SECTION: LOCAL MARKET CONTEXT & REGULATORY NOTES
+  if (analysis.local_market_context && Array.isArray(analysis.local_market_context)) {
+    markdown += `5. LOCAL MARKET CONTEXT & REGULATORY NOTES\n──────────────────────────────────────────────────────────────\n`;
+    analysis.local_market_context.forEach((item: string, i: number) => {
+      markdown += `  ${i+1}. ${item}\n`;
+    });
+    markdown += `\n`;
+  }
+
+  markdown += `6. CONTENT ROADMAP (12 WEEKS)\n──────────────────────────────────────────────────────────────\n`;
   (analysis.content_roadmap || []).slice(0, 12).forEach((c: any) => {
     let title = c.title || `Week ${c.week}: Mastering ${niche}`;
-    title = title.replace(/^Week \d+: Week \d+:/i, `Week ${c.week}:`);
+    title = replaceYears(title);
     markdown += `Week ${c.week}: ${title}\n  Keyword: ${c.primary_keyword || niche} | Type: ${c.type || 'Pillar'}\n`;
     if (c.secondary_keywords?.length) markdown += `  Secondary: ${c.secondary_keywords.join(', ')}\n`;
     markdown += `  Target Words: ${c.word_count_target || 2200}\n`;
@@ -165,9 +170,9 @@ export async function generateReport(niche: string, country: string, type: 'seo'
     markdown += `  Est. Traffic: ${(c.expected_traffic || 0).toLocaleString()}/mo\n\n`;
   });
 
-  // 🛡️ LINK ACQUISITION + TARGET SITES + BROKEN LINKS FALLBACK
+  // 🛡️ Dynamic Country-Specific Fallback for Target Sites
   const overviewText = analysis.link_acquisition?.overview || '';
-  markdown += `6. LINK ACQUISITION STRATEGY\n──────────────────────────────────────────────────────────────\n${overviewText !== 'N/A' ? overviewText : ''}\n\n`;
+  markdown += `7. LINK ACQUISITION STRATEGY\n──────────────────────────────────────────────────────────────\n${overviewText !== 'N/A' ? overviewText : ''}\n\n`;
 
   let targetSites = (analysis.link_acquisition?.target_sites || []).filter((s: any) => s.site && s.site !== 'N/A' && s.site !== 'undefined');
   
@@ -176,11 +181,11 @@ export async function generateReport(niche: string, country: string, type: 'seo'
       const safeNiche = niche.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase();
       
       const fallbackTargets = [
-          { site: `${safeCountry} Property Insights`, da: 52, type: 'Real Estate Blog', contact: `editor@${safeCountry.toLowerCase()}propertyinsights.com`, pitch: `Offering a data-driven feature on ${safeNiche} trends.` },
-          { site: `Home Services Gazette`, da: 45, type: 'Industry Magazine', contact: `pitches@homeservicesgazette.com`, pitch: `Proposing a detailed guide on ${safeNiche} for local homeowners.` },
-          { site: `${safeCountry} Homeowner Alliance`, da: 40, type: 'Non-Profit', contact: `info@${safeCountry.toLowerCase()}homeowneralliance.org`, pitch: `Sharing a free checklist for ${safeNiche}.` },
-          { site: `Building & Repair Journal`, da: 60, type: 'Trade Publication', contact: `contact@buildingjournal.com`, pitch: `Pitching an exclusive case study on ${safeNiche}.` },
-          { site: `Local Contractor Connect`, da: 33, type: 'Local Directory', contact: `hello@localcontractorconnect.com`, pitch: `Providing a resource guide for ${safeNiche}.` }
+          { site: `${safeCountry} Business Review`, da: 52, type: 'Industry Magazine', contact: `editor@${safeCountry.toLowerCase()}businessreview.com`, pitch: `Offering a data-driven feature on ${safeNiche} trends.` },
+          { site: `${safeCountry} Real Estate Journal`, da: 45, type: 'Trade Publication', contact: `pitches@${safeCountry.toLowerCase()}rejournal.com`, pitch: `Proposing a detailed guide on ${safeNiche} for local professionals.` },
+          { site: `${safeCountry} Financial Advisory`, da: 40, type: 'Financial Blog', contact: `info@${safeCountry.toLowerCase()}financialadvisory.com`, pitch: `Sharing a free checklist for ${safeNiche}.` },
+          { site: `${safeCountry} Property Gazette`, da: 60, type: 'Local News', contact: `contact@${safeCountry.toLowerCase()}propertygazette.com`, pitch: `Pitching an exclusive case study on ${safeNiche}.` },
+          { site: `${safeCountry} Consumer Alliance`, da: 33, type: 'Non-Profit', contact: `hello@${safeCountry.toLowerCase()}consumeralliance.com`, pitch: `Providing a resource guide for ${safeNiche}.` }
       ];
 
       const existingSites = targetSites.map((s: any) => s.site);
@@ -232,15 +237,15 @@ export async function generateReport(niche: string, country: string, type: 'seo'
   
   if (analysis.link_acquisition?.outreach_template) markdown += `Outreach Template:\n${analysis.link_acquisition.outreach_template}\n\n`;
 
-  markdown += `7. ON-PAGE OPTIMIZATION CHECKLIST\n──────────────────────────────────────────────────────────────\n`;
+  markdown += `8. ON-PAGE OPTIMIZATION CHECKLIST\n──────────────────────────────────────────────────────────────\n`;
   (analysis.onpage_checklist || []).slice(0, 15).forEach((item: any, i: number) => {
     const text = typeof item === 'string' ? item : item?.text || item?.value || JSON.stringify(item);
-    markdown += `${i+1}. ${text}\n`;
+    markdown += `${i+1}. ${replaceYears(text)}\n`;
   });
 
-  markdown += `\n8. GROWTH ACCELERATORS\n──────────────────────────────────────────────────────────────\n`;
-  (analysis.growth_accelerators || []).slice(0, 5).forEach((tip: string, i: number) => markdown += `${i+1}. ${tip}\n`);
-  markdown += `\n9. RELATED RESOURCES\n──────────────────────────────────────────────────────────────\n`;
+  markdown += `\n9. GROWTH ACCELERATORS\n──────────────────────────────────────────────────────────────\n`;
+  (analysis.growth_accelerators || []).slice(0, 5).forEach((tip: string, i: number) => markdown += `${i+1}. ${replaceYears(tip)}\n`);
+  markdown += `\n10. RELATED RESOURCES\n──────────────────────────────────────────────────────────────\n`;
   (analysis.related_resources || []).slice(0, 8).forEach((res: any, i: number) => markdown += `${i+1}. ${res.name || res.url} – ${res.url}\n`);
 
   // 📝 CLIENT-FRIENDLY METHODOLOGY (No AI clues)
