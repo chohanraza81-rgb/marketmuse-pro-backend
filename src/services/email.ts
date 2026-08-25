@@ -1,13 +1,13 @@
 import nodemailer from 'nodemailer';
 
-// Check if SMTP credentials are provided in environment variables
+// Brevo SMTP Configuration
 const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST || 'smtp.gmail.com',
+  host: process.env.SMTP_HOST || 'smtp-relay.brevo.com',
   port: parseInt(process.env.SMTP_PORT || '587', 10),
   secure: false, // true for 465, false for other ports
   auth: {
-    user: process.env.SMTP_USER, // Your email
-    pass: process.env.SMTP_PASS, // Your email password or app password
+    user: process.env.SMTP_USER, // Your Brevo login email
+    pass: process.env.SMTP_PASS, // Your Brevo SMTP Key
   },
 });
 
@@ -18,13 +18,11 @@ export const sendReportEmail = async (
   text: string
 ): Promise<void> => {
   try {
-    // If SMTP details are missing, just log to console so it doesn't crash in development
+    // Agar SMTP details set nahi hain, toh server crash nahi karega, sirf log karega
     if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {
       console.log(`[Email Service] Email to ${to}: ${subject}`);
-      console.log(`Content: ${content.substring(0, 200)}...`);
       return;
     }
-
     await transporter.sendMail({
       from: `"MusePRO" <${process.env.SMTP_USER}>`,
       to: to,
@@ -32,7 +30,6 @@ export const sendReportEmail = async (
       text: text,
       html: content,
     });
-
     console.log(`Email sent successfully to ${to}`);
   } catch (error) {
     console.error('Error sending email:', error);
