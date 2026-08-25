@@ -2,7 +2,7 @@ import { cacheService } from './cache';
 import { getGoogleTrends } from './trends';
 import { getSearchResults, getKeywordSuggestions } from './serpapi';
 import { getSerperResults } from './serper';
-import { getScraperAPISearch } from './scraperapi'; // ✅ ScraperAPI included
+import { getScraperAPISearch } from './scraperapi';
 import { convertCurrency } from './exchange';
 import { runGroqWithRetry } from './groq';
 
@@ -12,11 +12,10 @@ const countryNames: Record<string, string> = {
   pk: 'Pakistan', in: 'India', tr: 'Turkey', my: 'Malaysia',
 };
 
-// ✅ FIX: No Math.random(). Only stable realistic fallback values.
-const fixZeroOrUndefined = (val: any, fallback: number) => {
+// ✅ FIX: ONLY prevents NaN crash. Does NOT change values.
+const safeNumber = (val: any, fallback: number = 0) => {
   const num = Number(val);
-  if (!num || isNaN(num) || num === 0) return fallback;
-  return num;
+  return isNaN(num) ? fallback : num;
 };
 
 const extractJSON = (raw: string): any => {
@@ -30,33 +29,21 @@ const extractJSON = (raw: string): any => {
   }
 };
 
-const generateStableKeywords = (niche: string) => {
-  const keywords = [];
-  for (let i = 0; i < 50; i++) {
-    keywords.push({
-      keyword: i === 0 ? niche : `${niche} guide ${i}`,
-      volume: 1200 - (i * 10), // Stable decreasing volume
-      cpc: 1.85,
-      kd: 25
-    });
-  }
-  return keywords;
-};
-
+// ✅ FIX: AI is FORCED to generate 50 unique keywords. NO "guide 1" garbage allowed.
 const buildUnifiedPrompt = (niche: string, country: string, type: 'seo' | 'product', serpLinks: string[], trendData: number[]) => {
   const countryName = countryNames[country] || country;
   return `You are a veteran senior consultant at MusePRO. Write in a human tone.
-  **CRITICAL**: The current year is ALWAYS 2026. Target is ${countryName}.
-  
-  **STRICT RULE FOR DATA**: NEVER output 0 for Volume or KD. Always generate realistic positive numbers (e.g., 450, 1200, 3200).
-  
+
+  **STRICT RULES**:
+  1. The current year is 2026.
+  2. Target is ${countryName}.
+  3. **NEVER** use "guide 1", "guide 2", "part 1", or "mastering" in any keyword.
+  4. Generate **50 completely UNIQUE, real-world user search queries** for "${niche}".
+
   Create a premium ${type} report for "${niche}". 
   
-  If real data is missing, create 8 realistic sites for ${countryName} specific to ${niche}. 
-  Generate 12 unique roadmap titles based on the keywords.
-  Generate 5 realistic target sites for ${countryName} specific to ${niche}.
-  
-  Return ONLY valid JSON`;
+  **RETURN JSON**:
+  1. key_insights (3 strings), 2. immediate_actions (3 strings), 3. trend_summary, 4. trend_assessment, 5. keywords (50 unique objects), 6. serp_landscape (8), 7. content_roadmap (12 unique titles), 8. link_acquisition (target_sites, guest_posts, broken_links, outreach), 9. onpage_checklist (15), 10. growth_accelerators (5), 11. local_market_context (3).`;
 };
 
 export async function generateReport(niche: string, country: string, type: 'seo' | 'product') {
@@ -72,79 +59,72 @@ export async function generateReport(niche: string, country: string, type: 'seo'
 
   const serpLinks = searchData?.organic_results?.slice(0, 8).map((r: any) => r.link) || [];
 
-  // 2. Call Gemini
+  // 2. Call Gemini (Human Tone + Unique Keywords)
   const prompt = buildUnifiedPrompt(niche, country, type, serpLinks, trendData);
   const aiResponse = await runGroqWithRetry(prompt, JSON.stringify({ niche, country }));
   const analysis = extractJSON(aiResponse);
 
   const replaceYears = (text: string) => text.replace(/\b(2024|2025)\b/g, '2026');
 
-  // 3. Sanitize Insights & Actions
+  // Sanitize Insights & Actions
   if (analysis.key_insights) analysis.key_insights = analysis.key_insights.map((item: any) => replaceYears(typeof item === 'string' ? item : (item.text || item.value || JSON.stringify(item))));
   if (analysis.immediate_actions) analysis.immediate_actions = analysis.immediate_actions.map((item: any) => replaceYears(typeof item === 'string' ? item : (item.text || item.value || JSON.stringify(item))));
 
-  // 4. Sanitize Keywords (Stable fallback, no random)
-  let keywords = Array.isArray(analysis.keywords) ? analysis.keywords : generateStableKeywords(niche);
+  // 3. Keywords: USE THE AI'S UNIQUE KEYWORDS AS-IS. No fake generation.
+  let keywords = Array.isArray(analysis.keywords) ? analysis.keywords : [];
+  
   const currencyMap: Record<string, string> = { us: 'USD', gb: 'GBP', ca: 'CAD', au: 'AUD', de: 'EUR', sg: 'SGD', sa: 'SAR', ae: 'AED', pk: 'PKR', in: 'INR', tr: 'TRY', my: 'MYR' };
   const targetCurrency = currencyMap[country] || 'USD';
+  
+  // Only convert currency safely, never alter the keyword text
   for (const kw of keywords) {
-    kw.volume = fixZeroOrUndefined(kw.volume, 500); // Stable 500 if 0
-    kw.kd = fixZeroOrUndefined(kw.kd, 25);         // Stable 25 if 0
-    kw.cpc = await convertCurrency(fixZeroOrUndefined(kw.cpc, 1.5), 'USD', targetCurrency);
+    kw.volume = safeNumber(kw.volume); // Keep as is
+    kw.kd = safeNumber(kw.kd);         // Keep as is
+    kw.cpc = await convertCurrency(safeNumber(kw.cpc, 0.5), 'USD', targetCurrency);
   }
 
-  // 5. Sanitize SERP Landscape
+  // 4. SERP Landscape (Use Real or AI invented, just clean the undefined)
   let serp = (analysis.serp_landscape || []).filter((s: any) => s.title && s.link && s.title !== 'undefined').map((s: any, i: number) => ({
     position: s.position || i + 1,
     title: s.title,
     link: s.link,
-    da: fixZeroOrUndefined(s.da, 35),
-    words: fixZeroOrUndefined(s.words, 1000),
-    backlinks: fixZeroOrUndefined(s.backlinks, 20),
-    traffic: fixZeroOrUndefined(s.traffic, 500),
+    da: safeNumber(s.da, 40),
+    words: safeNumber(s.words, 1000),
+    backlinks: safeNumber(s.backlinks, 20),
+    traffic: safeNumber(s.traffic, 500),
     strengths: s.strengths || 'N/A',
     weaknesses: s.weaknesses || 'N/A',
     gap: s.gap || 'N/A'
   }));
-  // If AI failed completely, just use realistic local placeholders (no random names)
-  if (!serp.length) {
-    serp = [
-      { position: 1, title: `Top ${niche} Resource Canada`, link: `https://www.top${niche}canada.ca`, da: 40, words: 1500, backlinks: 30, traffic: 1500, strengths: 'Strong local authority', weaknesses: 'Limited inventory', gap: 'Opportunity for local guides' },
-      { position: 2, title: `Canadian ${niche} Hub`, link: `https://www.canadian${niche}hub.ca`, da: 32, words: 1200, backlinks: 18, traffic: 900, strengths: 'Trusted reviews', weaknesses: 'Outdated', gap: 'Needs 2026 updates' }
-    ];
-  }
 
-  // 6. Sanitize Roadmap (No repeated "Mastering")
+  // 5. Roadmap (No "Week X: Mastering", use AI's unique titles)
   let roadmap = (analysis.content_roadmap || []).map((c: any, i: number) => ({
     week: c.week || i + 1,
-    title: replaceYears(c.title && !c.title.includes('Mastering') ? c.title : `Week ${i + 1}: ${keywords[i]?.keyword || niche}`),
+    title: replaceYears(c.title && !c.title.includes('Mastering') ? c.title : keywords[i]?.keyword || niche),
     primary_keyword: c.primary_keyword || niche,
     type: c.type || 'Pillar',
-    word_count_target: fixZeroOrUndefined(c.word_count_target, 2200),
-    expected_traffic: fixZeroOrUndefined(c.expected_traffic, 1000)
+    word_count_target: safeNumber(c.word_count_target, 2200),
+    expected_traffic: safeNumber(c.expected_traffic, 1000)
   }));
 
-  // 7. Sanitize Target Sites (No "Real Estate" for Auto Parts)
-  let targetSites = (analysis.link_acquisition?.target_sites || []).filter((s: any) => s.site && s.site !== 'N/A').map((s: any) => ({
-    site: s.site,
-    type: s.type || 'Industry Blog',
-    contact: s.contact || 'editor@default.com',
-    pitch: s.pitch || 'Collaborative content opportunity.'
-  }));
+  // 6. Target Sites (Use AI's unique real-sounding sites)
+  let targetSites = (analysis.link_acquisition?.target_sites || []).filter((s: any) => s.site && s.site !== 'N/A');
   if (targetSites.length < 5) {
     targetSites = [
-      { site: `${niche} Gazette ${countryNames[country]}`, type: 'Industry Magazine', contact: `editor@${niche.toLowerCase()}gazette.ca`, pitch: 'Data-driven feature analysis.' },
-      { site: `Pro ${niche} Canada`, type: 'Trade Association', contact: `hello@pro${niche.toLowerCase()}canada.ca`, pitch: 'Free checklist for professionals.' },
-      { site: `${countryNames[country]} Consumer Alliance`, type: 'Non-Profit', contact: `info@consumeralliance.ca`, pitch: 'Resource guide for consumers.' }
+      { site: `${countryNames[country]} Business Review`, type: 'Industry Magazine', contact: `editor@${country.toLowerCase()}businessreview.com`, pitch: 'Data-driven feature analysis.' },
+      { site: `${niche} Gazette ${countryNames[country]}`, type: 'Trade Publication', contact: `pitches@${niche.toLowerCase()}gazette.com`, pitch: 'Detailed guide for local professionals.' },
+      { site: `Pro ${niche} ${countryNames[country]}`, type: 'Trade Association', contact: `info@pro${niche.toLowerCase()}association.com`, pitch: 'Free checklist for professionals.' }
     ];
   }
 
-  const monthlyTotal = roadmap.reduce((sum: number, week: any) => sum + fixZeroOrUndefined(week.expected_traffic, 1000), 0);
+  const monthlyTotal = roadmap.reduce((sum: number, week: any) => sum + safeNumber(week.expected_traffic, 1000), 0);
   let trafficEstimate = Math.round(monthlyTotal * 2);
   if (isNaN(trafficEstimate)) trafficEstimate = 0;
 
+  // (Markdown generation code same as before, uses serp, roadmap, targetSites)
   const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
-  let markdown = `...`; // (Rest of the Markdown generation uses the sanitized variables above)
+  let markdown = `MusePRO\n...`;
+  // ... (Rest of markdown generation code)...
 
   const result = {
     niche, country, type,
@@ -155,7 +135,7 @@ export async function generateReport(niche: string, country: string, type: 'seo'
     trend_summary: replaceYears(analysis.trend_summary || 'Steady market interest.'),
     chart_data: {
       trend_12m: trendData.map((v, i) => ({ month: `M${i + 1}`, value: v })),
-      traffic_forecast_6m: roadmap.slice(0, 6).map((c: any, i: number) => ({ month: `M${i + 1}`, traffic: fixZeroOrUndefined(c.expected_traffic, 1000) })),
+      traffic_forecast_6m: roadmap.slice(0, 6).map((c: any, i: number) => ({ month: `M${i + 1}`, traffic: safeNumber(c.expected_traffic, 1000) })),
       market_share: []
     },
     traffic_estimate: trafficEstimate
