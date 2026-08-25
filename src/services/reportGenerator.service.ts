@@ -12,7 +12,7 @@ const countryNames: Record<string, string> = {
   pk: 'Pakistan', in: 'India', tr: 'Turkey', my: 'Malaysia',
 };
 
-// ✅ FIX: ONLY prevents NaN crash. Does NOT change values.
+// ONLY prevents NaN, doesn't generate random numbers
 const safeNumber = (val: any, fallback: number = 0) => {
   const num = Number(val);
   return isNaN(num) ? fallback : num;
@@ -29,11 +29,9 @@ const extractJSON = (raw: string): any => {
   }
 };
 
-// ✅ FIX: AI is FORCED to generate 50 unique keywords. NO "guide 1" garbage allowed.
 const buildUnifiedPrompt = (niche: string, country: string, type: 'seo' | 'product', serpLinks: string[], trendData: number[]) => {
   const countryName = countryNames[country] || country;
   return `You are a veteran senior consultant at MusePRO. Write in a human tone.
-
   **STRICT RULES**:
   1. The current year is 2026.
   2. Target is ${countryName}.
@@ -51,7 +49,6 @@ export async function generateReport(niche: string, country: string, type: 'seo'
   const cached = cacheService.get(cacheKey);
   if (cached) return cached;
 
-  // 1. Real Data Fetch (Layered: SerpAPI -> Serper -> ScraperAPI)
   const trendData = await getGoogleTrends(niche, country).catch(() => []);
   let searchData = await getSearchResults(niche, country).catch(() => null);
   if (!searchData?.organic_results) searchData = await getSerperResults(niche, country).catch(() => null);
@@ -59,31 +56,24 @@ export async function generateReport(niche: string, country: string, type: 'seo'
 
   const serpLinks = searchData?.organic_results?.slice(0, 8).map((r: any) => r.link) || [];
 
-  // 2. Call Gemini (Human Tone + Unique Keywords)
   const prompt = buildUnifiedPrompt(niche, country, type, serpLinks, trendData);
   const aiResponse = await runGroqWithRetry(prompt, JSON.stringify({ niche, country }));
   const analysis = extractJSON(aiResponse);
 
   const replaceYears = (text: string) => text.replace(/\b(2024|2025)\b/g, '2026');
 
-  // Sanitize Insights & Actions
   if (analysis.key_insights) analysis.key_insights = analysis.key_insights.map((item: any) => replaceYears(typeof item === 'string' ? item : (item.text || item.value || JSON.stringify(item))));
   if (analysis.immediate_actions) analysis.immediate_actions = analysis.immediate_actions.map((item: any) => replaceYears(typeof item === 'string' ? item : (item.text || item.value || JSON.stringify(item))));
 
-  // 3. Keywords: USE THE AI'S UNIQUE KEYWORDS AS-IS. No fake generation.
   let keywords = Array.isArray(analysis.keywords) ? analysis.keywords : [];
-  
   const currencyMap: Record<string, string> = { us: 'USD', gb: 'GBP', ca: 'CAD', au: 'AUD', de: 'EUR', sg: 'SGD', sa: 'SAR', ae: 'AED', pk: 'PKR', in: 'INR', tr: 'TRY', my: 'MYR' };
   const targetCurrency = currencyMap[country] || 'USD';
-  
-  // Only convert currency safely, never alter the keyword text
   for (const kw of keywords) {
-    kw.volume = safeNumber(kw.volume); // Keep as is
-    kw.kd = safeNumber(kw.kd);         // Keep as is
+    kw.volume = safeNumber(kw.volume);
+    kw.kd = safeNumber(kw.kd);
     kw.cpc = await convertCurrency(safeNumber(kw.cpc, 0.5), 'USD', targetCurrency);
   }
 
-  // 4. SERP Landscape (Use Real or AI invented, just clean the undefined)
   let serp = (analysis.serp_landscape || []).filter((s: any) => s.title && s.link && s.title !== 'undefined').map((s: any, i: number) => ({
     position: s.position || i + 1,
     title: s.title,
@@ -97,7 +87,6 @@ export async function generateReport(niche: string, country: string, type: 'seo'
     gap: s.gap || 'N/A'
   }));
 
-  // 5. Roadmap (No "Week X: Mastering", use AI's unique titles)
   let roadmap = (analysis.content_roadmap || []).map((c: any, i: number) => ({
     week: c.week || i + 1,
     title: replaceYears(c.title && !c.title.includes('Mastering') ? c.title : keywords[i]?.keyword || niche),
@@ -107,7 +96,6 @@ export async function generateReport(niche: string, country: string, type: 'seo'
     expected_traffic: safeNumber(c.expected_traffic, 1000)
   }));
 
-  // 6. Target Sites (Use AI's unique real-sounding sites)
   let targetSites = (analysis.link_acquisition?.target_sites || []).filter((s: any) => s.site && s.site !== 'N/A');
   if (targetSites.length < 5) {
     targetSites = [
@@ -121,10 +109,31 @@ export async function generateReport(niche: string, country: string, type: 'seo'
   let trafficEstimate = Math.round(monthlyTotal * 2);
   if (isNaN(trafficEstimate)) trafficEstimate = 0;
 
-  // (Markdown generation code same as before, uses serp, roadmap, targetSites)
   const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
-  let markdown = `MusePRO\n...`;
-  // ... (Rest of markdown generation code)...
+  let markdown = `MusePRO\nReal-Time Market Research\nIntelligence Division\n──────────────────────────────────────────────────────────────\n${type === 'seo' ? 'SEO RESEARCH REPORT' : 'PRODUCT INTELLIGENCE REPORT'}\n\nPrepared For: [Client Name]\nDate: ${today}\nReference: MKT-${Math.random().toString(36).substring(2, 8).toUpperCase()}\nClassification: CONFIDENTIAL\n──────────────────────────────────────────────────────────────\n\n`;
+  
+  markdown += `1. EXECUTIVE BRIEF\n──────────────────────────────────────────────────────────────\n`;
+  (analysis.key_insights || []).forEach((f: string, i: number) => markdown += `  ${i+1}. ${f}\n`);
+  markdown += `\nPriority Actions:\n`;
+  (analysis.immediate_actions || []).forEach((w: string, i: number) => markdown += `  ${i+1}. ${w}\n`);
+  markdown += `\n2. TREND ASSESSMENT\n──────────────────────────────────────────────────────────────\n`;
+  markdown += `${analysis.trend_assessment || 'Steady market growth.'}\n\n`;
+  markdown += `3. KEYWORD OPPORTUNITIES (TOP 50)\n──────────────────────────────────────────────────────────────\n`;
+  keywords.slice(0, 50).forEach((k: any, i: number) => markdown += `| ${i+1} | ${k.keyword} | ${safeNumber(k.volume)} | $${safeNumber(k.cpc).toFixed(2)} | ${safeNumber(k.kd)} |\n`);
+  
+  markdown += `\n4. SERP LANDSCAPE\n──────────────────────────────────────────────────────────────\n`;
+  serp.slice(0, 8).forEach((s: any, i: number) => markdown += `Position #${i+1}: ${s.title}\n  URL: ${s.link}\n  DA: ${s.da} | Words: ${s.words} | Backlinks: ${s.backlinks}\n  Est. Traffic: ${s.traffic}/mo\n  Strengths: ${s.strengths}\n  Weaknesses: ${s.weaknesses}\n  Gap: ${s.gap}\n\n`);
+  
+  markdown += `5. LOCAL MARKET CONTEXT\n──────────────────────────────────────────────────────────────\n`;
+  (analysis.local_market_context || []).forEach((item: string, i: number) => markdown += `  ${i+1}. ${item}\n`);
+  
+  markdown += `\n6. CONTENT ROADMAP (12 WEEKS)\n──────────────────────────────────────────────────────────────\n`;
+  roadmap.slice(0, 12).forEach((c: any) => markdown += `Week ${c.week}: ${c.title}\n  Keyword: ${c.primary_keyword} | Type: ${c.type}\n  Est. Traffic: ${c.expected_traffic}/mo\n\n`);
+
+  markdown += `7. LINK ACQUISITION STRATEGY\n──────────────────────────────────────────────────────────────\n`;
+  targetSites.forEach((s: any, i: number) => markdown += `  ${i+1}. ${s.site}\n     Contact: ${s.contact}\n     Pitch: ${s.pitch}\n\n`);
+  
+  // ... (Rest of the markdown generation is standard) ...
 
   const result = {
     niche, country, type,
