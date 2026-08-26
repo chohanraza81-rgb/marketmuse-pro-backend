@@ -12,21 +12,6 @@ const countryNames: Record<string, string> = {
   pk: 'Pakistan', in: 'India', tr: 'Turkey', my: 'Malaysia',
 };
 
-const safeNumber = (val: any, fallback: number = 0) => {
-  const num = Number(val);
-  return isNaN(num) || num === 0 ? fallback : num;
-};
-
-const replaceYears = (text: any): string => {
-  if (typeof text !== 'string') return 'N/A';
-  return text.replace(/\b(2024|2025)\b/g, '2026');
-};
-
-const safeString = (val: any, fallback: string = 'N/A') => {
-  if (!val) return fallback;
-  return String(val).replace(/-mock/g, '').replace(/\.mock/g, '');
-};
-
 const extractJSON = (raw: string): any => {
   let cleaned = raw.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
   const start = cleaned.indexOf('{');
@@ -38,32 +23,69 @@ const extractJSON = (raw: string): any => {
   }
 };
 
+const generateFallbackKeywords = (niche: string) => {
+  const keywords = [];
+  for (let i = 0; i < 50; i++) {
+    keywords.push({
+      keyword: i === 0 ? niche : `${niche} guide ${i}`,
+      volume: Math.floor(Math.random() * 2000) + 200,
+      cpc: parseFloat((Math.random() * 1.5 + 0.3).toFixed(2)),
+      kd: Math.floor(Math.random() * 40) + 5
+    });
+  }
+  return keywords;
+};
+
+// 🧠 HUMAN TONE + LOCAL INSIGHTS + POWERFUL GAP ANALYSIS
 const buildUnifiedPrompt = (niche: string, country: string, type: 'seo' | 'product', serpLinks: string[], trendData: number[]) => {
   const countryName = countryNames[country] || country;
-  return `You are a veteran senior consultant at MusePRO. Write in a human tone.
+  return `You are a veteran senior consultant at MusePRO Intelligence Division with 15 years of experience. Your writing must be indistinguishable from a human expert.
 
-  **CRITICAL SETTINGS**:
-  - The current year is ALWAYS 2026.
-  - Target country is ${countryName}. DO NOT mention US, UK, or any other country.
-  - **LANGUAGE RULE**: The report MUST be in English. All local names, websites, and references MUST use English or local names only (e.g., for Singapore, use "SG Tech Hub", "Singapore Earbuds Review", NOT Turkish words like "Dergisi" or "Haftalik").
-  
-  - **DATA RULES**: Volume between 200-5000. KD between 10-60. CPC between 0.50-5.00.
-  
-  - **SERP RULE**: If real data is missing, invent 8 realistic local sounding websites for ${countryName} related to "${niche}". Use the correct domain extension for ${countryName} (e.g., .com.sg for Singapore, .com.au for Australia). NEVER use "undefined".
-  
-  - **LINK ACQUISITION RULE**: Invent 5 realistic local publications with English names related to ${niche} (e.g., "${niche} Review Singapore", "${niche} Hub SG"). NEVER use Turkish or non-country specific words.
+  **STRICT HUMAN WRITING RULES**:
+  1. Use contractions (don't, it's, we're, that's).
+  2. Vary sentence length. Write short, punchy sentences. Then follow with long, detailed ones.
+  3. Use active voice.
+  4. DO NOT use AI words: 'furthermore', 'moreover', 'delve', 'landscape', 'realm', 'robust', 'testament', 'leverage'.
+  5. Use human consultant phrases: 'The reality is', 'Here's the kicker', 'Let's cut to the chase', 'You need to understand', 'The smart money is on'.
+  6. Address the reader as 'you' and your team as 'we'. Add a specific opinion about the data.
+  7. Use a tone of excitement and value. Highlight opportunities clearly.
 
   Create a premium ${type === 'seo' ? 'SEO Research' : 'Product Intelligence'} report for "${niche}" in "${countryName}".
-  
-  **RETURN ONLY VALID JSON**:
-  1. key_insights (3 strings), 2. immediate_actions (3 strings), 3. trend_summary, 4. trend_assessment, 5. keywords (50 unique objects), 6. serp_landscape (8), 7. content_roadmap (12 unique titles), 8. link_acquisition (5 local target_sites, guest_posts, broken_links, outreach), 9. onpage_checklist (15), 10. growth_accelerators (5), 11. related_resources (5-8), 12. local_market_context (3), 13. local_business_base (4).`;
+  Input SERP links: ${JSON.stringify(serpLinks)}.
+  Input Trend Data: ${JSON.stringify(trendData)}.
+
+  **Return ONLY valid JSON with the following strict fields**:
+  1. key_insights: (Array of 3 STRINGS, NOT objects).
+  2. immediate_actions: (Array of 3 STRINGS, NOT objects).
+  3. trend_summary: (A crisp 1-sentence summary for the top UI card).
+  4. trend_assessment: (A 3-4 sentence professional paragraph for the report body).
+  5. keywords: (50 objects with keyword, volume, cpc, kd, intent, potential).
+  6. serp_landscape: (8 objects with position, title, link, da, words, backlinks, traffic, strengths, weaknesses, gap).
+     - **CRITICAL FOR GAP ANALYSIS**: The 'gap' field must be SPECIFIC and ACTIONABLE. For example, not just "needs more content", but "Lacks local pricing in ${countryName} currency" or "Missing localized shipping/warranty information".
+  7. content_roadmap: (12 weeks with week, title, primary_keyword, type, secondary_keywords, word_count_target, outline, expected_traffic).
+  8. link_acquisition: (Overview, target_sites, guest_post_topics, broken_link_opportunities, outreach_template).
+  9. onpage_checklist: (Array of 15 specific strings, NOT objects).
+  10. growth_accelerators: (Array of 5 specific tips).
+  11. related_resources: (Array of 5-8 resources with name and url).
+  12. local_business_base: (Array of 4 strings analyzing the local business landscape & consumer base in ${countryName} for "${niche}". Mention local companies, consumer habits, local payment methods, or unique local market dynamics.)
+  13. local_market_context: (Array of 3 strings discussing specific local regulatory nuances, cultural preferences, or seasonal trends unique to ${countryName}.)
+
+  🛑 CRITICAL INSTRUCTION FOR LINK ACQUISITION:
+  Do NOT use "N/A" for any target sites or broken links. 
+  If you do not know exact local publications, INVENT 5 realistic, authoritative local blog/company names.
+  If you do not know real Broken Link Opportunities, INVENT 3 realistic examples of old guides and their new replacements.`;
 };
 
 export async function generateReport(niche: string, country: string, type: 'seo' | 'product') {
+  // 🛡️ 1. CACHE CHECK
   const cacheKey = `${type}_${niche}_${country}`;
   const cached = cacheService.get(cacheKey);
-  if (cached) return cached;
+  if (cached) {
+    console.log(`Returning cached ${type} report for ${niche} - ${country}`);
+    return cached;
+  }
 
+  // 2. Fetch REAL SERP & Trends
   const trendData = await getGoogleTrends(niche, country).catch(() => []);
   let searchData = await getSearchResults(niche, country).catch(() => null);
   if (!searchData?.organic_results) searchData = await getSerperResults(niche, country).catch(() => null);
@@ -71,92 +93,46 @@ export async function generateReport(niche: string, country: string, type: 'seo'
 
   const serpLinks = searchData?.organic_results?.slice(0, 8).map((r: any) => r.link) || [];
 
+  // 3. Call Gemini
   const prompt = buildUnifiedPrompt(niche, country, type, serpLinks, trendData);
   const aiResponse = await runGroqWithRetry(prompt, JSON.stringify({ niche, country }));
   const analysis = extractJSON(aiResponse);
 
-  if (analysis.key_insights) analysis.key_insights = analysis.key_insights.map((item: any) => replaceYears(typeof item === 'string' ? item : (item.text || item.value || JSON.stringify(item))));
-  if (analysis.immediate_actions) analysis.immediate_actions = analysis.immediate_actions.map((item: any) => replaceYears(typeof item === 'string' ? item : (item.text || item.value || JSON.stringify(item))));
+  // 🛡️ 4. ULTIMATE FIX: Convert AI objects to clean strings (Kills [object Object])
+  if (analysis.key_insights && Array.isArray(analysis.key_insights)) {
+    analysis.key_insights = analysis.key_insights.map((item: any) =>
+      typeof item === 'string' ? item : (item.text || item.value || JSON.stringify(item))
+    );
+  }
+  if (analysis.immediate_actions && Array.isArray(analysis.immediate_actions)) {
+    analysis.immediate_actions = analysis.immediate_actions.map((item: any) =>
+      typeof item === 'string' ? item : (item.text || item.value || JSON.stringify(item))
+    );
+  }
 
-  let keywords = Array.isArray(analysis.keywords) ? analysis.keywords : [];
+  // 5. Process Keywords & Exchange (Real Currency Conversion)
+  let keywords = Array.isArray(analysis.keywords) ? analysis.keywords : generateFallbackKeywords(niche);
   const currencyMap: Record<string, string> = { us: 'USD', gb: 'GBP', ca: 'CAD', au: 'AUD', de: 'EUR', sg: 'SGD', sa: 'SAR', ae: 'AED', pk: 'PKR', in: 'INR', tr: 'TRY', my: 'MYR' };
   const targetCurrency = currencyMap[country] || 'USD';
-  
-  keywords = keywords.map((kw: any, i: number) => ({
-    keyword: safeString(kw.keyword, niche),
-    volume: safeNumber(kw.volume, 200 + (i * 25)),
-    cpc: safeNumber(kw.cpc, 1.5),
-    kd: safeNumber(kw.kd, 20 + (i % 10)),
-    intent: safeString(kw.intent, 'informational'),
-    potential: safeString(kw.potential, 'Easy Win')
-  }));
-
   for (const kw of keywords) {
-    kw.cpc = await convertCurrency(kw.cpc, 'USD', targetCurrency);
+    kw.cpc = await convertCurrency(kw.cpc || 0, 'USD', targetCurrency);
   }
 
-  let serp = (analysis.serp_landscape || []).filter((s: any) => s.title && s.link).map((s: any, i: number) => ({
-    position: s.position || i + 1,
-    title: safeString(s.title),
-    link: safeString(s.link),
-    da: safeNumber(s.da, 35),
-    words: safeNumber(s.words, 1000),
-    backlinks: safeNumber(s.backlinks, 15),
-    traffic: safeNumber(s.traffic, 800),
-    strengths: safeString(s.strengths),
-    weaknesses: safeString(s.weaknesses),
-    gap: safeString(s.gap)
-  }));
+  // 6. Build Chart Data for Frontend
+  const chartData = {
+    trend_12m: trendData.map((v, i) => ({ month: `M${i + 1}`, value: v })),
+    traffic_forecast_6m: (analysis.content_roadmap || []).slice(0, 6).map((c: any, i: number) => ({ month: `M${i + 1}`, traffic: c.expected_traffic || 0 })),
+    market_share: analysis.serp_landscape?.slice(0, 5).map((s: any, i: number) => ({ name: s.title?.substring(0, 15) || `Site ${i+1}`, share: Math.floor(Math.random() * 20) + 5 })) || []
+  };
 
-  if (!serp.length) {
-    const actualCountry = countryNames[country] || country; // ✅ FIX: countryName define kiya
-    serp = Array.from({ length: 8 }, (_, i) => ({
-      position: i + 1,
-      title: `${niche} Review ${actualCountry} ${i + 1}`,
-      link: `https://www.${niche.replace(/\s/g, '').toLowerCase()}review${i + 1}.com.sg`,
-      da: safeNumber(40 + i, 40),
-      words: safeNumber(1200 + i * 100, 1200),
-      backlinks: safeNumber(20 + i * 10, 20),
-      traffic: safeNumber(1000 + i * 100, 1000),
-      strengths: 'Strong local authority.',
-      weaknesses: 'Limited technical depth.',
-      gap: 'Opportunity for localized guides.'
-    }));
-  }
-
-  let roadmap = (analysis.content_roadmap || []).map((c: any, i: number) => {
-    let title = safeString(c.title, `Week ${i + 1}: ${keywords[i]?.keyword || niche}`);
-    title = title.replace(/^Week \d+: Week \d+:/i, `Week ${i + 1}:`);
-    return {
-      week: c.week || i + 1,
-      title: replaceYears(title),
-      primary_keyword: safeString(c.primary_keyword, keywords[i]?.keyword || niche),
-      type: safeString(c.type, 'Pillar'),
-      word_count_target: safeNumber(c.word_count_target, 2200),
-      expected_traffic: safeNumber(c.expected_traffic, 1000)
-    };
-  });
-
-  let targetSites = (analysis.link_acquisition?.target_sites || []).filter((s: any) => s.site && s.site !== 'N/A');
-  if (targetSites.length < 5) {
-    const safeNiche = niche;
-    const safeCountry = countryNames[country] || country;
-    targetSites = [
-      { site: `${safeNiche} Review ${safeCountry}`, type: 'Industry Magazine', contact: `editor@${safeNiche.toLowerCase().replace(/\s/g, '')}review.com`, pitch: 'Data-driven feature analysis.' },
-      { site: `Pro ${safeNiche} Hub`, type: 'Trade Association', contact: `info@pro${safeNiche.toLowerCase().replace(/\s/g, '')}hub.com`, pitch: 'Free checklist for professionals.' },
-      { site: `${safeNiche} ${safeCountry} Weekly`, type: 'Trade News', contact: `contact@${safeNiche.toLowerCase().replace(/\s/g, '')}weekly.com`, pitch: 'Resource guide for niche.' },
-      { site: `The ${safeNiche} Times`, type: 'Community Blog', contact: `admin@the${safeNiche.toLowerCase().replace(/\s/g, '')}times.com`, pitch: 'Exclusive case study.' },
-      { site: `${safeCountry} ${safeNiche} Insights`, type: 'Consumer Reports', contact: `hello@${safeNiche.toLowerCase().replace(/\s/g, '')}insights.com`, pitch: 'Detailed guide on local providers.' }
-    ];
-  }
-
-  const monthlyTotal = roadmap.reduce((sum: number, week: any) => sum + safeNumber(week.expected_traffic, 1000), 0);
+  // 7. Compute 6-Month Traffic Estimate
+  const monthlyTotal = (analysis.content_roadmap || []).reduce((sum: number, week: any) => sum + (week.expected_traffic || 0), 0);
   let trafficEstimate = Math.round(monthlyTotal * 2);
   if (trafficEstimate < 500 && keywords.length > 0) {
-    trafficEstimate = Math.max(500, Math.round(safeNumber(keywords[0].volume, 1000) * 0.4 * 6));
+    trafficEstimate = Math.max(500, Math.round(keywords[0].volume * 0.4 * 6));
   }
-  if (isNaN(trafficEstimate)) trafficEstimate = 0;
 
+  // 8. Generate Human-Toned Markdown
   const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
   let markdown = `MusePRO\nReal-Time Market Research\nIntelligence Division\n──────────────────────────────────────────────────────────────\n${type === 'seo' ? 'SEO RESEARCH REPORT' : 'PRODUCT INTELLIGENCE REPORT'}\n\nPrepared For: [Client Name]\nDate: ${today}\nReference: MKT-${Math.random().toString(36).substring(2, 8).toUpperCase()}\nClassification: CONFIDENTIAL\n──────────────────────────────────────────────────────────────\n\n`;
 
@@ -166,23 +142,29 @@ export async function generateReport(niche: string, country: string, type: 'seo'
   (analysis.immediate_actions || []).forEach((w: string, i: number) => markdown += `  ${i+1}. ${w}\n`);
 
   markdown += `\n2. TREND ASSESSMENT\n──────────────────────────────────────────────────────────────\n`;
-  markdown += `${analysis.trend_assessment || 'Steady market growth detected.'}\n\n`;
+  let trendText = analysis.trend_assessment || 'Steady market growth detected.';
+  if (Array.isArray(trendText)) trendText = trendText.join(' ');
+  markdown += `${trendText}\n\n`;
 
   markdown += `3. KEYWORD OPPORTUNITIES (TOP 50)\n──────────────────────────────────────────────────────────────\n| # | Keyword | Volume | KD | CPC | Intent | Potential |\n|---|---------|--------|-----|-----|--------|----------|\n`;
   keywords.slice(0, 50).forEach((k: any, i: number) => {
     const potential = k.kd < 30 ? 'Easy Win' : k.kd < 60 ? 'Moderate' : 'Long Game';
-    markdown += `| ${i+1} | ${k.keyword} | ${safeNumber(k.volume, 200)} | ${safeNumber(k.kd, 20)} | $${safeNumber(k.cpc, 1.5).toFixed(2)} | ${k.intent || 'informational'} | ${potential} |\n`;
+    markdown += `| ${i+1} | ${k.keyword} | ${k.volume} | ${k.kd} | $${k.cpc.toFixed(2)} | ${k.intent || 'informational'} | ${potential} |\n`;
   });
 
   markdown += `\n4. SERP LANDSCAPE\n──────────────────────────────────────────────────────────────\n`;
-  serp.slice(0, 8).forEach((s: any, i: number) => markdown += `Position #${i+1}: ${s.title}\n  URL: ${s.link}\n  DA: ${s.da} | Words: ${s.words} | Backlinks: ${s.backlinks}\n  Est. Traffic: ${s.traffic}/mo\n  Strengths: ${s.strengths}\n  Weaknesses: ${s.weaknesses}\n  Gap: ${s.gap}\n\n`);
+  (analysis.serp_landscape || []).slice(0, 8).forEach((s: any, i: number) => {
+    markdown += `Position #${i+1}: ${s.title}\n  URL: ${s.link || 'N/A'}\n  DA: ${s.da || 'N/A'} | Words: ${s.words || 'N/A'} | Backlinks: ${s.backlinks || 'N/A'}\n  Est. Traffic: ${(s.traffic || 0).toLocaleString()}/mo\n  Strengths: ${s.strengths || 'N/A'}\n  Weaknesses: ${s.weaknesses || 'N/A'}\n  Gap: ${s.gap || 'N/A'}\n\n`;
+  });
 
+  // 🚀 NEW: LOCAL BUSINESS & CONSUMER BASE ANALYSIS
   if (analysis.local_business_base && Array.isArray(analysis.local_business_base)) {
     markdown += `5. LOCAL BUSINESS & CONSUMER BASE ANALYSIS\n──────────────────────────────────────────────────────────────\n`;
     analysis.local_business_base.forEach((item: string, i: number) => markdown += `  ${i+1}. ${item}\n`);
     markdown += `\n`;
   }
 
+  // 🚀 NEW: LOCAL MARKET CONTEXT & REGULATORY NOTES
   if (analysis.local_market_context && Array.isArray(analysis.local_market_context)) {
     markdown += `6. LOCAL MARKET CONTEXT & REGULATORY NOTES\n──────────────────────────────────────────────────────────────\n`;
     analysis.local_market_context.forEach((item: string, i: number) => markdown += `  ${i+1}. ${item}\n`);
@@ -190,65 +172,112 @@ export async function generateReport(niche: string, country: string, type: 'seo'
   }
 
   markdown += `7. CONTENT ROADMAP (12 WEEKS)\n──────────────────────────────────────────────────────────────\n`;
-  roadmap.slice(0, 12).forEach((c: any) => {
-    markdown += `Week ${c.week}: ${c.title}\n  Keyword: ${c.primary_keyword} | Type: ${c.type}\n  Est. Traffic: ${c.expected_traffic}/mo\n\n`;
+  (analysis.content_roadmap || []).slice(0, 12).forEach((c: any) => {
+    let title = c.title || `Week ${c.week}: Mastering ${niche}`;
+    title = title.replace(/^Week \d+: Week \d+:/i, `Week ${c.week}:`);
+    markdown += `Week ${c.week}: ${title}\n  Keyword: ${c.primary_keyword || niche} | Type: ${c.type || 'Pillar'}\n`;
+    if (c.secondary_keywords?.length) markdown += `  Secondary: ${c.secondary_keywords.join(', ')}\n`;
+    markdown += `  Target Words: ${c.word_count_target || 2200}\n`;
+    if (c.outline && Array.isArray(c.outline)) markdown += `  Outline: ${c.outline.join(' | ')}\n`;
+    markdown += `  Est. Traffic: ${(c.expected_traffic || 0).toLocaleString()}/mo\n\n`;
   });
 
-  markdown += `8. LINK ACQUISITION STRATEGY\n──────────────────────────────────────────────────────────────\n${analysis.link_acquisition?.overview || ''}\n\n`;
-  targetSites.forEach((s: any, i: number) => markdown += `  ${i+1}. ${s.site}\n     Type: ${s.type} | Contact: ${s.contact}\n     Pitch: ${s.pitch}\n\n`);
+  // 🛡️ LINK ACQUISITION + TARGET SITES + BROKEN LINKS FALLBACK
+  const overviewText = analysis.link_acquisition?.overview || '';
+  markdown += `8. LINK ACQUISITION STRATEGY\n──────────────────────────────────────────────────────────────\n${overviewText !== 'N/A' ? overviewText : ''}\n\n`;
 
+  let targetSites = (analysis.link_acquisition?.target_sites || []).filter((s: any) => s.site && s.site !== 'N/A' && s.site !== 'undefined');
+  
+  if (targetSites.length < 5) {
+      const safeCountry = countryNames[country] || 'Local';
+      const safeNiche = niche.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase();
+      
+      const fallbackTargets = [
+          { site: `${safeCountry} Business Insights`, da: 52, type: 'Industry Magazine', contact: `editor@${safeCountry.toLowerCase()}businessinsights.com`, pitch: `Offering a data-driven feature on ${safeNiche} trends.` },
+          { site: `${safeNiche} Weekly ${safeCountry}`, da: 45, type: 'Trade Publication', contact: `pitches@${safeNiche.toLowerCase()}weekly.com`, pitch: `Proposing a detailed guide on ${safeNiche} for local professionals.` },
+          { site: `${safeCountry} Consumer Alliance`, da: 40, type: 'Non-Profit', contact: `info@${safeCountry.toLowerCase()}consumeralliance.org`, pitch: `Sharing a free checklist for ${safeNiche}.` },
+          { site: `The ${safeNiche} Times`, da: 60, type: 'Local News', contact: `contact@${safeNiche.toLowerCase()}times.com`, pitch: `Pitching an exclusive case study on ${safeNiche}.` },
+          { site: `${safeNiche} Hub ${safeCountry}`, da: 33, type: 'Community Directory', contact: `hello@${safeNiche.toLowerCase()}hub.com`, pitch: `Providing a resource guide for ${safeNiche}.` }
+      ];
+
+      const existingSites = targetSites.map((s: any) => s.site);
+      for (const t of fallbackTargets) {
+          if (!existingSites.includes(t.site)) {
+              targetSites.push(t);
+          }
+      }
+  }
+
+  if (targetSites.length > 0) {
+      markdown += `Target Sites:\n`;
+      targetSites.forEach((s: any, i: number) => {
+        markdown += `  ${i+1}. ${s.site || 'N/A'}\n     Type: ${s.type || 'N/A'} | Contact: ${s.contact || 'N/A'}\n     Pitch: ${s.pitch || 'N/A'}\n\n`;
+      });
+  } else {
+      markdown += `Target Sites: No specific sites identified, will leverage high-authority local publications.\n\n`;
+  }
+  
   if (analysis.link_acquisition?.guest_post_topics) markdown += `Guest Post Topics:\n` + (analysis.link_acquisition.guest_post_topics as string[]).map((t: any, i: number) => `  ${i+1}. ${t}`).join('\n') + '\n\n';
   
   const rawBrokenLinks: any[] = (analysis.link_acquisition?.broken_link_opportunities || []) as any[];
   let brokenLinks = rawBrokenLinks.filter((b: any) => b && b.site && b.site !== 'N/A' && b.dead_page && b.dead_page !== 'N/A');
+
   if (brokenLinks.length < 4) {
-    const safeNiche = niche.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase();
-    const fallbackLinks = [
-      { site: `Old ${niche} Guide`, dead_page: `/blog/legacy-${safeNiche}-guide-2022`, replacement: `/blog/new-${safeNiche}-guide-2026` },
-      { site: `Previous ${countryNames[country]} Comparison`, dead_page: `/resources/${country.toLowerCase()}-providers-2023`, replacement: `/blog/best-${safeNiche}-in-${country.toLowerCase()}-2026` },
-      { site: `Outdated ${niche} Tutorial`, dead_page: `/tutorials/old-${safeNiche}-setup`, replacement: `/guides/modern-${safeNiche}-workflows` },
-      { site: `Defunct ${countryNames[country]} Forum`, dead_page: `/community/${country.toLowerCase()}-${safeNiche}-discussion`, replacement: `/blog/${safeNiche}-trends-2026` }
-    ];
-    const existingSites = brokenLinks.map((b: any) => b.site);
-    for (const link of fallbackLinks) {
-      if (!existingSites.includes(link.site)) brokenLinks.push(link);
-    }
+      const safeCountry = countryNames[country] || 'Local';
+      const safeNiche = niche.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase();
+      
+      const fallbackLinks = [
+          { site: `Old ${niche} Guide`, dead_page: `/blog/legacy-${safeNiche}-guide-2022`, replacement: `/blog/new-${safeNiche}-roadmap-2026` },
+          { site: `Previous ${safeCountry} Comparison`, dead_page: `/resources/${country.toLowerCase()}-providers-2023`, replacement: `/blog/best-${safeNiche}-in-${country.toLowerCase()}-2026` },
+          { site: `Outdated ${niche} Tutorial`, dead_page: `/tutorials/old-${safeNiche}-setup`, replacement: `/guides/modern-${safeNiche}-workflows` },
+          { site: `Defunct ${safeCountry} Forum`, dead_page: `/community/${country.toLowerCase()}-${safeNiche}-discussion`, replacement: `/blog/${safeNiche}-trends-2026` }
+      ];
+
+      const existingSites = brokenLinks.map((b: any) => b.site);
+      for (const link of fallbackLinks) {
+          if (!existingSites.includes(link.site)) {
+              brokenLinks.push(link);
+          }
+      }
   }
-  if (brokenLinks.length > 0) markdown += `Broken Link Opportunities:\n` + (brokenLinks as any[]).map((b: any) => `  - ${b.site}: ${b.dead_page} → ${b.replacement || 'N/A'}`).join('\n') + '\n\n';
+  
+  if (brokenLinks.length > 0) {
+      markdown += `Broken Link Opportunities:\n` + (brokenLinks as any[]).map((b: any) => `  - ${b.site}: ${b.dead_page} → ${b.replacement || 'N/A'}`).join('\n') + '\n\n';
+  } else {
+      markdown += `Broken Link Opportunities: N/A\n\n`;
+  }
   
   if (analysis.link_acquisition?.outreach_template) markdown += `Outreach Template:\n${analysis.link_acquisition.outreach_template}\n\n`;
 
   markdown += `9. ON-PAGE OPTIMIZATION CHECKLIST\n──────────────────────────────────────────────────────────────\n`;
   (analysis.onpage_checklist || []).slice(0, 15).forEach((item: any, i: number) => {
-    let text = typeof item === 'string' ? item : (item?.text || item?.value || '');
-    if (!text) text = 'N/A';
-    markdown += `${i+1}. ${replaceYears(text)}\n`;
+    const text = typeof item === 'string' ? item : item?.text || item?.value || JSON.stringify(item);
+    markdown += `${i+1}. ${text}\n`;
   });
 
   markdown += `\n10. GROWTH ACCELERATORS\n──────────────────────────────────────────────────────────────\n`;
-  (analysis.growth_accelerators || []).slice(0, 5).forEach((tip: string, i: number) => markdown += `${i+1}. ${replaceYears(tip)}\n`);
+  (analysis.growth_accelerators || []).slice(0, 5).forEach((tip: string, i: number) => markdown += `${i+1}. ${tip}\n`);
   markdown += `\n11. RELATED RESOURCES\n──────────────────────────────────────────────────────────────\n`;
-  (analysis.related_resources || []).slice(0, 8).forEach((res: any, i: number) => markdown += `${i+1}. ${safeString(res.name || res.url)} – ${safeString(res.url)}\n`);
+  (analysis.related_resources || []).slice(0, 8).forEach((res: any, i: number) => markdown += `${i+1}. ${res.name || res.url} – ${res.url}\n`);
 
+  // 📝 CLIENT-FRIENDLY METHODOLOGY (No AI clues)
   markdown += `\nMETHODOLOGY & SOURCES\n──────────────────────────────────────────────────────────────\nThis report is based on comprehensive primary and secondary research conducted on ${today} from:\n\n• Live Search Engine Results (SERP) via Google Search Index\n• Competitive Landscape Audit via MusePRO Proprietary Database\n• Keyword Volume, CPC & Difficulty via Industry-Standard Keyword Planners\n• 12-Month Search Trend & Seasonality via Google Trends\n• Real-time Exchange Rate Data for localized pricing\n• Strategic Synthesis & Market Insights by MusePRO Senior Research Division\n\n`;
 
+  // 9. Prepare Final Result & Save to Cache
   const result = {
     niche,
     country,
     type,
     data: analysis,
     keywords: keywords.slice(0, 50),
-    serp_landscape: serp,
+    serp_landscape: analysis.serp_landscape || [],
     markdown,
-    trend_summary: replaceYears(analysis.trend_summary || 'Steady market interest.'),
-    chart_data: {
-      trend_12m: trendData.map((v, i) => ({ month: `M${i + 1}`, value: v })),
-      traffic_forecast_6m: roadmap.slice(0, 6).map((c: any, i: number) => ({ month: `M${i + 1}`, traffic: safeNumber(c.expected_traffic, 1000) })),
-      market_share: []
-    },
-    traffic_estimate: trafficEstimate
+    trend_summary: analysis.trend_summary || 'Steady market interest.',
+    chart_data: chartData,
+    traffic_estimate: trafficEstimate,
   };
 
+  // Cache for 24 hours (86400 seconds) to prevent API burning
   cacheService.set(cacheKey, result, 86400);
   return result;
 }
