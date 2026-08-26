@@ -13,6 +13,7 @@ const ReportSchema = new mongoose.Schema({
   trend_summary: { type: String, default: 'Steady trend.' },
   traffic_estimate: { type: Number, default: 0 },
   chart_data: { type: mongoose.Schema.Types.Mixed, default: {} },
+  remark: { type: String, default: '' }, // ✅ NEW FIELD ADDED
 }, { timestamps: true });
 
 export const Report = mongoose.model('Report', ReportSchema);
