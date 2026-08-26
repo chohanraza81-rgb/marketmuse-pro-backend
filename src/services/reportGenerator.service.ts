@@ -12,13 +12,11 @@ const countryNames: Record<string, string> = {
   pk: 'Pakistan', in: 'India', tr: 'Turkey', my: 'Malaysia',
 };
 
-// ONLY prevents NaN, does NOT generate random numbers
 const safeNumber = (val: any, fallback: number = 0) => {
   const num = Number(val);
   return isNaN(num) || num === 0 ? fallback : num;
 };
 
-// 🛡️ SAFE FIX: Prevents crash if text is not a string (null/undefined)
 const replaceYears = (text: any): string => {
   if (typeof text !== 'string') return 'N/A';
   return text.replace(/\b(2024|2025)\b/g, '2026');
@@ -45,15 +43,16 @@ const buildUnifiedPrompt = (niche: string, country: string, type: 'seo' | 'produ
   return `You are a veteran senior consultant at MusePRO. Write in a human tone.
 
   **CRITICAL SETTINGS**:
-  - The current year is ALWAYS 2026. NEVER use 2024/2025.
-  - Target country is ${countryName}. DO NOT mention US, UK, or other countries.
-  - **CRITICAL DATA RULES**: 
-    - For 'volume', ALWAYS output a realistic integer between 200 and 5000. NEVER output 0.
-    - For 'kd', ALWAYS output a realistic integer between 10 and 60. NEVER output 0.
-    - For 'cpc', output realistic price between 0.50 and 5.00.
-  - **SERP RULE**: If real data is missing, invent 8 realistic local sounding websites for ${countryName} related to "${niche}". NEVER use "undefined".
-  - **LINK ACQUISITION RULE**: Invent 5 realistic local publications. DO NOT use the cleaned English version of the niche. Use the original Turkish/niche words.
+  - The current year is ALWAYS 2026.
+  - Target country is ${countryName}. DO NOT mention US, UK, or any other country.
+  - **LANGUAGE RULE**: The report MUST be in English. All local names, websites, and references MUST use English or local names only (e.g., for Singapore, use "SG Tech Hub", "Singapore Earbuds Review", NOT Turkish words like "Dergisi" or "Haftalik").
   
+  - **DATA RULES**: Volume between 200-5000. KD between 10-60. CPC between 0.50-5.00.
+  
+  - **SERP RULE**: If real data is missing, invent 8 realistic local sounding websites for ${countryName} related to "${niche}". Use the correct domain extension for ${countryName} (e.g., .com.sg for Singapore, .com.au for Australia). NEVER use "undefined".
+  
+  - **LINK ACQUISITION RULE**: Invent 5 realistic local publications with English names related to ${niche} (e.g., "${niche} Review Singapore", "${niche} Hub SG"). NEVER use Turkish or non-country specific words.
+
   Create a premium ${type === 'seo' ? 'SEO Research' : 'Product Intelligence'} report for "${niche}" in "${countryName}".
   
   **RETURN ONLY VALID JSON**:
@@ -112,8 +111,8 @@ export async function generateReport(niche: string, country: string, type: 'seo'
   if (!serp.length) {
     serp = Array.from({ length: 8 }, (_, i) => ({
       position: i + 1,
-      title: `${niche} Rehberi Turkiye ${i + 1}`,
-      link: `https://www.${niche.replace(/\s/g, '').toLowerCase()}rehberi${i + 1}.com.tr`,
+      title: `${niche} Review ${countryName} ${i + 1}`,
+      link: `https://www.${niche.replace(/\s/g, '').toLowerCase()}review${i + 1}.com.sg`,
       da: safeNumber(40 + i, 40),
       words: safeNumber(1200 + i * 100, 1200),
       backlinks: safeNumber(20 + i * 10, 20),
@@ -124,25 +123,30 @@ export async function generateReport(niche: string, country: string, type: 'seo'
     }));
   }
 
-  let roadmap = (analysis.content_roadmap || []).map((c: any, i: number) => ({
-    week: c.week || i + 1,
-    title: replaceYears(safeString(c.title, `Week ${i + 1}: ${keywords[i]?.keyword || niche}`)),
-    primary_keyword: safeString(c.primary_keyword, keywords[i]?.keyword || niche),
-    type: safeString(c.type, 'Pillar'),
-    word_count_target: safeNumber(c.word_count_target, 2200),
-    expected_traffic: safeNumber(c.expected_traffic, 1000)
-  }));
+  let roadmap = (analysis.content_roadmap || []).map((c: any, i: number) => {
+    let title = safeString(c.title, `Week ${i + 1}: ${keywords[i]?.keyword || niche}`);
+    // Fix "Week X: Week X:" bug
+    title = title.replace(/^Week \d+: Week \d+:/i, `Week ${i + 1}:`);
+    return {
+      week: c.week || i + 1,
+      title: replaceYears(title),
+      primary_keyword: safeString(c.primary_keyword, keywords[i]?.keyword || niche),
+      type: safeString(c.type, 'Pillar'),
+      word_count_target: safeNumber(c.word_count_target, 2200),
+      expected_traffic: safeNumber(c.expected_traffic, 1000)
+    };
+  });
 
   let targetSites = (analysis.link_acquisition?.target_sites || []).filter((s: any) => s.site && s.site !== 'N/A');
   if (targetSites.length < 5) {
     const safeNiche = niche;
     const safeCountry = countryNames[country] || country;
     targetSites = [
-      { site: `${safeNiche} Dergisi ${safeCountry}`, type: 'Industry Magazine', contact: `editor@${safeNiche.toLowerCase().replace(/\s/g, '')}dergisi.com`, pitch: 'Data-driven feature analysis.' },
-      { site: `Pro ${safeNiche} Birligi`, type: 'Trade Association', contact: `info@pro${safeNiche.toLowerCase().replace(/\s/g, '')}birligi.com`, pitch: 'Free checklist for professionals.' },
-      { site: `${safeNiche} Review ${safeCountry}`, type: 'Consumer Reviews', contact: `hello@${safeNiche.toLowerCase().replace(/\s/g, '')}review.com`, pitch: 'Detailed guide on local providers.' },
-      { site: `${safeCountry} ${safeNiche} Toplulugu`, type: 'Community Blog', contact: `admin@${safeCountry.toLowerCase()}${safeNiche.toLowerCase().replace(/\s/g, '')}toplulugu.com`, pitch: 'Exclusive case study.' },
-      { site: `${safeNiche} Haftalik`, type: 'Trade News', contact: `contact@${safeNiche.toLowerCase().replace(/\s/g, '')}haftalik.com`, pitch: 'Resource guide for niche.' }
+      { site: `${safeNiche} Review ${safeCountry}`, type: 'Industry Magazine', contact: `editor@${safeNiche.toLowerCase().replace(/\s/g, '')}review.com`, pitch: 'Data-driven feature analysis.' },
+      { site: `Pro ${safeNiche} Hub`, type: 'Trade Association', contact: `info@pro${safeNiche.toLowerCase().replace(/\s/g, '')}hub.com`, pitch: 'Free checklist for professionals.' },
+      { site: `${safeNiche} ${safeCountry} Weekly`, type: 'Trade News', contact: `contact@${safeNiche.toLowerCase().replace(/\s/g, '')}weekly.com`, pitch: 'Resource guide for niche.' },
+      { site: `The ${safeNiche} Times`, type: 'Community Blog', contact: `admin@the${safeNiche.toLowerCase().replace(/\s/g, '')}times.com`, pitch: 'Exclusive case study.' },
+      { site: `${safeCountry} ${safeNiche} Insights`, type: 'Consumer Reports', contact: `hello@${safeNiche.toLowerCase().replace(/\s/g, '')}insights.com`, pitch: 'Detailed guide on local providers.' }
     ];
   }
 
@@ -198,12 +202,12 @@ export async function generateReport(niche: string, country: string, type: 'seo'
   const rawBrokenLinks: any[] = (analysis.link_acquisition?.broken_link_opportunities || []) as any[];
   let brokenLinks = rawBrokenLinks.filter((b: any) => b && b.site && b.site !== 'N/A' && b.dead_page && b.dead_page !== 'N/A');
   if (brokenLinks.length < 4) {
-    const safeNiche = niche.replace(/[^a-zA-Z0-9ğüşöçıİĞÜŞÖÇ]/g, '-').toLowerCase();
+    const safeNiche = niche.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase();
     const fallbackLinks = [
-      { site: `Eski ${niche} Rehberi`, dead_page: `/blog/eski-${safeNiche}-rehberi-2022`, replacement: `/blog/yeni-${safeNiche}-rehberi-2026` },
-      { site: `Onceki ${countryNames[country]} Karsilastirma`, dead_page: `/resources/${country.toLowerCase()}-onceki-karsilastirma-2023`, replacement: `/blog/best-${safeNiche}-in-${country.toLowerCase()}-2026` },
-      { site: `Guncel Olmayan ${niche} Rehberi`, dead_page: `/tutorials/eski-${safeNiche}-kurulum`, replacement: `/guides/modern-${safeNiche}-workflows` },
-      { site: `Kapanan ${countryNames[country]} Forum`, dead_page: `/community/${country.toLowerCase()}-${safeNiche}-forum`, replacement: `/blog/${safeNiche}-trends-2026` }
+      { site: `Old ${niche} Guide`, dead_page: `/blog/legacy-${safeNiche}-guide-2022`, replacement: `/blog/new-${safeNiche}-guide-2026` },
+      { site: `Previous ${countryNames[country]} Comparison`, dead_page: `/resources/${country.toLowerCase()}-providers-2023`, replacement: `/blog/best-${safeNiche}-in-${country.toLowerCase()}-2026` },
+      { site: `Outdated ${niche} Tutorial`, dead_page: `/tutorials/old-${safeNiche}-setup`, replacement: `/guides/modern-${safeNiche}-workflows` },
+      { site: `Defunct ${countryNames[country]} Forum`, dead_page: `/community/${country.toLowerCase()}-${safeNiche}-discussion`, replacement: `/blog/${safeNiche}-trends-2026` }
     ];
     const existingSites = brokenLinks.map((b: any) => b.site);
     for (const link of fallbackLinks) {
@@ -216,7 +220,6 @@ export async function generateReport(niche: string, country: string, type: 'seo'
 
   markdown += `9. ON-PAGE OPTIMIZATION CHECKLIST\n──────────────────────────────────────────────────────────────\n`;
   (analysis.onpage_checklist || []).slice(0, 15).forEach((item: any, i: number) => {
-    // 🛡️ SAFE FIX: Handles null/undefined values in checklist
     let text = typeof item === 'string' ? item : (item?.text || item?.value || '');
     if (!text) text = 'N/A';
     markdown += `${i+1}. ${replaceYears(text)}\n`;
