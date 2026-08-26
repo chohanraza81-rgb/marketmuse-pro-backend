@@ -2,6 +2,7 @@ import { Router } from 'express';
 import mongoose from 'mongoose';
 import { createProductReport, getProductReport } from '../controllers/product.controller';
 import { createSEOReport, getSEOReport } from '../controllers/seo.controller';
+import { createTechnicalSEOReport, getTechnicalSEOReport } from '../controllers/technical-seo.controller';
 import {
   getReports,
   getReportStats,
@@ -31,6 +32,10 @@ router.get('/product-research/:id', getProductReport);
 // SEO Report
 router.post('/seo-report', createSEOReport);
 router.get('/seo-report/:id', getSEOReport);
+
+// Technical SEO Audit
+router.post('/technical-seo', createTechnicalSEOReport);
+router.get('/technical-seo/:id', getTechnicalSEOReport);
 
 // Reports (CRUD + Update)
 router.get('/reports/search', searchReports);
