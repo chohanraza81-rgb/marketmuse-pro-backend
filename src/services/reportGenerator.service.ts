@@ -109,9 +109,10 @@ export async function generateReport(niche: string, country: string, type: 'seo'
   }));
 
   if (!serp.length) {
+    const actualCountry = countryNames[country] || country; // ✅ FIX: countryName define kiya
     serp = Array.from({ length: 8 }, (_, i) => ({
       position: i + 1,
-      title: `${niche} Review ${countryName} ${i + 1}`,
+      title: `${niche} Review ${actualCountry} ${i + 1}`,
       link: `https://www.${niche.replace(/\s/g, '').toLowerCase()}review${i + 1}.com.sg`,
       da: safeNumber(40 + i, 40),
       words: safeNumber(1200 + i * 100, 1200),
@@ -125,7 +126,6 @@ export async function generateReport(niche: string, country: string, type: 'seo'
 
   let roadmap = (analysis.content_roadmap || []).map((c: any, i: number) => {
     let title = safeString(c.title, `Week ${i + 1}: ${keywords[i]?.keyword || niche}`);
-    // Fix "Week X: Week X:" bug
     title = title.replace(/^Week \d+: Week \d+:/i, `Week ${i + 1}:`);
     return {
       week: c.week || i + 1,
