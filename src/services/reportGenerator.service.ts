@@ -12,14 +12,20 @@ const countryNames: Record<string, string> = {
   pk: 'Pakistan', in: 'India', tr: 'Turkey', my: 'Malaysia',
 };
 
+// ONLY prevents NaN, does NOT generate random numbers
 const safeNumber = (val: any, fallback: number = 0) => {
   const num = Number(val);
   return isNaN(num) || num === 0 ? fallback : num;
 };
 
+// 🛡️ SAFE FIX: Prevents crash if text is not a string (null/undefined)
+const replaceYears = (text: any): string => {
+  if (typeof text !== 'string') return 'N/A';
+  return text.replace(/\b(2024|2025)\b/g, '2026');
+};
+
 const safeString = (val: any, fallback: string = 'N/A') => {
   if (!val) return fallback;
-  // 🛡️ FIX: Remove mock URLs
   return String(val).replace(/-mock/g, '').replace(/\.mock/g, '');
 };
 
@@ -45,8 +51,8 @@ const buildUnifiedPrompt = (niche: string, country: string, type: 'seo' | 'produ
     - For 'volume', ALWAYS output a realistic integer between 200 and 5000. NEVER output 0.
     - For 'kd', ALWAYS output a realistic integer between 10 and 60. NEVER output 0.
     - For 'cpc', output realistic price between 0.50 and 5.00.
-  - **SERP RULE**: If real data is missing, invent 8 realistic local sounding websites for ${countryName} related to "${niche}". For example, if country is Turkey, use names like "Turkiye ${niche} Rehberi", "Istanbul ${niche} Merkezi", or "${niche} Forum TR". NEVER use "undefined".
-  - **LINK ACQUISITION RULE**: Invent 5 realistic local publications. DO NOT use the cleaned English version of the niche. Use the original Turkish/niche words (e.g., "Turkiye ${niche} Dergisi").
+  - **SERP RULE**: If real data is missing, invent 8 realistic local sounding websites for ${countryName} related to "${niche}". NEVER use "undefined".
+  - **LINK ACQUISITION RULE**: Invent 5 realistic local publications. DO NOT use the cleaned English version of the niche. Use the original Turkish/niche words.
   
   Create a premium ${type === 'seo' ? 'SEO Research' : 'Product Intelligence'} report for "${niche}" in "${countryName}".
   
@@ -70,8 +76,6 @@ export async function generateReport(niche: string, country: string, type: 'seo'
   const aiResponse = await runGroqWithRetry(prompt, JSON.stringify({ niche, country }));
   const analysis = extractJSON(aiResponse);
 
-  const replaceYears = (text: string) => text.replace(/\b(2024|2025)\b/g, '2026');
-
   if (analysis.key_insights) analysis.key_insights = analysis.key_insights.map((item: any) => replaceYears(typeof item === 'string' ? item : (item.text || item.value || JSON.stringify(item))));
   if (analysis.immediate_actions) analysis.immediate_actions = analysis.immediate_actions.map((item: any) => replaceYears(typeof item === 'string' ? item : (item.text || item.value || JSON.stringify(item))));
 
@@ -88,12 +92,10 @@ export async function generateReport(niche: string, country: string, type: 'seo'
     potential: safeString(kw.potential, 'Easy Win')
   }));
 
-  // Fix CPC currency conversion
   for (const kw of keywords) {
     kw.cpc = await convertCurrency(kw.cpc, 'USD', targetCurrency);
   }
 
-  // SERP Sanitization (Fill empty)
   let serp = (analysis.serp_landscape || []).filter((s: any) => s.title && s.link).map((s: any, i: number) => ({
     position: s.position || i + 1,
     title: safeString(s.title),
@@ -122,7 +124,6 @@ export async function generateReport(niche: string, country: string, type: 'seo'
     }));
   }
 
-  // Roadmap Sanitization (Prevent repeating "Mastering")
   let roadmap = (analysis.content_roadmap || []).map((c: any, i: number) => ({
     week: c.week || i + 1,
     title: replaceYears(safeString(c.title, `Week ${i + 1}: ${keywords[i]?.keyword || niche}`)),
@@ -132,10 +133,9 @@ export async function generateReport(niche: string, country: string, type: 'seo'
     expected_traffic: safeNumber(c.expected_traffic, 1000)
   }));
 
-  // Link Acquisition Sanitization (Fix English names for Turkish reports)
   let targetSites = (analysis.link_acquisition?.target_sites || []).filter((s: any) => s.site && s.site !== 'N/A');
   if (targetSites.length < 5) {
-    const safeNiche = niche; // Use original niche
+    const safeNiche = niche;
     const safeCountry = countryNames[country] || country;
     targetSites = [
       { site: `${safeNiche} Dergisi ${safeCountry}`, type: 'Industry Magazine', contact: `editor@${safeNiche.toLowerCase().replace(/\s/g, '')}dergisi.com`, pitch: 'Data-driven feature analysis.' },
@@ -216,7 +216,9 @@ export async function generateReport(niche: string, country: string, type: 'seo'
 
   markdown += `9. ON-PAGE OPTIMIZATION CHECKLIST\n──────────────────────────────────────────────────────────────\n`;
   (analysis.onpage_checklist || []).slice(0, 15).forEach((item: any, i: number) => {
-    const text = typeof item === 'string' ? item : item?.text || item?.value || JSON.stringify(item);
+    // 🛡️ SAFE FIX: Handles null/undefined values in checklist
+    let text = typeof item === 'string' ? item : (item?.text || item?.value || '');
+    if (!text) text = 'N/A';
     markdown += `${i+1}. ${replaceYears(text)}\n`;
   });
 
