@@ -3,6 +3,7 @@ import { Report } from '../models/Report';
 import { reportQuerySchema } from '../validators/report';
 import { ZodError } from 'zod';
 
+// GET /api/reports - List reports with pagination & filters
 export const getReports = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const query = reportQuerySchema.parse(req.query);
@@ -20,7 +21,7 @@ export const getReports = async (req: Request, res: Response, next: NextFunction
       .sort({ createdAt: -1 })
       .skip((query.page - 1) * query.limit)
       .limit(query.limit)
-      .select('-data -markdown -charts -chart_data')
+      .select('-data -markdown -charts -chart_data') // Minimal projection for list
       .lean();
 
     res.json({
@@ -32,6 +33,8 @@ export const getReports = async (req: Request, res: Response, next: NextFunction
         clientName: r.clientName || 'Client Name',
         value: r.type === 'product' ? '$149' : '$99',
         createdAt: r.createdAt,
+        updatedAt: r.updatedAt,
+        remark: r.remark || ''
       })),
       pagination: { total, page: query.page, limit: query.limit, pages: Math.ceil(total / query.limit) },
     });
@@ -41,6 +44,7 @@ export const getReports = async (req: Request, res: Response, next: NextFunction
   }
 };
 
+// GET /api/reports/stats
 export const getReportStats = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const filter = { type: { $in: ['product', 'seo'] } };
@@ -53,6 +57,7 @@ export const getReportStats = async (req: Request, res: Response, next: NextFunc
   } catch (err) { next(err); }
 };
 
+// GET /api/reports/:id
 export const getReportById = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const report = await Report.findById(req.params.id);
@@ -60,6 +65,7 @@ export const getReportById = async (req: Request, res: Response, next: NextFunct
 
     const returnReport = {
       ...report.toObject(),
+      remark: report.remark || '', // ✅ Include remark
       sixMonthTrafficEstimate: (report as any).traffic_estimate || (report as any).sixMonthTrafficEstimate || 0,
       trendSummary: (report as any).trend_summary || 'Steady trend detected.',
       chartData: (report as any).chart_data || {},
@@ -68,14 +74,15 @@ export const getReportById = async (req: Request, res: Response, next: NextFunct
   } catch (err) { next(err); }
 };
 
-// ✅ NEW: PUT /api/reports/:id - Update report metadata and/or markdown
+// PUT /api/reports/:id - Update report metadata and/or markdown (With Remark Support)
 export const updateReport = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { clientName, markdown } = req.body;
+    const { clientName, markdown, remark } = req.body;
     const updateData: any = {};
 
     if (clientName) updateData.clientName = clientName;
     if (markdown) updateData.markdown = markdown;
+    if (remark !== undefined) updateData.remark = remark; // ✅ Remark added
 
     const report = await Report.findByIdAndUpdate(req.params.id, updateData, { new: true });
     if (!report) return res.status(404).json({ error: 'Report not found' });
@@ -83,6 +90,7 @@ export const updateReport = async (req: Request, res: Response, next: NextFuncti
   } catch (err) { next(err); }
 };
 
+// DELETE /api/reports/:id
 export const deleteReport = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const report = await Report.findByIdAndDelete(req.params.id);
@@ -91,6 +99,7 @@ export const deleteReport = async (req: Request, res: Response, next: NextFuncti
   } catch (err) { next(err); }
 };
 
+// POST /api/reports/export-zip
 export const bulkExportZip = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { ids } = req.body;
@@ -113,6 +122,7 @@ export const bulkExportZip = async (req: Request, res: Response, next: NextFunct
   } catch (err) { next(err); }
 };
 
+// DELETE /api/reports/cleanup
 export const cleanupOldReports = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const result = await (Report as any).cleanupInvalid();
@@ -120,6 +130,7 @@ export const cleanupOldReports = async (req: Request, res: Response, next: NextF
   } catch (err) { next(err); }
 };
 
+// DELETE /api/reports/bulk-delete
 export const bulkDeleteReports = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { ids } = req.body;
@@ -131,6 +142,7 @@ export const bulkDeleteReports = async (req: Request, res: Response, next: NextF
   } catch (err) { next(err); }
 };
 
+// GET /api/reports/search
 export const searchReports = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { q, limit = 20 } = req.query;
@@ -142,7 +154,7 @@ export const searchReports = async (req: Request, res: Response, next: NextFunct
     res.json({
       query: q,
       results: reports.length,
-      reports: reports.map((r: any) => ({ _id: r._id, type: r.type, niche: r.niche, country: r.country, value: r.type === 'product' ? '$149' : '$99', createdAt: r.createdAt })),
+      reports: reports.map((r: any) => ({ _id: r._id, type: r.type, niche: r.niche, country: r.country, value: r.type === 'product' ? '$149' : '$99', createdAt: r.createdAt, remark: r.remark || '' })),
     });
   } catch (err) { next(err); }
 };
