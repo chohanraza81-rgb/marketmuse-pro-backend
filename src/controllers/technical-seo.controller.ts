@@ -120,7 +120,7 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
     const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
     const reference = `MKT-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
 
-    // 🌟 EXACT IMPROVED FORMAT AS REQUESTED
+    // 🌟 CLEAN FORMAT - NO EXTRA LINES AT THE END
     let markdown = `MusePRO
 Real-Time Market Research
 Intelligence Division
@@ -248,12 +248,6 @@ This audit is based on comprehensive primary and secondary research conducted on
 • 12-Month Search Trend & Seasonality via Google Trends
 • Strategic Synthesis & Market Insights by MusePRO Senior Research Division
 ════════════════════════════════════════════════════════════════════
-
-**NEXT STEPS:**
-Book a 15-min implementation call: [Your Calendar Link]
-Email: your-email@musepro.ai
-════════════════════════════════════════════════════════════════════
-MusePRO Intelligence Division
 `;
 
     const report = await Report.create({
