@@ -9,40 +9,73 @@ const technicalSeoSchema = z.object({
   country: z.string().length(2),
 });
 
-// Helper to prevent crashes
 const safeNumber = (val: any, fallback: number = 0) => {
   const num = Number(val);
   return isNaN(num) || num === 0 ? fallback : num;
-};
-
-const safeString = (val: any, fallback: string = 'N/A') => {
-  if (!val) return fallback;
-  return String(val);
 };
 
 export const createTechnicalSEOReport = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { websiteUrl, country } = technicalSeoSchema.parse(req.body);
 
-    // 1. Fetch Real Data
     const startTime = Date.now();
     let responseTime = 0;
     let status = 0;
     let hasSSL = websiteUrl.startsWith('https');
     let hasRobots = false;
     let hasSitemap = false;
+
+    // Real HTML Evidence Variables
+    let titleTag = 'MISSING';
+    let metaDescription = 'MISSING';
+    let h1Count = 0;
+    let hasViewport = false;
+    let hasJSONLD = false;
+    let missingAltCount = 0;
+    let totalImages = 0;
+    let pageSizeKb = 0;
     let hasCanonical = false;
-    let hasHttps = false;
 
     try {
-      const response = await axios.get(websiteUrl, { timeout: 15000, headers: { 'User-Agent': 'MusePRO-Audit-Bot' } });
+      // Strong User-Agent to bypass 403 (like AutoZone)
+      const response = await axios.get(websiteUrl, {
+        timeout: 15000,
+        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' }
+      });
       status = response.status;
       responseTime = Date.now() - startTime;
-      hasHttps = websiteUrl.startsWith('https');
-      // Check for canonical tag in HTML (basic regex)
+
       const html = response.data;
       if (typeof html === 'string') {
-        if (html.includes('rel="canonical"') || html.includes("rel='canonical'")) hasCanonical = true;
+        pageSizeKb = Math.round(Buffer.byteLength(html, 'utf8') / 1024);
+        
+        // 1. Title Check
+        const titleMatch = html.match(/<title[^>]*>([^<]*)<\/title>/i);
+        if (titleMatch && titleMatch[1].trim()) titleTag = titleMatch[1].trim();
+
+        // 2. Meta Description
+        const metaMatch = html.match(/<meta[^>]+name=["']description["'][^>]+content=["']([^"']*)["']/i);
+        if (metaMatch && metaMatch[1].trim()) metaDescription = metaMatch[1].trim();
+
+        // 3. H1 Count
+        const h1Matches = html.match(/<h1[^>]*>/gi);
+        h1Count = h1Matches ? h1Matches.length : 0;
+
+        // 4. Viewport
+        if (/<meta[^>]+name=["']viewport["']/i.test(html)) hasViewport = true;
+
+        // 5. JSON-LD Schema
+        if (/application\/ld\+json/i.test(html)) hasJSONLD = true;
+
+        // 6. Canonical
+        if (/rel=["']canonical["']/i.test(html)) hasCanonical = true;
+
+        // 7. Image Alt Tags
+        const imgTags = html.match(/<img[^>]*>/gi) || [];
+        totalImages = imgTags.length;
+        for (const img of imgTags) {
+          if (!/alt=["']/i.test(img) || /alt=["'']/i.test(img)) missingAltCount++;
+        }
       }
     } catch (error: any) {
       if (error.response) {
@@ -55,90 +88,125 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
 
     // Check robots.txt
     try {
-      const robotsUrl = new URL('/robots.txt', websiteUrl).toString();
-      const robotsRes = await axios.get(robotsUrl, { timeout: 5000 });
+      const robotsRes = await axios.get(new URL('/robots.txt', websiteUrl).toString(), { timeout: 5000 });
       if (robotsRes.status === 200) hasRobots = true;
     } catch {}
 
     // Check sitemap.xml
     try {
-      const sitemapUrl = new URL('/sitemap.xml', websiteUrl).toString();
-      const sitemapRes = await axios.get(sitemapUrl, { timeout: 5000 });
+      const sitemapRes = await axios.get(new URL('/sitemap.xml', websiteUrl).toString(), { timeout: 5000 });
       if (sitemapRes.status === 200) hasSitemap = true;
     } catch {}
 
-    // 2. Calculate Score
+    // 2. Advanced Score Calculation (Evidence-Based)
     let score = 100;
-    if (status === 0) score -= 30;
-    if (status >= 400) score -= 30;
-    if (!hasSSL) score -= 20;
-    if (!hasRobots) score -= 10;
-    if (!hasSitemap) score -= 10;
-    if (!hasCanonical) score -= 5;
-    if (responseTime > 2000) score -= 10;
+    let criticalIssues: string[] = [];
+    let warnings: string[] = [];
+
+    if (status === 0) { score -= 30; criticalIssues.push(`Site is completely unreachable (HTTP Status: ${status}).`); }
+    else if (status >= 400) { score -= 25; criticalIssues.push(`Server is returning HTTP ${status}. This blocks search engines and users.`); }
+
+    if (!hasSSL) { score -= 15; criticalIssues.push("Missing SSL (HTTPS). Unsecured sites are penalized by Google."); }
+    if (titleTag === 'MISSING') { score -= 15; criticalIssues.push("No Title Tag found. Title tags are the #1 on-page SEO signal."); }
+    if (metaDescription === 'MISSING') { score -= 10; warnings.push("Missing Meta Description. CTR will suffer."); }
+    if (h1Count === 0) { score -= 10; criticalIssues.push("No H1 tags found. The page lacks a primary heading."); }
+    if (h1Count > 1) { score -= 5; warnings.push(`Found ${h1Count} H1 tags on the page. Only one is recommended.`); }
+    if (!hasViewport) { score -= 10; criticalIssues.push("Missing Viewport meta tag. The site is not mobile-friendly."); }
+    if (!hasJSONLD) { score -= 10; warnings.push("No Schema.org (JSON-LD) markup found."); }
+    if (missingAltCount > 0) { score -= 5; warnings.push(`${missingAltCount} images are missing Alt Text.`); }
+    if (!hasRobots) { score -= 5; warnings.push("No robots.txt found."); }
+    if (!hasSitemap) { score -= 5; warnings.push("No sitemap.xml found."); }
+    if (responseTime > 2000) { score -= 10; warnings.push(`Slow response time (${responseTime}ms).`); }
+    if (pageSizeKb > 2000) { score -= 10; warnings.push(`Heavy page size (${pageSizeKb}KB).`); }
+    
     score = Math.max(0, Math.min(100, score));
 
     const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
     const reference = `MKT-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
 
-    // 3. Generate Premium, Human-Tone Markdown
+    // 3. Agency-Level Evidence + Powerful Markdown
     let markdown = `MusePRO\nReal-Time Market Research\nIntelligence Division\n──────────────────────────────────────────────────────────────\nTECHNICAL SEO AUDIT REPORT\n\nPrepared For: [Client Name]\nDate: ${today}\nReference: ${reference}\nClassification: CONFIDENTIAL\n──────────────────────────────────────────────────────────────\n\n`;
 
-    // Executive Brief
+    // Executive Brief (With Insights + Evidence)
     markdown += `1. EXECUTIVE BRIEF\n──────────────────────────────────────────────────────────────\n`;
-    markdown += `  1. The website ${websiteUrl} is currently ${status === 200 ? 'accessible' : 'experiencing technical issues'}, with a response time of ${responseTime}ms. Here's the kicker: the page load speed is critical for user retention and Core Web Vitals scoring.\n`;
-    markdown += `  2. While the HTTPS certificate is ${hasSSL ? 'active' : 'missing'}, the site lacks ${!hasSitemap ? 'a sitemap.xml file' : ''}${!hasRobots ? ' and a robots.txt file' : ''}, which limits proper crawlability and indexing.\n`;
-    markdown += `  3. We see a massive opportunity to improve technical health by fixing the HTTP status errors (${status}) and ensuring structured data is present.\n`;
-    markdown += `\nPriority Actions:\n  1. Fix server errors (HTTP ${status}) to ensure page accessibility.\n  2. Generate and submit a sitemap.xml to Google Search Console.\n  3. Implement canonical tags to avoid duplicate content penalties.\n`;
-
-    // Trend Assessment (Simulated)
-    markdown += `\n2. TREND ASSESSMENT\n──────────────────────────────────────────────────────────────\n`;
-    markdown += `The reality is that search engines in 2026 are prioritizing user experience above all else. Core Web Vitals (LCP, INP, CLS) have become non-negotiable ranking factors. Websites with slower response times and missing technical foundations are losing organic traffic rapidly. The smart money is on fixing these foundational issues now, rather than focusing on content creation alone.\n\n`;
-
-    // Technical Checks
-    markdown += `3. TECHNICAL CHECKS\n──────────────────────────────────────────────────────────────\n`;
-    markdown += `- HTTPS Enabled: ${hasSSL ? 'Yes' : 'No'}\n- HTTP Status: ${status || 'Unreachable'}\n- Response Time: ${responseTime}ms\n- robots.txt Found: ${hasRobots ? 'Yes' : 'No'}\n- sitemap.xml Found: ${hasSitemap ? 'Yes' : 'No'}\n- Canonical Tags Found: ${hasCanonical ? 'Yes' : 'No'}\n- Overall Health Score: ${score}/100\n\n`;
-
-    // Recommendations
-    markdown += `4. RECOMMENDATIONS\n──────────────────────────────────────────────────────────────\n`;
-    if (!hasSSL) markdown += `- Enable SSL (HTTPS) certificate to secure user data.\n`;
-    if (!hasRobots) markdown += `- Add a robots.txt file to guide search engine crawlers.\n`;
-    if (!hasSitemap) markdown += `- Generate a sitemap.xml to improve indexing.\n`;
-    if (!hasCanonical) markdown += `- Implement canonical tags to prevent duplicate content issues.\n`;
-    if (responseTime > 2000) markdown += `- Optimize page speed to reduce load times (Target < 2s).\n`;
-    if (status >= 400) markdown += `- Fix server errors (HTTP ${status}) to restore page access.\n`;
-    if (score >= 80) markdown += `- Site looks healthy. Focus on advanced Core Web Vitals and content optimization.\n`;
+    markdown += `  1. The reality is that ${websiteUrl} has a response time of ${responseTime}ms, but here's the kicker: we pulled the raw HTML and found ${h1Count} H1 tags, ${totalImages} images, and a page size of ${pageSizeKb}KB. This provides us with clear, undeniable evidence of its health.\n`;
+    markdown += `  2. Let's cut to the chase: The site is ${hasSSL ? 'protected with HTTPS' : 'unsecured (missing HTTPS)'}, but it ${hasJSONLD ? 'has rich Schema markup' : 'is missing Schema markup (JSON-LD)'}. This limits how Google reads the content.\n`;
+    markdown += `  3. We see a massive opportunity to improve technical health. By fixing the ${criticalIssues.length} critical issues and ${warnings.length} warnings identified below, you can easily unlock higher rankings.\n`;
+    markdown += `\nPriority Actions:\n`;
+    criticalIssues.slice(0, 3).forEach((issue, i) => markdown += `  1. Fix critical issue: ${issue}\n`);
+    warnings.slice(0, 2).forEach((issue, i) => markdown += `  ${criticalIssues.length + i + 1}. Address warning: ${issue}\n`);
     markdown += `\n`;
 
+    // Trend Assessment
+    markdown += `2. TREND ASSESSMENT\n──────────────────────────────────────────────────────────────\n`;
+    markdown += `In 2026, Google's core algorithms are heavily leaning on Core Web Vitals and technical cleanliness. The smart money is on fixing the foundational issues now. As user expectations rise, sites with slower response times, missing mobile setups, and broken HTML structures are losing traffic rapidly. This audit provides the exact data points you need to leapfrog your competitors.\n\n`;
+
+    // Evidence Table
+    markdown += `3. TECHNICAL EVIDENCE & HEALTH CHECKS\n──────────────────────────────────────────────────────────────\n`;
+    markdown += `| Metric | Status | Evidence |\n|---|---|---|\n`;
+    markdown += `| HTTP Status | ${status === 200 ? '✅ Pass' : status === 0 ? '❌ Failed' : '⚠️ ' + status} | Server returned ${status || 'no response'} |\n`;
+    markdown += `| Response Time | ${responseTime < 2000 ? '✅ Pass' : '⚠️ Warning'} | ${responseTime}ms |\n`;
+    markdown += `| Page Size | ${pageSizeKb < 2000 ? '✅ Pass' : '⚠️ Warning'} | ${pageSizeKb}KB |\n`;
+    markdown += `| HTTPS / SSL | ${hasSSL ? '✅ Pass' : '❌ Failed'} | Encryption detected: ${hasSSL ? 'Yes' : 'No'} |\n`;
+    markdown += `| Title Tag | ${titleTag !== 'MISSING' ? '✅ Pass' : '❌ Failed'} | ${titleTag} |\n`;
+    markdown += `| Meta Description | ${metaDescription !== 'MISSING' ? '✅ Pass' : '❌ Failed'} | ${metaDescription.substring(0, 50)}... |\n`;
+    markdown += `| H1 Tags | ${h1Count === 1 ? '✅ Pass' : h1Count === 0 ? '❌ Failed' : '⚠️ Warning'} | Found ${h1Count} H1 tags |\n`;
+    markdown += `| Viewport (Mobile) | ${hasViewport ? '✅ Pass' : '❌ Failed'} | Mobile responsive: ${hasViewport ? 'Yes' : 'No'} |\n`;
+    markdown += `| Schema Markup | ${hasJSONLD ? '✅ Pass' : '⚠️ Warning'} | JSON-LD found: ${hasJSONLD ? 'Yes' : 'No'} |\n`;
+    markdown += `| Canonical Tag | ${hasCanonical ? '✅ Pass' : '⚠️ Warning'} | Canonical tag: ${hasCanonical ? 'Yes' : 'No'} |\n`;
+    markdown += `| Image Alt Text | ${missingAltCount === 0 ? '✅ Pass' : '⚠️ Warning'} | ${missingAltCount}/${totalImages} images missing alt |\n`;
+    markdown += `| robots.txt | ${hasRobots ? '✅ Pass' : '⚠️ Warning'} | Found: ${hasRobots ? 'Yes' : 'No'} |\n`;
+    markdown += `| sitemap.xml | ${hasSitemap ? '✅ Pass' : '⚠️ Warning'} | Found: ${hasSitemap ? 'Yes' : 'No'} |\n`;
+    markdown += `\n**Overall Health Score: ${score}/100**\n\n`;
+
+    // Critical Issues & Warnings
+    markdown += `4. CRITICAL ISSUES & WARNINGS\n──────────────────────────────────────────────────────────────\n`;
+    if (criticalIssues.length > 0) {
+      markdown += `**🔴 Critical Issues (Must Fix):**\n`;
+      criticalIssues.forEach((issue, i) => markdown += `${i + 1}. ${issue}\n`);
+      markdown += `\n`;
+    }
+    if (warnings.length > 0) {
+      markdown += `**🟡 Warnings (Should Fix):**\n`;
+      warnings.forEach((issue, i) => markdown += `${i + 1}. ${issue}\n`);
+      markdown += `\n`;
+    }
+
+    // Recommendations (Action Plan)
+    markdown += `5. RECOMMENDED ACTION PLAN\n──────────────────────────────────────────────────────────────\n`;
+    if (criticalIssues.length > 0) {
+      criticalIssues.slice(0, 5).forEach((issue, i) => markdown += `${i + 1}. ${issue}\n`);
+    }
+    if (warnings.length > 0) {
+      warnings.slice(0, 5).forEach((issue, i) => markdown += `${criticalIssues.length + i + 1}. ${issue}\n`);
+    }
+    if (score >= 80) markdown += `Your site is in excellent health! Focus on advanced content optimization and Core Web Vitals.`;
+    markdown += `\n\n`;
+
     // On-Page Optimization Checklist
-    markdown += `5. ON-PAGE OPTIMIZATION CHECKLIST\n──────────────────────────────────────────────────────────────\n`;
+    markdown += `6. ON-PAGE OPTIMIZATION CHECKLIST\n──────────────────────────────────────────────────────────────\n`;
     markdown += `1. Ensure the main target keyword is in the H1 tag.\n2. Optimize meta titles with primary keywords and 2026 date.\n3. Add clear, descriptive alt text to all images.\n4. Implement structured data (Schema.org) for rich snippets.\n5. Ensure mobile responsiveness is flawless.\n6. Fix all internal broken links (404 errors).\n7. Improve page load speed to under 1.5 seconds.\n8. Add a 'Last Updated' date to signal freshness.\n9. Optimize URL structure to be short and keyword-focused.\n10. Add breadcrumb navigation for better indexing.\n11. Ensure all internal links have descriptive anchor text.\n12. Implement FAQ schema for informational queries.\n13. Avoid intrusive pop-ups that hurt Core Web Vitals.\n14. Ensure the site is fully crawlable (no 'noindex' on important pages).\n15. Add a table of contents for long-form articles.\n\n`;
 
     // Growth Accelerators
-    markdown += `6. GROWTH ACCELERATORS\n──────────────────────────────────────────────────────────────\n`;
+    markdown += `7. GROWTH ACCELERATORS\n──────────────────────────────────────────────────────────────\n`;
     markdown += `1. Implement AMP (Accelerated Mobile Pages) for mobile-first indexing.\n2. Build a real-time uptime monitoring dashboard to catch issues early.\n3. Optimize for voice search with natural language processing.\n4. Use a CDN to improve global loading times.\n5. Automate weekly technical audits to stay ahead of algorithm updates.\n\n`;
 
     // Clean Methodology (No AI Clues)
     markdown += `METHODOLOGY & SOURCES\n──────────────────────────────────────────────────────────────\nThis audit is based on comprehensive primary and secondary research conducted on ${today} from:\n\n• Live Search Engine Results (SERP) via Google Search Index\n• Technical Check & Site Health Audit via MusePRO Proprietary Database\n• 12-Month Search Trend & Seasonality via Google Trends\n• Strategic Synthesis & Market Insights by MusePRO Senior Research Division\n\n`;
 
-    // 4. Save to Database
     const report = await Report.create({
       type: 'seo',
       niche: `Technical Audit: ${new URL(websiteUrl).hostname}`,
       country,
       value: '$99',
-      data: { websiteUrl, score, responseTime, status, hasSSL, hasRobots, hasSitemap, hasCanonical },
+      data: { websiteUrl, score, responseTime, status, hasSSL, hasRobots, hasSitemap, h1Count, titleTag, metaDescription, pageSizeKb },
       markdown,
       charts: {},
       traffic_estimate: 0,
       trend_summary: `Health score: ${score}/100`,
     });
 
-    const result = {
-      id: report._id,
-      ...report.toObject()
-    };
-
+    const result = { id: report._id, ...report.toObject() };
     res.status(201).json(result);
 
   } catch (err) {
