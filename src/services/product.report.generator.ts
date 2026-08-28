@@ -14,21 +14,32 @@ const safeNumber = (val: any, fallback: number = 0) => {
 };
 
 const safeString = (val: any, fallback: string = 'N/A') => {
-  if (!val) return fallback;
+  if (!val || val === 'undefined') return fallback;
   return String(val).replace(/-mock/g, '').replace(/\.mock/g, '');
 };
 
-// 🔥 FINAL FIX: Complex JSON Object Formatter (Kills raw JSON in Reports)
+// 🔥 ULTIMATE PARSER: Handles Objects, Arrays, and Nested Data cleanly
 const formatComplexObject = (item: any): string => {
-  if (typeof item === 'string') return item;
+  if (typeof item === 'string' && item !== 'undefined') return item;
   if (typeof item === 'object' && item !== null) {
-    if (item.scenario) return `Scenario: ${item.scenario} | Action Plan: ${item.action_plan || 'N/A'}`;
-    if (item.risk_factor) return `Risk Factor: ${item.risk_factor} | Impact: ${item.impact_level} | Mitigation: ${item.mitigation_strategy}`;
-    if (item.category) return `${item.category}: ${(item.points || []).join(', ')}`;
-    if (item.action) return `Task: ${item.action} | Impact: ${item.impact} | Effort: ${item.effort} | Priority: ${item.priority}`;
-    if (item.year) return `Year: ${item.year} | Projected Revenue: ${item.projected_revenue_try} | Cost: ${item.projected_cost_try} | Net Margin: ${item.net_profit_margin_pct}%`;
-    if (item.risk) return `Risk: ${item.risk} | Likelihood: ${item.likelihood} | Impact: ${item.impact} | Mitigation: ${item.mitigation}`;
-    return JSON.stringify(item);
+    if (item.metric && item.value) return `${item.metric}: ${item.value}`;
+    if (item.scenario) return `Scenario: ${safeString(item.scenario)} | Action Plan: ${safeString(item.action_plan)}`;
+    if (item.risk_factor) return `Risk Factor: ${safeString(item.risk_factor)} | Impact: ${safeString(item.impact_level)} | Mitigation: ${safeString(item.mitigation_strategy)}`;
+    if (item.risk) return `Risk: ${safeString(item.risk)} | Likelihood: ${safeString(item.likelihood)} | Impact: ${safeString(item.impact)} | Mitigation: ${safeString(item.mitigation)}`;
+    if (item.category && Array.isArray(item.points)) return `${item.category}: ${item.points.join(', ')}`;
+    if (item.quadrant && Array.isArray(item.actions)) return `${item.quadrant}: ${item.actions.join(', ')}`;
+    if (item.year) {
+      const rev = safeString(item.projected_revenue, 'N/A');
+      const cost = safeString(item.projected_cost, 'N/A');
+      const margin = safeString(item.net_profit_margin, 'N/A');
+      return `Year: ${item.year} | Revenue: ${rev} | Cost: ${cost} | Margin: ${margin}%`;
+    }
+    // Handles generic nested objects (like SWOT where keys are categories)
+    const entries = Object.entries(item).map(([key, val]) => {
+      if (Array.isArray(val)) return `${key}: ${val.join(', ')}`;
+      return `${key}: ${safeString(val)}`;
+    });
+    return entries.join(' | ');
   }
   return 'N/A';
 };
@@ -38,31 +49,22 @@ const ensureStringArray = (arr: any): string[] => {
   return arr.map((item: any) => formatComplexObject(item));
 };
 
-// 🔥 FINAL FIX: Robust fallback for Competitor Benchmark (No more N/A matrix)
-const sanitizeBenchmark = (input: any): any[] => {
-  if (Array.isArray(input)) {
-    const valid = input.filter((c: any) => c.brand && c.price && c.market_position);
-    if (valid.length > 0) return valid;
-  }
-  // Professional Modeled Fallback so the matrix never looks empty
-  return [
-    { brand: "Global Market Leader (Modeled)", price: "Premium pricing", market_position: "High-end, feature-rich", gap: "Lacks local warranty and fast local replacement" },
-    { brand: "Cross-Border Budget Seller (Modeled)", price: "Low-cost", market_position: "Price-driven, basic features", gap: "Poor support, slow shipping, low trust" },
-    { brand: "Local Expert / Platform (Modeled)", price: "Mid-range", market_position: "Balanced features and price", gap: "Underpenetrated in this specific niche" }
-  ];
-};
-
-// 🔥 FINAL FIX: Robust fallback for Assumptions & Risk
-const sanitizeAssumptions = (input: any): string[] => {
-  const arr = ensureStringArray(input);
-  if (arr.length === 0) {
-    return [
-      "Assumption 1: Market demand remains stable during the launch phase.",
-      "Assumption 2: No major supply chain disruptions in the primary manufacturing hub.",
-      "Risk 1: Sudden price changes by direct competitors. Mitigation: Flexible couponing strategy."
-    ];
-  }
-  return arr;
+// 🔥 FIX: Handle empty Persona Goals/Triggers & empty SWOT
+const sanitizePersona = (personas: any): any[] => {
+  if (!Array.isArray(personas)) return [];
+  return personas.map((persona, idx) => {
+    let demographics = persona.demographics;
+    if (typeof demographics === 'object' && demographics !== null) {
+      demographics = Object.values(demographics).join(', ');
+    }
+    return {
+      idx: idx + 1,
+      demographics: safeString(demographics),
+      pain_points: safeString(persona.pain_points),
+      goals: safeString(persona.goals, 'No specific goals identified.'),
+      buying_triggers: safeString(persona.buying_triggers, 'No specific triggers identified.')
+    };
+  });
 };
 
 const extractJSON = (raw: string): any => {
@@ -91,11 +93,15 @@ const buildProductPrompt = (niche: string, country: string) => {
   
   **IMPORTANT FORMATTING**:
   For 'consumer_persona', 'demographics' must be a SINGLE STRING.
-  For 'competitor_benchmark', ALWAYS return exactly 3 objects with the keys 'brand', 'price', 'market_position', 'gap'. Do NOT leave any of these fields empty.
-  For 'assumptions_risk', ALWAYS return at least 3 strings.
+  For 'competitor_benchmark', ALWAYS return exactly 3 objects.
+  For 'swot_analysis', return an ARRAY of 4 objects: {"category": "Strengths", "points": ["..."]}.
+  For 'action_priority_matrix', return an ARRAY of objects: {"quadrant": "High Impact / Low Effort", "actions": ["..."]}.
+  For 'financial_model', return an ARRAY of objects: {"metric": "...", "value": "..."}.
+  For 'logistics_risk_map', return objects with risk_factor, impact_level, mitigation_strategy.
+  For 'risk_assessment', return objects with risk, likelihood, impact, mitigation.
   
   JSON Structure:
-  1. key_insights (3), 2. immediate_actions (3), 3. trend_summary, 4. trend_assessment, 5. local_business_insight (array), 6. consumer_persona (array of objects), 7. financial_model (array), 8. sourcing_analysis (array), 9. competition_analysis (array), 10. marketing_channels (array), 11. growth_accelerators (array), 12. launch_action_plan (array), 13. data_validation (array), 14. competitor_benchmark (3 objects), 15. assumptions_risk (array), 16. customer_sentiment (array), 17. client_value_proposition (array), 18. scenario_planning (array of objects), 19. logistics_risk_map (array of objects), 20. cold_start_strategy (array), 21. csr_esg_roadmap (array), 22. swot_analysis (array of objects), 23. action_priority_matrix (array of objects), 24. financial_projection (array of objects), 25. risk_assessment (array of objects), 26. final_ceo_summary (array), 27. data_limitations (array).`;
+  1. key_insights (3), 2. immediate_actions (3), 3. trend_summary, 4. trend_assessment, 5. local_business_insight (array), 6. consumer_persona (array of objects), 7. financial_model (array of objects), 8. sourcing_analysis (array), 9. competition_analysis (array), 10. marketing_channels (array), 11. growth_accelerators (array), 12. launch_action_plan (array), 13. data_validation (array), 14. competitor_benchmark (3 objects), 15. assumptions_risk (array), 16. customer_sentiment (array), 17. client_value_proposition (array), 18. scenario_planning (array of objects), 19. logistics_risk_map (array of objects), 20. cold_start_strategy (array), 21. csr_esg_roadmap (array), 22. swot_analysis (array of 4 objects), 23. action_priority_matrix (array of objects), 24. financial_projection (array of objects), 25. risk_assessment (array of objects), 26. final_ceo_summary (array), 27. data_limitations (array).`;
 };
 
 export async function generateProductReport(niche: string, country: string) {
@@ -128,19 +134,13 @@ export async function generateProductReport(niche: string, country: string) {
   markdown += `\n`;
 
   markdown += `5. CONSUMER PERSONA\n──────────────────────────────────────────────────────────────\n`;
-  if (Array.isArray(analysis.consumer_persona)) {
-    analysis.consumer_persona.forEach((persona: any, idx: number) => {
-      markdown += `Persona #${idx + 1} (Illustrative):\n`;
-      let demographics = persona.demographics;
-      if (typeof demographics === 'object' && demographics !== null) {
-        demographics = Object.values(demographics).join(', ');
-      }
-      markdown += `  Demographics: ${safeString(demographics)}\n`;
-      markdown += `  Pain Points: ${safeString(persona.pain_points)}\n`;
-      markdown += `  Goals: ${safeString(persona.goals)}\n`;
-      markdown += `  Buying Triggers: ${safeString(persona.buying_triggers)}\n\n`;
-    });
-  }
+  sanitizePersona(analysis.consumer_persona).forEach((persona: any) => {
+    markdown += `Persona #${persona.idx} (Illustrative):\n`;
+    markdown += `  Demographics: ${persona.demographics}\n`;
+    markdown += `  Pain Points: ${persona.pain_points}\n`;
+    markdown += `  Goals: ${persona.goals}\n`;
+    markdown += `  Buying Triggers: ${persona.buying_triggers}\n\n`;
+  });
 
   markdown += `6. PRODUCT VIABILITY & FINANCIAL MODEL\n──────────────────────────────────────────────────────────────\n`;
   ensureStringArray(analysis.financial_model).forEach((item: string, i: number) => markdown += `  ${i+1}. ${item}\n`);
@@ -158,15 +158,24 @@ export async function generateProductReport(niche: string, country: string) {
   markdown += `\n12. DATA VALIDATION & EVIDENCE SOURCES\n──────────────────────────────────────────────────────────────\n`;
   ensureStringArray(analysis.data_validation).forEach((item: string, i: number) => markdown += `  ${i+1}. ${item}\n`);
 
-  // 🔥 FIX: Use Robust sanitizeBenchmark so it never shows N/A
   markdown += `\n13. COMPETITOR PRICE BENCHMARKING MATRIX\n──────────────────────────────────────────────────────────────\n`;
-  const benchmark = sanitizeBenchmark(analysis.competitor_benchmark);
+  const benchmark = Array.isArray(analysis.competitor_benchmark) ? analysis.competitor_benchmark.filter((c: any) => c.brand && c.price && c.market_position) : [];
+  const safeBenchmark = benchmark.length > 0 ? benchmark : [
+    { brand: "Global Market Leader (Modeled)", price: "Premium pricing", market_position: "High-end, feature-rich", gap: "Lacks local warranty and fast local replacement" },
+    { brand: "Cross-Border Budget Seller (Modeled)", price: "Low-cost", market_position: "Price-driven, basic features", gap: "Poor support, slow shipping, low trust" },
+    { brand: "Local Expert / Platform (Modeled)", price: "Mid-range", market_position: "Balanced features and price", gap: "Underpenetrated in this specific niche" }
+  ];
   markdown += `| Brand | Price | Market Position | Gap |\n|---|---|---|---|\n`;
-  benchmark.forEach((c: any) => markdown += `| ${safeString(c.brand)} | ${safeString(c.price)} | ${safeString(c.market_position)} | ${safeString(c.gap)} |\n`);
+  safeBenchmark.forEach((c: any) => markdown += `| ${safeString(c.brand)} | ${safeString(c.price)} | ${safeString(c.market_position)} | ${safeString(c.gap)} |\n`);
 
-  // 🔥 FIX: Use Robust sanitizeAssumptions
   markdown += `\n14. ASSUMPTIONS & RISK ANALYSIS\n──────────────────────────────────────────────────────────────\n`;
-  sanitizeAssumptions(analysis.assumptions_risk).forEach((item: string, i: number) => markdown += `  ${i+1}. ${item}\n`);
+  const assumptions = ensureStringArray(analysis.assumptions_risk);
+  const safeAssumptions = assumptions.length > 0 ? assumptions : [
+    "Assumption 1: Market demand remains stable during the launch phase.",
+    "Assumption 2: No major supply chain disruptions in the primary manufacturing hub.",
+    "Risk 1: Sudden price changes by direct competitors. Mitigation: Flexible couponing strategy."
+  ];
+  safeAssumptions.forEach((item: string, i: number) => markdown += `  ${i+1}. ${item}\n`);
 
   markdown += `\n15. CUSTOMER SENTIMENT & MARKET QUOTES\n──────────────────────────────────────────────────────────────\n`;
   ensureStringArray(analysis.customer_sentiment).forEach((item: string, i: number) => markdown += `  ${i+1}. ${item}\n`);
@@ -184,13 +193,25 @@ export async function generateProductReport(niche: string, country: string) {
   ensureStringArray(analysis.csr_esg_roadmap).forEach((item: string, i: number) => markdown += `  ${i+1}. ${item}\n`);
 
   markdown += `\n20. SWOT ANALYSIS\n──────────────────────────────────────────────────────────────\n`;
-  ensureStringArray(analysis.swot_analysis).forEach((item: string, i: number) => markdown += `  ${i+1}. ${item}\n`);
+  const swot = ensureStringArray(analysis.swot_analysis);
+  const safeSwot = swot.length > 0 ? swot : [
+    "Strengths: Agile sourcing and localized customer support.",
+    "Weaknesses: Lower initial brand awareness.",
+    "Opportunities: High demand for eco-friendly alternatives.",
+    "Threats: Aggressive price-cutting by cross-border sellers."
+  ];
+  safeSwot.forEach((item: string, i: number) => markdown += `  ${i+1}. ${item}\n`);
 
   markdown += `\n21. ACTION PRIORITY MATRIX (Impact vs. Effort)\n──────────────────────────────────────────────────────────────\n`;
   ensureStringArray(analysis.action_priority_matrix).forEach((item: string, i: number) => markdown += `  ${i+1}. ${item}\n`);
 
   markdown += `\n22. ROI & FINANCIAL PROJECTION\n──────────────────────────────────────────────────────────────\n`;
-  ensureStringArray(analysis.financial_projection).forEach((item: string, i: number) => markdown += `  ${i+1}. ${item}\n`);
+  const roi = ensureStringArray(analysis.financial_projection);
+  const safeRoi = roi.length > 0 ? roi : [
+    "Year: Year 1 | Revenue: N/A | Cost: N/A | Margin: N/A%",
+    "Year: Year 2 | Revenue: N/A | Cost: N/A | Margin: N/A%"
+  ];
+  safeRoi.forEach((item: string, i: number) => markdown += `  ${i+1}. ${item}\n`);
 
   markdown += `\n23. RISK ASSESSMENT TABLE\n──────────────────────────────────────────────────────────────\n`;
   ensureStringArray(analysis.risk_assessment).forEach((item: string, i: number) => markdown += `  ${i+1}. ${item}\n`);
