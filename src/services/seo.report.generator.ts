@@ -50,17 +50,18 @@ const extractJSON = (raw: string): any => {
   }
 };
 
+// 🔥 SAFE PROMPT BUILDER (No backtick/quote conflict)
 const buildSEOPrompt = (niche: string, country: string, serpLinks: string[], trendData: number[]) => {
   const countryName = countryNames[country] || country;
   return `You are a veteran SEO consultant at MusePRO. Write in a highly professional, human consultant tone.
   Target Market: ${countryName}. Current Year: 2026.
   **Return ONLY a valid JSON object. No markdown blocks, no extra text.**
   **STRICT INSTRUCTIONS**:
-  1. NEVER output "Review 1", "Journal", "Dergisi", or "$72". CPC must be between $0.50 and $10.00.
-  2. If real local websites are missing, DO NOT invent fake sites. Say: "SERP data currently unavailable. Focus on actionable strategies."
+  1. NEVER output 'Review 1', 'Journal', 'Dergisi', or '$72'. CPC must be between $0.50 and $10.00.
+  2. If real local websites are missing, DO NOT invent fake sites. Say: 'SERP data currently unavailable. Focus on actionable strategies.'
   3. Strict Country Lock: Do not mention US, UK, or other countries. Only ${countryName}.
-  4. **IMPORTANT**: For 'content_roadmap', each 'title' must be a plain string WITHOUT "Week X:" prefixed. Just "The Ultimate Guide to..." or "How to ...". I will add "Week X:" myself.
-  5. **IMPORTANT FOR LINKS**: Generate 5 highly realistic local-sounding publications based on the `${niche}` and `${countryName}` (e.g., for Singapore Footwear, use "Singapore Footwear Weekly" or "SG Footwear Review"). Do NOT use generic terms like "Industry Magazine".
+  4. **IMPORTANT**: For 'content_roadmap', each 'title' must be a plain string WITHOUT 'Week X:' prefixed.
+  5. **IMPORTANT FOR LINKS**: Generate 5 highly realistic local-sounding publications based on the ${niche} and ${countryName} (e.g., for Singapore Footwear, use 'Singapore Footwear Weekly' or 'SG Footwear Review'). Do NOT use generic terms like 'Industry Magazine'.
   Return JSON: key_insights (3), immediate_actions (3), trend_summary, trend_assessment, keywords (50), serp_landscape (8 OR honest disclaimer), content_roadmap (12), link_acquisition (target_sites + guest_post_topics), onpage_checklist (15), growth_accelerators (5), related_resources, local_market_context (3), local_business_base (4), actionable_plan (3), client_value_proposition (3).`;
 };
 
@@ -170,7 +171,6 @@ export async function generateSEOReport(niche: string, country: string) {
   if (targetSites.length < 5) {
     const safeNiche = niche.replace(/[^a-zA-Z0-9]/g, ' ');
     const countryName = countryNames[country] || country;
-    // Create highly localized sounding site names
     targetSites = [
       { site: `${safeNiche} ${countryName} Review`, type: 'Industry Publication', contact: 'editor@example.com', pitch: 'Data-driven feature analysis.' },
       { site: `Pro ${safeNiche} Hub`, type: 'B2B Magazine', contact: 'contact@example.com', pitch: 'Free checklist for professionals.' },
