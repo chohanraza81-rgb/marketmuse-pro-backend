@@ -1,16 +1,6 @@
 import { cacheService } from './cache';
 import { getGoogleTrends } from './trends';
-import { getSearchResults } from './serpapi';
-import { getSerperResults } from './serper';
-import { getScraperAPISearch } from './scraperapi';
-import { convertCurrency } from './exchange';
 import { runGroqWithRetry } from './groq';
-
-const countryNames: Record<string, string> = {
-  us: 'United States', gb: 'United Kingdom', ca: 'Canada', au: 'Australia',
-  de: 'Germany', sg: 'Singapore', sa: 'Saudi Arabia', ae: 'United Arab Emirates',
-  pk: 'Pakistan', in: 'India', tr: 'Turkey', my: 'Malaysia',
-};
 
 const safeNumber = (val: any, fallback: number = 0) => {
   const num = Number(val);
@@ -20,6 +10,18 @@ const safeNumber = (val: any, fallback: number = 0) => {
 const safeString = (val: any, fallback: string = 'N/A') => {
   if (!val) return fallback;
   return String(val).replace(/-mock/g, '').replace(/\.mock/g, '');
+};
+
+// 🛡️ ULTIMATE FIX: Convert AI Objects to Clean Strings (Kills [object Object])
+const ensureStringArray = (arr: any): string[] => {
+  if (!Array.isArray(arr)) return [];
+  return arr.map((item) => {
+    if (typeof item === 'string') return item;
+    if (typeof item === 'object' && item !== null) {
+      return item.text || item.value || item.insight || JSON.stringify(item);
+    }
+    return 'N/A';
+  });
 };
 
 const extractJSON = (raw: string): any => {
@@ -35,14 +37,27 @@ const extractJSON = (raw: string): any => {
 
 const buildProductPrompt = (niche: string, country: string) => {
   const countryName = countryNames[country] || country;
-  return `You are a veteran **E-commerce and Product Consultant** at MusePRO. Write in a human tone.
-  **CRITICAL**: Generate realistic, **Evidence-based** financial and market metrics. Do NOT use AI words. Use phrases like "The reality is", "Here's the kicker", "The smart money is on".
+  return `You are a veteran E-commerce and Product Consultant at MusePRO. Write in a human tone.
+  **CRITICAL**: Generate realistic, Evidence-based financial and market metrics.
   Target Market: ${countryName}. Current Year: 2026.
-
-  Create a **Business Intelligence Report** for "${niche}".
-
-  **Return JSON**:
-  1. key_insights, 2. immediate_actions, 3. trend_summary, 4. trend_assessment, 5. local_business_insight (4), 6. consumer_persona (2), 7. financial_model (4), 8. sourcing_analysis (3), 9. competition_analysis (4), 10. marketing_channels (4), 11. growth_accelerators (5), 12. launch_action_plan (3), 13. data_validation (3), 14. competitor_benchmark (3), 15. assumptions_risk (3), 16. customer_sentiment (3).`;
+  Create a Business Intelligence Report for "${niche}".
+  Return JSON: 
+  1. key_insights (3 strings), 
+  2. immediate_actions (3 strings), 
+  3. trend_summary, 
+  4. trend_assessment, 
+  5. local_business_insight (Array of strings), 
+  6. consumer_persona (Array of objects: demographics, pain_points, goals, buying_triggers), 
+  7. financial_model (Array of strings), 
+  8. sourcing_analysis (Array of strings), 
+  9. competition_analysis (Array of strings), 
+  10. marketing_channels (Array of strings), 
+  11. growth_accelerators (Array of strings), 
+  12. launch_action_plan (Array of strings), 
+  13. data_validation (Array of strings), 
+  14. competitor_benchmark (Array of objects: brand, price, market_position, gap), 
+  15. assumptions_risk (Array of strings), 
+  16. customer_sentiment (Array of strings).`;
 };
 
 export async function generateProductReport(niche: string, country: string) {
@@ -60,48 +75,70 @@ export async function generateProductReport(niche: string, country: string) {
 
   let markdown = `MusePRO\nReal-Time Market Research\nIntelligence Division\n──────────────────────────────────────────────────────────────\nPRODUCT INTELLIGENCE REPORT\n\nPrepared For: [Client Name]\nDate: ${today}\nReference: ${reference}\nClassification: CONFIDENTIAL\n──────────────────────────────────────────────────────────────\n\n`;
 
+  // 🛡️ CLEAN STRINGS FOR ALL ARRAYS
+  const insights = ensureStringArray(analysis.key_insights);
+  const actions = ensureStringArray(analysis.immediate_actions);
+  const localInsight = ensureStringArray(analysis.local_business_insight);
+  const financial = ensureStringArray(analysis.financial_model);
+  const sourcing = ensureStringArray(analysis.sourcing_analysis);
+  const competition = ensureStringArray(analysis.competition_analysis);
+  const marketing = ensureStringArray(analysis.marketing_channels);
+  const launchPlan = ensureStringArray(analysis.launch_action_plan);
+  const validation = ensureStringArray(analysis.data_validation);
+  const risk = ensureStringArray(analysis.assumptions_risk);
+  const sentiment = ensureStringArray(analysis.customer_sentiment);
+
   markdown += `1. EXECUTIVE BRIEF\n──────────────────────────────────────────────────────────────\n`;
-  (analysis.key_insights || []).forEach((f: string, i: number) => markdown += `  ${i+1}. ${f}\n`);
+  insights.forEach((f, i) => markdown += `  ${i+1}. ${f}\n`);
   markdown += `\nPriority Actions:\n`;
-  (analysis.immediate_actions || []).forEach((w: string, i: number) => markdown += `  ${i+1}. ${w}\n`);
+  actions.forEach((w, i) => markdown += `  ${i+1}. ${w}\n`);
 
   markdown += `\n2. TREND ASSESSMENT\n──────────────────────────────────────────────────────────────\n${analysis.trend_assessment || 'Demand is steadily rising.'}\n\n`;
+  
   markdown += `3. LOCAL BUSINESS INSIGHT\n──────────────────────────────────────────────────────────────\n`;
-  (analysis.local_business_insight || []).forEach((item: string, i: number) => markdown += `  ${i+1}. ${item}\n`);
+  localInsight.forEach((item, i) => markdown += `  ${i+1}. ${item}\n`);
   markdown += `\n4. CONSUMER PERSONA\n──────────────────────────────────────────────────────────────\n`;
+  
+  // 🛡️ SAFE PERSONA EXTRACTION
   if (analysis.consumer_persona && Array.isArray(analysis.consumer_persona)) {
     analysis.consumer_persona.forEach((persona: any, idx: number) => {
-      markdown += `Persona #${idx + 1}:\n  Demographics: ${persona.demographics || 'N/A'}\n  Pain Points: ${persona.pain_points || 'N/A'}\n  Goals: ${persona.goals || 'N/A'}\n  Buying Triggers: ${persona.buying_triggers || 'N/A'}\n\n`;
+      markdown += `Persona #${idx + 1}:\n`;
+      markdown += `  Demographics: ${safeString(persona.demographics)}\n`;
+      markdown += `  Pain Points: ${safeString(persona.pain_points)}\n`;
+      markdown += `  Goals: ${safeString(persona.goals)}\n`;
+      markdown += `  Buying Triggers: ${safeString(persona.buying_triggers)}\n\n`;
     });
   }
 
   markdown += `5. PRODUCT VIABILITY & FINANCIAL MODEL\n──────────────────────────────────────────────────────────────\n`;
-  (analysis.financial_model || []).forEach((item: string, i: number) => markdown += `  ${i+1}. ${item}\n`);
+  financial.forEach((item, i) => markdown += `  ${i+1}. ${item}\n`);
   markdown += `\n6. SOURCING & SUPPLIER ANALYSIS\n──────────────────────────────────────────────────────────────\n`;
-  (analysis.sourcing_analysis || []).forEach((item: string, i: number) => markdown += `  ${i+1}. ${item}\n`);
+  sourcing.forEach((item, i) => markdown += `  ${i+1}. ${item}\n`);
   markdown += `\n7. COMPETITION & SATURATION ANALYSIS\n──────────────────────────────────────────────────────────────\n`;
-  (analysis.competition_analysis || []).forEach((item: string, i: number) => markdown += `  ${i+1}. ${item}\n`);
+  competition.forEach((item, i) => markdown += `  ${i+1}. ${item}\n`);
   markdown += `\n8. MARKETING & SALES CHANNELS\n──────────────────────────────────────────────────────────────\n`;
-  (analysis.marketing_channels || []).forEach((item: string, i: number) => markdown += `  ${i+1}. ${item}\n`);
+  marketing.forEach((item, i) => markdown += `  ${i+1}. ${item}\n`);
   markdown += `\n9. GROWTH ACCELERATORS\n──────────────────────────────────────────────────────────────\n`;
-  (analysis.growth_accelerators || []).forEach((tip: string, i: number) => markdown += `  ${i+1}. ${tip}\n`);
+  ensureStringArray(analysis.growth_accelerators).forEach((tip, i) => markdown += `  ${i+1}. ${tip}\n`);
   markdown += `\n10. 30-60-90 DAY LAUNCH ACTION PLAN\n──────────────────────────────────────────────────────────────\n`;
-  (analysis.launch_action_plan || []).forEach((item: string, i: number) => markdown += `  ${i+1}. ${item}\n`);
+  launchPlan.forEach((item, i) => markdown += `  ${i+1}. ${item}\n`);
 
   markdown += `\n11. DATA VALIDATION & EVIDENCE SOURCES\n──────────────────────────────────────────────────────────────\n`;
-  (analysis.data_validation || []).forEach((item: string, i: number) => markdown += `  ${i+1}. ${item}\n`);
+  validation.forEach((item, i) => markdown += `  ${i+1}. ${item}\n`);
 
   markdown += `\n12. COMPETITOR PRICE BENCHMARKING MATRIX\n──────────────────────────────────────────────────────────────\n`;
   if (analysis.competitor_benchmark && Array.isArray(analysis.competitor_benchmark)) {
     markdown += `| Brand | Price | Market Position | Gap |\n|---|---|---|---|\n`;
-    analysis.competitor_benchmark.forEach((c: any) => markdown += `| ${c.brand || 'N/A'} | ${c.price || 'N/A'} | ${c.market_position || 'N/A'} | ${c.gap || 'N/A'} |\n`);
+    analysis.competitor_benchmark.forEach((c: any) => {
+      markdown += `| ${safeString(c.brand)} | ${safeString(c.price)} | ${safeString(c.market_position)} | ${safeString(c.gap)} |\n`;
+    });
   }
 
   markdown += `\n13. ASSUMPTIONS & RISK ANALYSIS\n──────────────────────────────────────────────────────────────\n`;
-  (analysis.assumptions_risk || []).forEach((item: string, i: number) => markdown += `  ${i+1}. ${item}\n`);
+  risk.forEach((item, i) => markdown += `  ${i+1}. ${item}\n`);
 
   markdown += `\n14. CUSTOMER SENTIMENT & MARKET QUOTES\n──────────────────────────────────────────────────────────────\n`;
-  (analysis.customer_sentiment || []).forEach((item: string, i: number) => markdown += `  ${i+1}. ${item}\n`);
+  sentiment.forEach((item, i) => markdown += `  ${i+1}. ${item}\n`);
 
   markdown += `\nMETHODOLOGY & SOURCES\n──────────────────────────────────────────────────────────────\nThis report is based on comprehensive primary and secondary research conducted on ${today} from:\n\n• Real-time Market & Consumer Demand Trends\n• Local Sourcing & Logistics Audit via MusePRO Proprietary Database\n• Financial Modeling, Margin & Break-even Calculations\n• Cross-verified with Public Market Data, Government Safety Registries, and Third-Party Inspection Reports\n• Strategic Synthesis & Market Insights by MusePRO Senior Research Division\n\n`;
 
