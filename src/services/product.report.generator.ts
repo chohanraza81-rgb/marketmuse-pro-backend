@@ -4,7 +4,6 @@ import { getGoogleTrends } from './trends';
 import { getSearchResults } from './serpapi';
 import { getSerperResults } from './serper';
 import { getScraperAPISearch } from './scraperapi';
-import { convertCurrency } from './exchange'; // Optional: agar financials ko local currency mein convert karna ho
 import { runGroqWithRetry } from './groq';
 
 const countryNames: Record<string, string> = {
@@ -23,7 +22,6 @@ const safeString = (val: any, fallback: string = 'N/A') => {
   return String(val).replace(/-mock/g, '').replace(/\.mock/g, '').trim() || fallback;
 };
 
-// 🔥 ULTIMATE PARSER: Handles Objects, Arrays, and Nested Data cleanly
 const formatComplexObject = (item: any): string => {
   if (typeof item === 'string' && item.trim() !== '') return item;
   if (typeof item === 'object' && item !== null) {
@@ -64,7 +62,6 @@ const formatComplexObject = (item: any): string => {
     if (item.brand && item.price && item.market_position) {
       return `Brand: ${item.brand} | Price: ${item.price} | Position: ${item.market_position} | Gap: ${item.gap || 'N/A'}`;
     }
-    // Generic object to string
     const entries = Object.entries(item).map(([key, val]) => {
       if (Array.isArray(val)) return `${key}: ${val.join(', ')}`;
       if (typeof val === 'object') return `${key}: ${JSON.stringify(val)}`;
@@ -80,7 +77,6 @@ const ensureStringArray = (arr: any): string[] => {
   return arr.map((item: any) => formatComplexObject(item));
 };
 
-// 🔥 FIX: Handle empty Persona Goals/Triggers & empty SWOT
 const sanitizePersona = (personas: any): any[] => {
   if (!Array.isArray(personas)) return [];
   return personas.map((persona, idx) => {
@@ -101,7 +97,6 @@ const sanitizePersona = (personas: any): any[] => {
 };
 
 const extractJSON = (raw: string): any => {
-  // If raw is already object (in case Gemini returns object), return it
   if (typeof raw === 'object') return raw;
   let cleaned = raw.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
   const start = cleaned.indexOf('{');
@@ -119,32 +114,40 @@ const extractJSON = (raw: string): any => {
   }
 };
 
-// 🚀 SUPER STRONG PROMPT: Feeding ALL REAL API Data to Gemini
-const buildProductPrompt = (niche: string, country: string, serpContext: string, trendData: number[]) => {
+// Enhanced Product Prompt with Evidence Emphasis
+const buildProductPrompt = (niche: string, country: string, serpContext: string, trendData: number[], serpResults: any[]) => {
   const countryName = countryNames[country] || country;
   const trendSummary = trendData.length > 0 ? `12-month Google Trends data: ${trendData.join(', ')}` : 'No trend data available.';
+  
+  // Prepare concise SERP evidence list (title + URL) for AI to reference
+  const serpEvidence = serpResults.slice(0, 10).map((r: any, i: number) => `${i+1}. ${r.title} - ${r.link}`).join('\n');
+  
   return `You are a veteran E-commerce and Product Consultant at MusePRO. Write in a human, confident, and highly professional tone.
   Target Market: ${countryName}. Current Year: 2026.
   
   **REAL DATA INPUT FROM ALL APIs (SerpAPI, ScraperAPI, SerperAPI)**:
   ${serpContext}
   
+  **TOP SERP EVIDENCE (Titles & URLs)**:
+  ${serpEvidence || 'No live SERP data available.'}
+  
   **Google Trends Data (12 months)**: ${trendSummary}
   
   **STRICT INSTRUCTION**:
   - Use these REAL competitors, titles, and URLs to identify actual local brands in your report. DO NOT invent fake brands or say 'Modeled'.
-  - If exact prices are unknown, write 'Est. $XX CAD/€XX/RMXX' or provide realistic local currency estimates.
+  - When making claims or recommendations, reference the SERP evidence where possible (e.g., "According to [competitor brand] (source: URL), ...").
+  - If exact prices are unknown, write 'Est. $XX CAD/€XX/RMXX'.
   - ALWAYS provide specific goals, buying triggers, action plans, and realistic financial numbers. NEVER use 'N/A' or 'No specific goals identified'.
   - All fields must be filled with meaningful, specific content. No empty strings, null, or 'undefined'.
-  - Ensure every array has the required number of items and each object has all required keys.
+  - For 'data_validation', explicitly cite at least 2-3 of the SERP sources (with URLs) that support your insights.
   
   **Return ONLY a valid JSON object. No markdown blocks, no extra text.**
   
   JSON Structure and Requirements:
-  1. "key_insights": Array of exactly 3 concise but impactful insights, each as a string.
+  1. "key_insights": Array of exactly 3 concise but impactful insights, each as a string. Include real data points from SERP where possible.
   2. "immediate_actions": Array of exactly 3 actionable steps, each as a string.
   3. "trend_summary": A single string summarizing the overall market trend.
-  4. "trend_assessment": A single string with detailed trend assessment.
+  4. "trend_assessment": A single string with detailed trend assessment, referencing Google Trends data.
   5. "local_business_insight": Array of 3 strings, each describing a unique local market opportunity or challenge.
   6. "consumer_persona": Array of exactly 2-3 objects. Each object must have:
      - "demographics": string like "Age 25-34, male, Riyadh-based, tech-savvy"
@@ -159,11 +162,11 @@ const buildProductPrompt = (niche: string, country: string, serpContext: string,
      - "target_audience": string
      Use realistic pricing based on market.
   8. "sourcing_analysis": Array of 3-5 strings, each describing sourcing strategy or supplier insight.
-  9. "competition_analysis": Array of 3-5 strings, each analyzing a competitor's strengths/weaknesses.
+  9. "competition_analysis": Array of 3-5 strings, each analyzing a competitor's strengths/weaknesses. Reference actual SERP competitors.
   10. "marketing_channels": Array of 3-5 strings, each a specific marketing channel relevant to the market.
   11. "growth_accelerators": Array of 3 strings, each a growth hack or accelerator.
   12. "launch_action_plan": Array of 3 strings, representing 30-60-90 day plan.
-  13. "data_validation": Array of 3 strings, citing evidence/sources for claims.
+  13. "data_validation": Array of 3-5 strings, each citing SERP evidence (with URLs) that supports your claims. Example: "Market trend confirmed by SERP result #1 (URL: ...)".
   14. "competitor_benchmark": Array of exactly 3 objects, each MUST have:
       - "brand": string
       - "price": string (e.g., "Free tier, paid from $14/month")
@@ -221,8 +224,10 @@ export async function generateProductReport(niche: string, country: string) {
   if (!searchData?.organic_results) searchData = await getSerperResults(niche, country).catch(() => null); // Serper
 
   let serpContext = "SERP Data currently unavailable. Please focus on generating realistic local market insights.";
+  let serpResults: any[] = [];
   if (searchData?.organic_results) {
-    const topSites = searchData.organic_results.slice(0, 10).map((r: any) => 
+    serpResults = searchData.organic_results.slice(0, 10);
+    const topSites = serpResults.map((r: any) => 
       `Title: ${r.title} | URL: ${r.link} | Snippet: ${r.snippet || ''}`
     ).join('\n');
     serpContext = `Here are the top real competitors found via Google SERP:\n${topSites}`;
@@ -231,7 +236,7 @@ export async function generateProductReport(niche: string, country: string) {
     serpContext = `SERP Data unavailable. However, based on our knowledge of the ${countryNames[country] || country} market for ${niche}, typical competitors include local leaders, cross-border budget sellers, and specialized niche players. Please create realistic competitor brands and data accordingly.`;
   }
 
-  const prompt = buildProductPrompt(niche, country, serpContext, trendData);
+  const prompt = buildProductPrompt(niche, country, serpContext, trendData, serpResults);
   const aiResponse = await runGroqWithRetry(prompt, JSON.stringify({ niche, country }));
   const analysis = extractJSON(aiResponse);
 
@@ -239,7 +244,6 @@ export async function generateProductReport(niche: string, country: string) {
   const reference = `MKT-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
 
   // ============ VALIDATION & FALLBACKS ============
-  // Ensure all critical arrays exist and have fallback if empty/incomplete
   const clientValueProp = ensureStringArray(analysis.client_value_proposition);
   const keyInsights = ensureStringArray(analysis.key_insights);
   const immediateActions = ensureStringArray(analysis.immediate_actions);
@@ -341,7 +345,18 @@ export async function generateProductReport(niche: string, country: string) {
   launchActionPlan.forEach((item: string, i: number) => markdown += `  ${i+1}. ${item}\n`);
 
   markdown += `\n12. DATA VALIDATION & EVIDENCE SOURCES\n──────────────────────────────────────────────────────────────\n`;
-  dataValidation.forEach((item: string, i: number) => markdown += `  ${i+1}. ${item}\n`);
+  if (dataValidation.length > 0) {
+    dataValidation.forEach((item: string, i: number) => markdown += `  ${i+1}. ${item}\n`);
+  } else {
+    // Fallback: Use real SERP results if available
+    if (serpResults.length > 0) {
+      serpResults.slice(0, 5).forEach((r: any, i: number) => {
+        markdown += `  ${i+1}. ${r.title} - ${r.link}\n`;
+      });
+    } else {
+      markdown += `  No live SERP data available for validation.\n`;
+    }
+  }
 
   markdown += `\n13. COMPETITOR PRICE BENCHMARKING MATRIX\n──────────────────────────────────────────────────────────────\n`;
   markdown += `| Brand | Price | Market Position | Gap |\n|---|---|---|---|\n`;
@@ -390,6 +405,17 @@ export async function generateProductReport(niche: string, country: string) {
 
   markdown += `\n24. FINAL CEO SUMMARY\n──────────────────────────────────────────────────────────────\n`;
   finalCeoSummary.forEach((item: string, i: number) => markdown += `  ${i+1}. ${item}\n`);
+
+  // New Evidence & Sources Section
+  markdown += `\nEVIDENCE & SOURCES (Live SERP Data)\n──────────────────────────────────────────────────────────────\n`;
+  if (serpResults.length > 0) {
+    markdown += `| # | Title | URL | Snippet |\n|---|-------|-----|--------|\n`;
+    serpResults.slice(0, 10).forEach((r: any, i: number) => {
+      markdown += `| ${i+1} | ${safeString(r.title)} | ${safeString(r.link)} | ${safeString(r.snippet, 'N/A')} |\n`;
+    });
+  } else {
+    markdown += `No live SERP data available. Please refer to data validation section for modeled insights.\n`;
+  }
 
   markdown += `\nMETHODOLOGY & DATA LIMITATIONS\n──────────────────────────────────────────────────────────────\n`;
   dataLimitations.forEach((item: string, i: number) => markdown += `  ${i+1}. ${item}\n`);
