@@ -42,28 +42,35 @@ const extractJSON = (raw: string): any => {
 
 const buildProductPrompt = (niche: string, country: string) => {
   const countryName = countryNames[country] || country;
-  return `You are a veteran E-commerce and Product Consultant at MusePRO. Write in a human tone.
-  **CRITICAL**: Generate realistic, Evidence-based financial and market metrics.
-  Target Market: ${countryName}. Current Year: 2026.
-  Create a Business Intelligence Report for "${niche}".
-  Return JSON: 
-  1. key_insights (3 strings), 
-  2. immediate_actions (3 strings), 
-  3. trend_summary, 
-  4. trend_assessment, 
-  5. local_business_insight (Array of strings), 
-  6. consumer_persona (Array of objects: demographics, pain_points, goals, buying_triggers), 
-  7. financial_model (Array of strings), 
-  8. sourcing_analysis (Array of strings), 
-  9. competition_analysis (Array of strings), 
-  10. marketing_channels (Array of strings), 
-  11. growth_accelerators (Array of strings), 
-  12. launch_action_plan (Array of strings), 
-  13. data_validation (Array of strings), 
-  14. competitor_benchmark (Array of objects: brand, price, market_position, gap), 
-  15. assumptions_risk (Array of strings), 
+  return `You are a veteran E-commerce and Product Consultant at MusePRO. Write in a human tone, using phrases like "The reality is", "Here's the kicker", "The smart money is on".
+  **CRITICAL**: Generate realistic, Evidence-based financial and market metrics for ${countryName}.
+  Current Year: 2026.
+  
+  Create a Business Intelligence Report for "${niche}" in "${countryName}".
+  
+  Return JSON:
+  1. key_insights (3 strings),
+  2. immediate_actions (3 strings),
+  3. trend_summary,
+  4. trend_assessment,
+  5. local_business_insight (Array of strings),
+  6. consumer_persona (Array of objects: demographics, pain_points, goals, buying_triggers),
+  7. financial_model (Array of strings),
+  8. sourcing_analysis (Array of strings),
+  9. competition_analysis (Array of strings),
+  10. marketing_channels (Array of strings),
+  11. growth_accelerators (Array of strings),
+  12. launch_action_plan (Array of strings),
+  13. data_validation (Array of strings),
+  14. competitor_benchmark (Array of objects: brand, price, market_position, gap),
+  15. assumptions_risk (Array of strings),
   16. customer_sentiment (Array of strings),
-  17. client_value_proposition (Array of 3 strings).`;
+  17. client_value_proposition (Array of 3 strings),
+  **NEW SECTIONS**:
+  18. scenario_planning (Array of 3 strings, describing Base Case, Bull Case, Bear Case revenue/margin),
+  19. logistics_risk_map (Array of 3 strings, describing primary, secondary, backup supply routes with transit times and risks),
+  20. cold_start_strategy (Array of 3 strings, describing how to get the first 5 clients),
+  21. csr_esg_roadmap (Array of 3 strings, describing environmental, packaging, and ethical compliance requirements specific to ${countryName}).`;
 };
 
 export async function generateProductReport(niche: string, country: string) {
@@ -133,6 +140,22 @@ export async function generateProductReport(niche: string, country: string) {
 
   markdown += `\n15. CUSTOMER SENTIMENT & MARKET QUOTES\n──────────────────────────────────────────────────────────────\n`;
   ensureStringArray(analysis.customer_sentiment).forEach((item: string, i: number) => markdown += `  ${i+1}. ${item}\n`);
+
+  // 🆕 NEW SECTION 16: SCENARIO PLANNING
+  markdown += `\n16. SCENARIO PLANNING & ROI PROJECTIONS\n──────────────────────────────────────────────────────────────\n`;
+  ensureStringArray(analysis.scenario_planning).forEach((item: string, i: number) => markdown += `  ${i+1}. ${item}\n`);
+
+  // 🆕 NEW SECTION 17: LOGISTICS RISK MAP
+  markdown += `\n17. LOGISTICS & SUPPLY CHAIN RISK MAP\n──────────────────────────────────────────────────────────────\n`;
+  ensureStringArray(analysis.logistics_risk_map).forEach((item: string, i: number) => markdown += `  ${i+1}. ${item}\n`);
+
+  // 🆕 NEW SECTION 18: COLD START STRATEGY
+  markdown += `\n18. COLD-START STRATEGY (FIRST 5 CLIENTS)\n──────────────────────────────────────────────────────────────\n`;
+  ensureStringArray(analysis.cold_start_strategy).forEach((item: string, i: number) => markdown += `  ${i+1}. ${item}\n`);
+
+  // 🆕 NEW SECTION 19: CSR & ESG ROADMAP
+  markdown += `\n19. CSR & ESG ROADMAP (LOCALIZED)\n──────────────────────────────────────────────────────────────\n`;
+  ensureStringArray(analysis.csr_esg_roadmap).forEach((item: string, i: number) => markdown += `  ${i+1}. ${item}\n`);
 
   markdown += `\nMETHODOLOGY & SOURCES\n──────────────────────────────────────────────────────────────\nThis report is based on comprehensive primary and secondary research conducted on ${today} from:\n\n• Real-time Market & Consumer Demand Trends\n• Local Sourcing & Logistics Audit via MusePRO Proprietary Database\n• Financial Modeling, Margin & Break-even Calculations\n• Cross-verified with Public Market Data, Government Safety Registries, and Third-Party Inspection Reports\n• Strategic Synthesis & Market Insights by MusePRO Senior Research Division\n\n`;
 
