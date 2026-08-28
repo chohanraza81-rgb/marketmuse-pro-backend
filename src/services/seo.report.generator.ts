@@ -23,7 +23,7 @@ const safeString = (val: any, fallback: string = 'N/A') => {
   return String(val).replace(/-mock/g, '').replace(/\.mock/g, '').trim() || fallback;
 };
 
-// 🔥 ULTIMATE PARSER: Handles Objects, Arrays, and Nested Data cleanly (from product report)
+// 🔥 ULTIMATE PARSER: Handles Objects, Arrays, and Nested Data cleanly
 const formatComplexObject = (item: any): string => {
   if (typeof item === 'string' && item.trim() !== '') return item;
   if (typeof item === 'object' && item !== null) {
@@ -78,6 +78,24 @@ const formatComplexObject = (item: any): string => {
 const ensureStringArray = (arr: any): string[] => {
   if (!Array.isArray(arr)) return [];
   return arr.map((item: any) => formatComplexObject(item));
+};
+
+const extractJSON = (raw: string): any => {
+  if (typeof raw === 'object') return raw;
+  let cleaned = raw.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
+  const start = cleaned.indexOf('{');
+  const end = cleaned.lastIndexOf('}');
+  if (start !== -1 && end !== -1 && end > start) cleaned = cleaned.substring(start, end + 1);
+  try { return JSON.parse(cleaned); } catch (err) {
+    const fixed = cleaned.replace(/,\s*}/g, '}').replace(/,\s*]/g, ']');
+    try { return JSON.parse(fixed); } catch (e2) {
+      let completed = cleaned;
+      let braceCount = (completed.match(/{/g) || []).length;
+      let closeCount = (completed.match(/}/g) || []).length;
+      while (closeCount < braceCount) { completed += '}'; closeCount++; }
+      try { return JSON.parse(completed); } catch (e3) { throw new Error('AI response is not valid JSON'); }
+    }
+  }
 };
 
 // 🔥 Enhanced SEO Prompt
@@ -236,7 +254,7 @@ export async function generateSEOReport(niche: string, country: string) {
 
   // If no roadmap, generate from keywords
   if (roadmap.length === 0) {
-    roadmap = keywords.slice(0, 12).map((kw, i) => ({
+    roadmap = keywords.slice(0, 12).map((kw: any, i: number) => ({
       week: i + 1,
       title: `How to ${kw.keyword}`,
       primary_keyword: kw.keyword,
@@ -403,22 +421,3 @@ export async function generateSEOReport(niche: string, country: string) {
   cacheService.set(cacheKey, result, 86400);
   return result;
 }
-
-// extractJSON function (same as product) needed
-const extractJSON = (raw: string): any => {
-  if (typeof raw === 'object') return raw;
-  let cleaned = raw.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
-  const start = cleaned.indexOf('{');
-  const end = cleaned.lastIndexOf('}');
-  if (start !== -1 && end !== -1 && end > start) cleaned = cleaned.substring(start, end + 1);
-  try { return JSON.parse(cleaned); } catch (err) {
-    const fixed = cleaned.replace(/,\s*}/g, '}').replace(/,\s*]/g, ']');
-    try { return JSON.parse(fixed); } catch (e2) {
-      let completed = cleaned;
-      let braceCount = (completed.match(/{/g) || []).length;
-      let closeCount = (completed.match(/}/g) || []).length;
-      while (closeCount < braceCount) { completed += '}'; closeCount++; }
-      try { return JSON.parse(completed); } catch (e3) { throw new Error('AI response is not valid JSON'); }
-    }
-  }
-};
