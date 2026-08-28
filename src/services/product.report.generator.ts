@@ -18,15 +18,32 @@ const safeString = (val: any, fallback: string = 'N/A') => {
   return String(val).replace(/-mock/g, '').replace(/\.mock/g, '');
 };
 
+// 🔥 FINAL FIX: Complex JSON Object Formatter (Kills raw JSON in Reports)
+const formatComplexObject = (item: any): string => {
+  if (typeof item === 'string') return item;
+  if (typeof item === 'object' && item !== null) {
+    // Scenario Planning
+    if (item.scenario) return `Scenario: ${item.scenario} | Action Plan: ${item.action_plan || 'N/A'}`;
+    // Logistics Risk
+    if (item.risk_factor) return `Risk Factor: ${item.risk_factor} | Impact: ${item.impact_level} | Mitigation: ${item.mitigation_strategy}`;
+    // SWOT Analysis
+    if (item.category) return `${item.category}: ${(item.points || []).join(', ')}`;
+    // Action Priority Matrix
+    if (item.action) return `Task: ${item.action} | Impact: ${item.impact} | Effort: ${item.effort} | Priority: ${item.priority}`;
+    // ROI & Financial Projection
+    if (item.year) return `Year: ${item.year} | Projected Revenue: ${item.projected_revenue_try} | Cost: ${item.projected_cost_try} | Net Margin: ${item.net_profit_margin_pct}%`;
+    // Risk Assessment
+    if (item.risk) return `Risk: ${item.risk} | Likelihood: ${item.likelihood} | Impact: ${item.impact} | Mitigation: ${item.mitigation}`;
+    
+    // Generic JSON stringify fallback
+    return JSON.stringify(item);
+  }
+  return 'N/A';
+};
+
 const ensureStringArray = (arr: any): string[] => {
   if (!Array.isArray(arr)) return [];
-  return arr.map((item: any) => {
-    if (typeof item === 'string') return item;
-    if (typeof item === 'object' && item !== null) {
-      return item.text || item.value || item.insight || item.name || item.title || JSON.stringify(item);
-    }
-    return 'N/A';
-  });
+  return arr.map((item: any) => formatComplexObject(item));
 };
 
 const extractJSON = (raw: string): any => {
@@ -53,11 +70,12 @@ const buildProductPrompt = (niche: string, country: string) => {
   Create a Business Intelligence Report for "${niche}".
   **Return ONLY a valid JSON object. No markdown blocks, no extra text.**
   
-  **IMPORTANT FORMATTING FOR PERSONAS**:
-  For 'consumer_persona', ensure 'demographics' is a SINGLE STRING (e.g., "Age: 34, Location: Kuala Lumpur, Role: CTO"). DO NOT output it as a JSON object.
+  **IMPORTANT FORMATTING**:
+  For 'consumer_persona', 'demographics' must be a SINGLE STRING (e.g., "Age: 34, Location: KL").
+  For 'scenario_planning' 'logistics_risk_map' 'swot_analysis' 'action_priority_matrix' 'financial_projection' and 'risk_assessment', use the exact keys provided in the instructions.
   
   JSON Structure:
-  1. key_insights (3), 2. immediate_actions (3), 3. trend_summary, 4. trend_assessment, 5. local_business_insight (array), 6. consumer_persona (array of objects with demographics, pain_points, goals, buying_triggers as plain strings), 7. financial_model (array), 8. sourcing_analysis (array), 9. competition_analysis (array), 10. marketing_channels (array), 11. growth_accelerators (array), 12. launch_action_plan (array), 13. data_validation (array), 14. competitor_benchmark (array of objects), 15. assumptions_risk (array), 16. customer_sentiment (array), 17. client_value_proposition (array), 18. scenario_planning (array), 19. logistics_risk_map (array), 20. cold_start_strategy (array), 21. csr_esg_roadmap (array), 22. swot_analysis (array), 23. action_priority_matrix (array), 24. financial_projection (array), 25. risk_assessment (array), 26. final_ceo_summary (array), 27. data_limitations (array).`;
+  1. key_insights (3), 2. immediate_actions (3), 3. trend_summary, 4. trend_assessment, 5. local_business_insight (array), 6. consumer_persona (array of objects), 7. financial_model (array), 8. sourcing_analysis (array), 9. competition_analysis (array), 10. marketing_channels (array), 11. growth_accelerators (array), 12. launch_action_plan (array), 13. data_validation (array), 14. competitor_benchmark (array of objects), 15. assumptions_risk (array), 16. customer_sentiment (array), 17. client_value_proposition (array), 18. scenario_planning (array of objects: scenario, action_plan), 19. logistics_risk_map (array of objects: risk_factor, impact_level, mitigation_strategy), 20. cold_start_strategy (array), 21. csr_esg_roadmap (array), 22. swot_analysis (array of objects: category, points), 23. action_priority_matrix (array of objects: action, impact, effort, priority), 24. financial_projection (array of objects: year, projected_revenue_try, projected_cost_try, net_profit_margin_pct), 25. risk_assessment (array of objects: risk, likelihood, impact, mitigation), 26. final_ceo_summary (array), 27. data_limitations (array).`;
 };
 
 export async function generateProductReport(niche: string, country: string) {
@@ -93,7 +111,6 @@ export async function generateProductReport(niche: string, country: string) {
   if (Array.isArray(analysis.consumer_persona)) {
     analysis.consumer_persona.forEach((persona: any, idx: number) => {
       markdown += `Persona #${idx + 1} (Illustrative):\n`;
-      // 🔥 FIX: Force demographics to a clean string if AI outputs an object
       let demographics = persona.demographics;
       if (typeof demographics === 'object' && demographics !== null) {
         demographics = Object.values(demographics).join(', ');
