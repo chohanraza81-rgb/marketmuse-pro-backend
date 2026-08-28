@@ -6,7 +6,6 @@ import { getSerperResults } from './serper';
 import { getScraperAPISearch } from './scraperapi';
 import { convertCurrency } from './exchange';
 import { runGroqWithRetry } from './groq';
-import pLimit from 'p-limit';
 
 const countryNames: Record<string, string> = {
   us: 'United States', gb: 'United Kingdom', ca: 'Canada', au: 'Australia',
@@ -138,6 +137,27 @@ const extractJSON = (raw: string): any => {
   }
 };
 
+// Custom concurrency limiter to replace p-limit
+async function mapWithConcurrency<T>(items: T[], limit: number, fn: (item: T) => Promise<any>): Promise<any[]> {
+  const results: any[] = [];
+  const executing: Promise<any>[] = [];
+  
+  for (const item of items) {
+    const p = fn(item).then(result => {
+      executing.splice(executing.indexOf(p), 1);
+      return result;
+    });
+    results.push(p);
+    executing.push(p);
+    
+    if (executing.length >= limit) {
+      await Promise.race(executing);
+    }
+  }
+  
+  return Promise.all(results);
+}
+
 // Enhanced SEO Prompt with Agency-Level Detail
 const buildSEOPrompt = (niche: string, country: string, serpLinks: string[], trendData: number[]) => {
   const countryName = countryNames[country] || country;
@@ -237,23 +257,19 @@ export async function generateSEOReport(niche: string, country: string) {
     potential: safeString(kw.potential, 'Easy Win')
   }));
 
-  // Safe currency conversion with concurrency limit
-  const limit = pLimit(5);
-  const conversionPromises = keywords.map((kw: any) => 
-    limit(async () => {
-      try {
-        let cpc = await convertCurrency(kw.cpc, 'USD', targetCurrency);
-        if (!cpc || isNaN(cpc)) cpc = kw.cpc;
-        if (cpc > 10.0) cpc = 10.0;
-        kw.cpc = cpc;
-      } catch (error) {
-        console.warn(`Currency conversion failed for "${kw.keyword}"`);
-        kw.cpc = Math.min(kw.cpc, 10.0);
-      }
-      return kw;
-    })
-  );
-  keywords = await Promise.all(conversionPromises);
+  // Safe currency conversion with custom concurrency limiter (replaces p-limit)
+  keywords = await mapWithConcurrency(keywords, 5, async (kw: any) => {
+    try {
+      let cpc = await convertCurrency(kw.cpc, 'USD', targetCurrency);
+      if (!cpc || isNaN(cpc)) cpc = kw.cpc;
+      if (cpc > 10.0) cpc = 10.0;
+      kw.cpc = cpc;
+    } catch (error) {
+      console.warn(`Currency conversion failed for "${kw.keyword}"`);
+      kw.cpc = Math.min(kw.cpc, 10.0);
+    }
+    return kw;
+  });
 
   // SERP landscape processing with improved fallback
   let serp = Array.isArray(analysis.serp_landscape) ? analysis.serp_landscape.filter((s: any) => s.title && s.link).map((s: any, i: number) => ({
