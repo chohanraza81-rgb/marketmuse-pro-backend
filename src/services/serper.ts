@@ -1,22 +1,66 @@
 import axios from 'axios';
+import { env } from '../config/env';
+import { cacheService } from './cache';
 
-export const getSerperResults = async (query: string, country: string): Promise<any> => {
-  const SERPER_API_KEY = process.env.SERPER_API_KEY;
-  if (!SERPER_API_KEY) throw new Error('Serper API Key missing');
+// ✅ FIX: All Country Codes are now Uppercase
+const VALID_GL = ['US', 'GB', 'AE', 'SA', 'PK', 'CA', 'AU', 'DE', 'SG', 'IN', 'TR', 'MY'];
 
-  try {
-    const response = await axios.post(
-      'https://google.serper.dev/search',
-      {
-        q: `${query} ${country}`,
-        gl: country.toLowerCase(),
-        num: 10
-      },
-      { headers: { 'X-API-KEY': SERPER_API_KEY, 'Content-Type': 'application/json' } }
-    );
-    return response.data;
-  } catch (error) {
-    console.warn('Serper API failed:', error instanceof Error ? error.message : String(error));
-    return null;
+const normalizeCountry = (country: string): string => {
+  const c = country.toUpperCase().trim(); // ✅ FIX: Uppercase
+  return VALID_GL.includes(c) ? c : 'US'; // Default to US if invalid
+};
+
+const withRetry = async <T>(fn: () => Promise<T>, retries = 1): Promise<T> => {
+  let last: any;
+  for (let i = 0; i < retries; i++) {
+    try { return await fn(); }
+    catch (e) { last = e; await new Promise(r => setTimeout(r, 1500)); }
   }
+  throw last;
+};
+
+export const getShoppingResults = async (query: string, country: string = 'us'): Promise<any> => {
+  const gl = normalizeCountry(country);
+  const cacheKey = `shop_${query}_${gl}`;
+  const cached = cacheService.get(cacheKey);
+  if (cached) return cached;
+
+  const data = await withRetry(() =>
+    axios.get('https://serpapi.com/search.json', {
+      params: { api_key: env.SERPAPI_KEY, q: query, tbm: 'shop', gl, num: 10 },
+    }).then(res => res.data)
+  );
+  cacheService.set(cacheKey, data, 86400);
+  return data;
+};
+
+export const getSearchResults = async (query: string, country: string = 'us'): Promise<any> => {
+  const gl = normalizeCountry(country);
+  const cacheKey = `search_${query}_${gl}`;
+  const cached = cacheService.get(cacheKey);
+  if (cached) return cached;
+
+  const data = await withRetry(() =>
+    axios.get('https://serpapi.com/search.json', {
+      params: { api_key: env.SERPAPI_KEY, q: query, gl, num: 10 },
+    }).then(res => res.data)
+  );
+  cacheService.set(cacheKey, data, 86400);
+  return data;
+};
+
+export const getKeywordSuggestions = async (query: string, country: string = 'us'): Promise<string[]> => {
+  const gl = normalizeCountry(country);
+  const cacheKey = `kw_${query}_${gl}`;
+  const cached = cacheService.get<string[]>(cacheKey);
+  if (cached) return cached;
+
+  const data: any = await withRetry(() =>
+    axios.get('https://serpapi.com/search.json', {
+      params: { api_key: env.SERPAPI_KEY, q: query, gl },
+    }).then(res => res.data)
+  );
+  const suggestions = data.related_questions?.map((q: any) => q.question) ?? [];
+  cacheService.set(cacheKey, suggestions, 86400);
+  return suggestions;
 };
