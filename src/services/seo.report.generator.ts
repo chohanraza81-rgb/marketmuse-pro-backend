@@ -59,7 +59,6 @@ const buildSEOPrompt = (niche: string, country: string, serpLinks: string[], tre
   1. NEVER output "Review 1", "Journal", "Dergisi", or "$72". CPC must be between $0.50 and $10.00.
   2. If real local websites are missing, DO NOT invent fake sites. Say: "SERP data currently unavailable. Focus on actionable strategies."
   3. Strict Country Lock: Do not mention US, UK, or other countries. Only ${countryName}.
-  4. Write like a $500 Upwork consultant.
   Return JSON: key_insights (3), immediate_actions (3), trend_summary, trend_assessment, keywords (50), serp_landscape (8 OR honest disclaimer), content_roadmap (12), link_acquisition (target_sites + guest_post_topics), onpage_checklist (15), growth_accelerators (5), related_resources, local_market_context (3), local_business_base (4), actionable_plan (3), client_value_proposition (3).`;
 };
 
@@ -84,7 +83,6 @@ export async function generateSEOReport(niche: string, country: string) {
 
   let markdown = `MusePRO\nReal-Time Market Research\nIntelligence Division\n──────────────────────────────────────────────────────────────\nSEO RESEARCH REPORT\n\nPrepared For: [Client Name]\nDate: ${today}\nReference: ${reference}\nClassification: CONFIDENTIAL\n──────────────────────────────────────────────────────────────\n\n`;
 
-  // 1. VALUE PROPOSITION
   markdown += `1. CLIENT VALUE PROPOSITION\n──────────────────────────────────────────────────────────────\n`;
   ensureStringArray(analysis.client_value_proposition).slice(0, 3).forEach((item: string, i: number) => markdown += `  ${i+1}. ${item}\n`);
   markdown += `\n`;
@@ -104,13 +102,18 @@ export async function generateSEOReport(niche: string, country: string) {
   keywords = keywords.map((kw: any, i: number) => ({
     keyword: safeString(kw.keyword, niche),
     volume: safeNumber(kw.volume, 300 + (i * 25)),
-    cpc: Math.min(Math.max(safeNumber(kw.cpc, 1.5), 0.5), 10.0),
+    cpc: safeNumber(kw.cpc, 1.5),
     kd: safeNumber(kw.kd, 20 + (i % 10)),
     intent: safeString(kw.intent, 'informational'),
     potential: safeString(kw.potential, 'Easy Win')
   }));
 
-  for (const kw of keywords) kw.cpc = await convertCurrency(kw.cpc, 'USD', targetCurrency);
+  // 🔥 FINAL FIX: Clamp CPC to max $10 USD even if Exchange API fails!
+  for (const kw of keywords) {
+    let cpc = await convertCurrency(kw.cpc, 'USD', targetCurrency);
+    if (!cpc || cpc > 10.0) cpc = 10.0; // Absolute clamp
+    kw.cpc = cpc;
+  }
 
   markdown += `4. KEYWORD OPPORTUNITIES (TOP 50)\n──────────────────────────────────────────────────────────────\n| # | Keyword | Volume | KD | CPC | Intent | Potential |\n|---|---------|--------|-----|-----|--------|----------|\n`;
   keywords.slice(0, 50).forEach((k: any, i: number) => {
@@ -118,7 +121,6 @@ export async function generateSEOReport(niche: string, country: string) {
     markdown += `| ${i+1} | ${k.keyword} | ${safeNumber(k.volume, 300)} | ${safeNumber(k.kd, 20)} | $${safeNumber(k.cpc, 1.5).toFixed(2)} | ${k.intent || 'informational'} | ${potential} |\n`;
   });
 
-  // 🛡️ FIX: Use Array.isArray to prevent crash if serp_landscape is not an array
   let serp = Array.isArray(analysis.serp_landscape) ? analysis.serp_landscape.filter((s: any) => s.title && s.link).map((s: any, i: number) => ({
     position: s.position || i + 1,
     title: safeString(s.title),
@@ -149,18 +151,20 @@ export async function generateSEOReport(niche: string, country: string) {
   localBusiness.forEach((item: string, i: number) => markdown += `  ${i+1}. ${item}\n`);
   markdown += `\n`;
 
+  // 🔥 FINAL FIX: Remove "Week 1: Week 1" bug
   let roadmap = (Array.isArray(analysis.content_roadmap) ? analysis.content_roadmap : []).map((c: any, i: number) => {
-    let title = safeString(c.title, `Week ${i + 1}: ${keywords[i]?.keyword || niche}`);
-    title = title.replace(/^Week \d+: Week \d+:/i, `Week ${i + 1}:`);
-    return { week: c.week || i + 1, title, primary_keyword: safeString(c.primary_keyword, keywords[i]?.keyword || niche), type: safeString(c.type, 'Pillar'), expected_traffic: safeNumber(c.expected_traffic, 1000) };
+    let rawTitle = safeString(c.title, `Week ${i + 1}: ${keywords[i]?.keyword || niche}`);
+    rawTitle = rawTitle.replace(/^Week \d+: Week \d+:/i, `Week ${i + 1}:`);
+    return { week: c.week || i + 1, title: rawTitle, primary_keyword: safeString(c.primary_keyword, keywords[i]?.keyword || niche), type: safeString(c.type, 'Pillar'), expected_traffic: safeNumber(c.expected_traffic, 1000) };
   });
 
   markdown += `8. CONTENT ROADMAP (12 WEEKS)\n──────────────────────────────────────────────────────────────\n`;
   roadmap.slice(0, 12).forEach((c: any) => markdown += `Week ${c.week}: ${c.title}\n  Keyword: ${c.primary_keyword} | Type: ${c.type}\n  Est. Traffic: ${c.expected_traffic}/mo\n\n`);
 
+  // 🔥 FINAL FIX: Better professional fallback for Links
   let targetSites = (Array.isArray(analysis.link_acquisition?.target_sites) ? analysis.link_acquisition.target_sites : []).filter((s: any) => s.site && s.site !== 'N/A' && !s.site.includes('Journal') && !s.site.includes('Review'));
   if (targetSites.length < 5) {
-    targetSites = [{ site: "Local industry publication (To be identified)", type: "Industry Magazine", contact: "N/A", pitch: "Data-driven feature analysis." }];
+    targetSites = [{ site: "Local industry publication (Manual Outreach)", type: "Industry Magazine", contact: "N/A", pitch: "Data-driven feature analysis." }];
   }
 
   markdown += `9. LINK ACQUISITION & GUEST POST STRATEGY\n──────────────────────────────────────────────────────────────\n${analysis.link_acquisition?.overview || ''}\n\n`;
