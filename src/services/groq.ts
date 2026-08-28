@@ -1,12 +1,13 @@
+// groq.ts
 import { env } from '../config/env';
 
-// Pro models: first 2 attempts
+// Pro models: first 2 attempts (higher quality)
 const PRO_MODELS = [
   'gemini-2.5-pro',
   'gemini-1.5-pro',
 ];
 
-// Flash models: next 4 attempts
+// Flash models: next 4 attempts (faster, still capable)
 const FLASH_MODELS = [
   'gemini-3.5-flash',
   'gemini-flash-latest',
@@ -19,6 +20,7 @@ const ALL_MODELS = [...PRO_MODELS, ...FLASH_MODELS];
 
 const TIMEOUT_MS = 90000;
 
+// Helper to call Gemini API
 async function callGemini(model: string, systemPrompt: string, userMessage: string): Promise<string> {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${env.GEMINI_API_KEY}`;
   const controller = new AbortController();
@@ -35,6 +37,7 @@ async function callGemini(model: string, systemPrompt: string, userMessage: stri
           temperature: 0.3,
           maxOutputTokens: 60000,
           topP: 0.95,
+          responseMimeType: "application/json", // Ensure JSON output
         },
       }),
       signal: controller.signal,
@@ -58,6 +61,7 @@ async function callGemini(model: string, systemPrompt: string, userMessage: stri
   }
 }
 
+// Run prompt with model rotation
 export const runGroqPrompt = async (systemPrompt: string, userMessage: string): Promise<string> => {
   for (let i = 0; i < ALL_MODELS.length; i++) {
     const model = ALL_MODELS[i];
@@ -81,12 +85,13 @@ export const runGroqPrompt = async (systemPrompt: string, userMessage: string): 
   throw new Error('All Gemini models failed. Please try again later.');
 };
 
-export const runGroqWithRetry = async (sys: string, msg: string, retries = 2): Promise<string> => {
+// Retry wrapper
+export const runGroqWithRetry = async (systemPrompt: string, userMessage: string, retries = 2): Promise<string> => {
   let last: any;
   for (let i = 0; i <= retries; i++) {
     try {
       console.log(`🚀 Overall retry ${i + 1}/${retries + 1}`);
-      const r = await runGroqPrompt(sys, msg);
+      const r = await runGroqPrompt(systemPrompt, userMessage);
       return r;
     } catch (e: any) {
       last = e;
