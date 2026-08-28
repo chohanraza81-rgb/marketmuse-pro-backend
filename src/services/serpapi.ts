@@ -2,11 +2,12 @@ import axios from 'axios';
 import { env } from '../config/env';
 import { cacheService } from './cache';
 
-const VALID_GL = ['us', 'gb', 'ae', 'sa', 'pk', 'ca', 'au', 'de', 'sg', 'in', 'tr', 'my'];
+// ✅ FIX: All Country Codes are now Uppercase
+const VALID_GL = ['US', 'GB', 'AE', 'SA', 'PK', 'CA', 'AU', 'DE', 'SG', 'IN', 'TR', 'MY'];
 
 const normalizeCountry = (country: string): string => {
-  const c = country.toLowerCase().trim();
-  return VALID_GL.includes(c) ? c : 'us';
+  const c = country.toUpperCase().trim(); // ✅ FIX: Uppercase
+  return VALID_GL.includes(c) ? c : 'US'; // Default to US if invalid
 };
 
 const withRetry = async <T>(fn: () => Promise<T>, retries = 1): Promise<T> => {
