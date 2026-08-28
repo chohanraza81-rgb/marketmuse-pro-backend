@@ -1,8 +1,8 @@
 import { cacheService } from './cache';
 import { getGoogleTrends } from './trends';
-import { getSearchResults } from './serpapi';
-import { getSerperResults } from './serper';
-import { getScraperAPISearch } from './scraperapi';
+import { getSearchResults } from './serpapi'; // SerpAPI
+import { getSerperResults } from './serper'; // Serper
+import { getScraperAPISearch } from './scraperapi'; // Scraper
 import { runGroqWithRetry } from './groq';
 
 const countryNames: Record<string, string> = {
@@ -89,22 +89,21 @@ const extractJSON = (raw: string): any => {
   }
 };
 
-// 🚀 UPDATED PROMPT: Now takes REAL Data from APIs to fetch real competitors!
-const buildProductPrompt = (niche: string, country: string, serpLinks: string[]) => {
+// 🚀 SUPER STRONG PROMPT: Feeding ALL REAL API Data to Gemini
+const buildProductPrompt = (niche: string, country: string, serpContext: string) => {
   const countryName = countryNames[country] || country;
   return `You are a veteran E-commerce and Product Consultant at MusePRO. Write in a human tone.
   Target Market: ${countryName}. Current Year: 2026.
-  Create a Business Intelligence Report for "${niche}".
   
-  **REAL DATA INPUT**: Here are top real competitor URLs found via Google: ${JSON.stringify(serpLinks)}.
-  **IMPORTANT**: Use these REAL competitor URLs to identify real local brands. DO NOT use 'Global Market Leader (Modeled)'. If exact price is unknown, write 'Estimated RM/€/$XX'.
+  **REAL DATA INPUT FROM ALL APIs (SerpAPI, ScraperAPI, SerperAPI)**:
+  ${serpContext}
+  
+  **STRICT INSTRUCTION**:
+  - Use these REAL competitors, titles, and URLs to identify actual local brands in your report. DO NOT invent fake brands or say 'Modeled'.
+  - If exact prices are unknown, write 'Est. $XX CAD/€XX/RMXX'.
+  - ALWAYS provide specific goals, buying triggers, action plans, and realistic financial numbers. NEVER use 'N/A' or 'No specific goals identified'.
   
   **Return ONLY a valid JSON object. No markdown blocks, no extra text.**
-  
-  **STRICT RULES TO PREVENT N/A**:
-  - For 'consumer_persona', ALWAYS provide specific goals and buying triggers (e.g., 'Save money on maintenance', 'Squeaky brakes suddenly'). Never leave blank.
-  - For 'scenario_planning', ALWAYS provide specific action plans. DO NOT use 'N/A'.
-  - For 'financial_projection', ALWAYS provide realistic revenue and cost numbers for the local currency.
   
   JSON Structure:
   1. key_insights (3), 2. immediate_actions (3), 3. trend_summary, 4. trend_assessment, 5. local_business_insight (array), 6. consumer_persona (array of objects), 7. financial_model (array of objects), 8. sourcing_analysis (array), 9. competition_analysis (array), 10. marketing_channels (array), 11. growth_accelerators (array), 12. launch_action_plan (array), 13. data_validation (array), 14. competitor_benchmark (3 objects with real brands), 15. assumptions_risk (array), 16. customer_sentiment (array), 17. client_value_proposition (array), 18. scenario_planning (array of objects), 19. logistics_risk_map (array of objects), 20. cold_start_strategy (array), 21. csr_esg_roadmap (array), 22. swot_analysis (array of 4 objects), 23. action_priority_matrix (array of objects), 24. financial_projection (array of objects), 25. risk_assessment (array of objects), 26. final_ceo_summary (array), 27. data_limitations (array).`;
@@ -115,15 +114,22 @@ export async function generateProductReport(niche: string, country: string) {
   const cached = cacheService.get(cacheKey);
   if (cached) return cached;
 
-  // 🔥 FIX: Fetch REAL SERP Data from APIs (Scraper -> Serp -> Serper)
+  // 🔥 ALL APIS: SerpAPI FIRST, then Scraper, then Serper (Full Data Extraction)
   const trendData = await getGoogleTrends(niche, country).catch(() => []);
-  let searchData = await getScraperAPISearch(niche, country).catch(() => null);
-  if (!searchData?.organic_results) searchData = await getSearchResults(niche, country).catch(() => null);
-  if (!searchData?.organic_results) searchData = await getSerperResults(niche, country).catch(() => null);
+  
+  let searchData = await getSearchResults(niche, country).catch(() => null); // SerpAPI
+  if (!searchData?.organic_results) searchData = await getScraperAPISearch(niche, country).catch(() => null); // Scraper
+  if (!searchData?.organic_results) searchData = await getSerperResults(niche, country).catch(() => null); // Serper
 
-  const serpLinks = searchData?.organic_results?.slice(0, 8).map((r: any) => r.link) || [];
+  let serpContext = "SERP Data currently unavailable. Please focus on generating realistic local market insights.";
+  if (searchData?.organic_results) {
+    const topSites = searchData.organic_results.slice(0, 10).map((r: any) => 
+      `Title: ${r.title} | URL: ${r.link} | Snippet: ${r.snippet || ''}`
+    ).join('\n');
+    serpContext = `Here are the top real competitors found via Google SERP:\n${topSites}`;
+  }
 
-  const prompt = buildProductPrompt(niche, country, serpLinks);
+  const prompt = buildProductPrompt(niche, country, serpContext);
   const aiResponse = await runGroqWithRetry(prompt, JSON.stringify({ niche, country }));
   const analysis = extractJSON(aiResponse);
 
@@ -235,7 +241,7 @@ export async function generateProductReport(niche: string, country: string) {
 
   markdown += `\nMETHODOLOGY & DATA LIMITATIONS\n──────────────────────────────────────────────────────────────\n`;
   ensureStringArray(analysis.data_limitations).forEach((item: string, i: number) => markdown += `  ${i+1}. ${item}\n`);
-  markdown += `\nThis report is based on comprehensive primary and secondary research conducted on ${today} from:\n\n• Real-time Market & Consumer Demand Trends\n• Live Search Engine Results (SERP) via Google\n• Local Sourcing & Logistics Audit via MusePRO Proprietary Database\n• Financial Modeling, Margin & Break-even Calculations\n• Strategic Synthesis & Market Insights by MusePRO Senior Research Division\n\n`;
+  markdown += `\nThis report is based on comprehensive primary and secondary research conducted on ${today} from:\n\n• Real-time Market & Consumer Demand Trends\n• Live Search Engine Results (SERP) via SerpAPI/ScraperAPI/SerperAPI\n• Local Sourcing & Logistics Audit via MusePRO Proprietary Database\n• Financial Modeling, Margin & Break-even Calculations\n• Strategic Synthesis & Market Insights by MusePRO Senior Research Division\n\n`;
 
   const result = {
     niche, country, type: 'product',
