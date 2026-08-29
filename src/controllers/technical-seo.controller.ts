@@ -13,6 +13,14 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
   try {
     const { websiteUrl, country } = technicalSeoSchema.parse(req.body);
 
+    // Safely parse the URL
+    let parsedUrl: URL;
+    try {
+      parsedUrl = new URL(websiteUrl);
+    } catch (urlError) {
+      return res.status(400).json({ error: 'Invalid URL format.' });
+    }
+
     const startTime = Date.now();
     let responseTime = 0;
     let status = 0;
@@ -20,7 +28,7 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
     let html = '';
 
     // Infrastructure flags
-    let hasSSL = websiteUrl.startsWith('https');
+    let hasSSL = parsedUrl.protocol === 'https:';
     let hasRobots = false;
     let hasSitemap = false;
     let securityHeaders: Record<string, string> = {};
@@ -57,7 +65,6 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
       responseTime = Date.now() - startTime;
       html = response.data;
 
-      // Capture security headers
       const headers = response.headers;
       securityHeaders = {
         'X-Frame-Options': headers['x-frame-options'] || '',
@@ -70,56 +77,38 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
       if (status === 200 && typeof html === 'string') {
         pageSizeKb = Math.round(Buffer.byteLength(html, 'utf8') / 1024);
 
-        // Title
         const titleMatch = html.match(/<title[^>]*>([^<]*)<\/title>/i);
         if (titleMatch && titleMatch[1].trim()) titleTag = titleMatch[1].trim();
 
-        // Meta description
         const metaMatch = html.match(/<meta[^>]+name=["']description["'][^>]+content=["']([^"']*)["']/i) || 
                           html.match(/<meta[^>]+property=["']og:description["'][^>]+content=["']([^"']*)["']/i);
         if (metaMatch && metaMatch[1].trim()) metaDescription = metaMatch[1].trim();
 
-        // Headings
         h1Count = (html.match(/<h1[^>]*>/gi) || []).length;
         h2Count = (html.match(/<h2[^>]*>/gi) || []).length;
         h3Count = (html.match(/<h3[^>]*>/gi) || []).length;
 
-        // Viewport
         hasViewport = /<meta[^>]+name=["']viewport["']/i.test(html);
-
-        // JSON-LD
         hasJSONLD = /application\/ld\+json/i.test(html);
-
-        // Canonical
         hasCanonical = /rel=["']canonical["']/i.test(html);
-
-        // Open Graph
         hasOpenGraph = /property=["']og:title["']/i.test(html);
-
-        // Twitter Card
         hasTwitterCard = /name=["']twitter:card["']/i.test(html);
-
-        // Lang attribute
         hasLang = /<html[^>]+lang=["'][^"']+["']/i.test(html);
-
-        // Favicon
         hasFavicon = /<link[^>]+rel=["'](icon|shortcut icon)["']/i.test(html);
 
-        // Images and alt
         const imgTags = html.match(/<img[^>]*>/gi) || [];
         totalImages = imgTags.length;
         for (const img of imgTags) {
           if (!/alt=["']/i.test(img) || /alt=["'']/i.test(img)) missingAltCount++;
         }
 
-        // Links
         const linkTags = html.match(/<a[^>]+href=["']([^"']*)["']/gi) || [];
         for (const link of linkTags) {
           const hrefMatch = link.match(/href=["']([^"']*)["']/i);
           if (hrefMatch) {
             const href = hrefMatch[1];
             if (href.startsWith('http')) {
-              if (new URL(href).hostname === new URL(websiteUrl).hostname) internalLinks++;
+              if (new URL(href).hostname === parsedUrl.hostname) internalLinks++;
               else externalLinks++;
             } else {
               internalLinks++;
@@ -127,7 +116,6 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
           }
         }
 
-        // Text-to-HTML ratio (approximate)
         const textContent = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
         textToHtmlRatio = Math.round((textContent.length / html.length) * 100);
       }
@@ -199,7 +187,6 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
       criticalIssues.push("X-Robots-Tag header contains 'noindex', blocking search indexing.");
     }
 
-    // Clamp scores
     infrastructureScore = Math.max(0, infrastructureScore);
     onPageScore = Math.max(0, onPageScore);
     technicalScore = Math.max(0, technicalScore);
@@ -360,32 +347,26 @@ This audit is based on comprehensive primary and secondary research conducted on
 ════════════════════════════════════════════════════════════════════
 `;
 
+    // ============ SAVE REPORT (Simplified data to avoid schema errors) ============
     const report = await Report.create({
       type: 'technical-seo',
-      niche: `Technical Audit: ${new URL(websiteUrl).hostname}`,
+      niche: `Technical Audit: ${parsedUrl.hostname}`,
       country,
       value: '$99',
-      data: { 
-        websiteUrl, 
-        score: totalScore, 
-        responseTime, 
-        status, 
-        hasSSL, 
-        hasRobots, 
-        hasSitemap, 
-        h1Count, 
-        titleTag, 
-        metaDescription, 
-        pageSizeKb, 
+      data: {
+        websiteUrl,
+        score: totalScore,
+        responseTime,
+        status,
+        hasSSL,
+        hasRobots,
+        hasSitemap,
+        h1Count,
+        titleTag,
+        metaDescription,
+        pageSizeKb,
         isBlocked,
-        infrastructureScore,
-        onPageScore,
-        technicalScore,
-        securityScore,
-        securityHeaders,
-        internalLinks,
-        externalLinks,
-        textToHtmlRatio
+        markdown // store the full markdown so it can be retrieved
       },
       markdown,
       charts: {},
@@ -397,13 +378,25 @@ This audit is based on comprehensive primary and secondary research conducted on
     res.status(201).json(result);
 
   } catch (err) {
-    if (err instanceof ZodError) return res.status(400).json({ error: err.errors });
-    next(err);
+    console.error('Technical SEO Audit Error:', err);
+    if (err instanceof ZodError) {
+      return res.status(400).json({ error: err.errors });
+    }
+    // Generic error response with details (for debugging)
+    return res.status(500).json({ 
+      error: 'Failed to run technical audit', 
+      details: err instanceof Error ? err.message : 'Unknown error' 
+    });
   }
 };
 
 export const getTechnicalSEOReport = async (req: Request, res: Response) => {
-  const report = await Report.findById(req.params.id);
-  if (!report) return res.status(404).json({ error: 'Not found' });
-  res.json(report);
+  try {
+    const report = await Report.findById(req.params.id);
+    if (!report) return res.status(404).json({ error: 'Not found' });
+    res.json(report);
+  } catch (err) {
+    console.error('Error fetching technical SEO report:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
 };
