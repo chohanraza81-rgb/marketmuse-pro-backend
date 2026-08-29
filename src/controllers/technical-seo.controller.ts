@@ -3,6 +3,7 @@ import { Request, Response, NextFunction } from 'express';
 import axios from 'axios';
 import { z, ZodError } from 'zod';
 import { Report } from '../models/Report';
+import { env } from '../config/env';
 
 const technicalSeoSchema = z.object({
   websiteUrl: z.string().url({ message: "Invalid URL" }),
@@ -137,7 +138,7 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
       const robotsRes = await axios.get(new URL('/robots.txt', websiteUrl).toString(), { timeout: 5000 });
       if (robotsRes.status === 200) {
         hasRobots = true;
-        robotsContent = robotsRes.data.substring(0, 200); // first 200 chars for evidence
+        robotsContent = robotsRes.data.substring(0, 200);
       }
     } catch {}
 
@@ -145,9 +146,57 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
       const sitemapRes = await axios.get(new URL('/sitemap.xml', websiteUrl).toString(), { timeout: 5000 });
       if (sitemapRes.status === 200) {
         hasSitemap = true;
-        sitemapContent = sitemapRes.data.substring(0, 200); // first 200 chars for evidence
+        sitemapContent = sitemapRes.data.substring(0, 200);
       }
     } catch {}
+
+    // ============ PAGE SPEED / CORE WEB VITALS ============
+    let mobileScore: number | null = null;
+    let desktopScore: number | null = null;
+    let coreWebVitals: any = {
+      mobile: { lcp: null, fid: null, cls: null, fcp: null, tbt: null },
+      desktop: { lcp: null, fid: null, cls: null, fcp: null, tbt: null }
+    };
+
+    if (env.GOOGLE_API_KEY) {
+      try {
+        const apiUrl = 'https://www.googleapis.com/pagespeedonline/v5/runPagespeed';
+        const params = {
+          url: websiteUrl,
+          key: env.GOOGLE_API_KEY,
+          strategy: 'mobile', // or 'desktop'
+          category: 'performance',
+          locale: 'en_US'
+        };
+        // Mobile
+        const mobileResponse = await axios.get(apiUrl, { params, timeout: 20000 });
+        const mobileData = mobileResponse.data;
+        mobileScore = Math.round((mobileData.lighthouseResult?.categories?.performance?.score || 0) * 100);
+        const mobileAudits = mobileData.lighthouseResult?.audits || {};
+        coreWebVitals.mobile = {
+          lcp: mobileAudits['largest-contentful-paint']?.displayValue || 'N/A',
+          fid: mobileAudits['max-potential-fid']?.displayValue || 'N/A',
+          cls: mobileAudits['cumulative-layout-shift']?.displayValue || 'N/A',
+          fcp: mobileAudits['first-contentful-paint']?.displayValue || 'N/A',
+          tbt: mobileAudits['total-blocking-time']?.displayValue || 'N/A'
+        };
+
+        // Desktop
+        const desktopResponse = await axios.get(apiUrl, { params: { ...params, strategy: 'desktop' }, timeout: 20000 });
+        const desktopData = desktopResponse.data;
+        desktopScore = Math.round((desktopData.lighthouseResult?.categories?.performance?.score || 0) * 100);
+        const desktopAudits = desktopData.lighthouseResult?.audits || {};
+        coreWebVitals.desktop = {
+          lcp: desktopAudits['largest-contentful-paint']?.displayValue || 'N/A',
+          fid: desktopAudits['max-potential-fid']?.displayValue || 'N/A',
+          cls: desktopAudits['cumulative-layout-shift']?.displayValue || 'N/A',
+          fcp: desktopAudits['first-contentful-paint']?.displayValue || 'N/A',
+          tbt: desktopAudits['total-blocking-time']?.displayValue || 'N/A'
+        };
+      } catch (psError) {
+        console.warn('PageSpeed Insights API error:', psError instanceof Error ? psError.message : 'Unknown');
+      }
+    }
 
     // ============ SCORING ============
     let infrastructureScore = 30;
@@ -164,6 +213,16 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
     if (pageSizeKb > 2000) { infrastructureScore -= 5; warnings.push(`Heavy page size (${pageSizeKb}KB).`); }
     if (!hasViewport && !isBlocked) { infrastructureScore -= 5; criticalIssues.push("Missing Viewport meta tag."); }
     if (responseTime === 0 && isBlocked) { infrastructureScore -= 10; criticalIssues.push("Site unreachable or blocked."); }
+
+    // Add performance penalty if mobile/desktop score available and low
+    if (mobileScore !== null && mobileScore < 80) {
+      infrastructureScore -= 5;
+      criticalIssues.push(`Low mobile performance score (${mobileScore}/100).`);
+    }
+    if (desktopScore !== null && desktopScore < 80) {
+      infrastructureScore -= 5;
+      warnings.push(`Low desktop performance score (${desktopScore}/100).`);
+    }
 
     // On-Page (30)
     if (!isBlocked && status !== 0) {
@@ -276,7 +335,33 @@ In 2026, Google's core algorithms are heavily leaning on Core Web Vitals, techni
 | External Links        | ${isBlocked ? '🚫 Blocked' : externalLinks > 0 ? '✅ Pass' : '⚠️ Warning'} | ${isBlocked ? 'Cannot Extract' : externalLinks + ' found'} |
 | Text-to-HTML Ratio    | ${isBlocked ? '🚫 Blocked' : textToHtmlRatio >= 10 ? '✅ Pass' : '⚠️ Warning'} | ${isBlocked ? 'Cannot Extract' : textToHtmlRatio + '%'} |
 
-4. CRITICAL ISSUES & WARNINGS
+`;
+
+    // Add Core Web Vitals section if PageSpeed data exists
+    if (mobileScore !== null || desktopScore !== null) {
+      markdown += `4. CORE WEB VITALS & PERFORMANCE (PageSpeed Insights)
+────────────────────────────────────────────────────────────────────
+| Metric       | Mobile | Desktop | Status |
+|--------------|--------|---------|--------|
+| Performance Score | ${mobileScore !== null ? mobileScore + '/100' : 'N/A'} | ${desktopScore !== null ? desktopScore + '/100' : 'N/A'} | ${mobileScore !== null && mobileScore >= 80 ? '✅ Good' : '⚠️ Needs Improvement'} |
+| LCP          | ${coreWebVitals.mobile.lcp} | ${coreWebVitals.desktop.lcp} | ${coreWebVitals.mobile.lcp === 'N/A' ? 'N/A' : 'Target: <2.5s'} |
+| FID          | ${coreWebVitals.mobile.fid} | ${coreWebVitals.desktop.fid} | Target: <100ms |
+| CLS          | ${coreWebVitals.mobile.cls} | ${coreWebVitals.desktop.cls} | Target: <0.1 |
+| FCP          | ${coreWebVitals.mobile.fcp} | ${coreWebVitals.desktop.fcp} | Target: <1.8s |
+| TBT          | ${coreWebVitals.mobile.tbt} | ${coreWebVitals.desktop.tbt} | Target: <200ms |
+
+`;
+    } else {
+      markdown += `4. CORE WEB VITALS & PERFORMANCE
+────────────────────────────────────────────────────────────────────
+PageSpeed Insights data not available. Basic performance indicators:
+- Response Time: ${responseTime}ms (Target < 1500ms)
+- Page Size: ${pageSizeKb}KB (Target < 2000KB)
+`;
+    }
+
+    markdown += `
+5. CRITICAL ISSUES & WARNINGS
 ────────────────────────────────────────────────────────────────────
 `;
 
@@ -295,7 +380,7 @@ In 2026, Google's core algorithms are heavily leaning on Core Web Vitals, techni
       markdown += `**No warnings.**\n\n`;
     }
 
-    markdown += `5. RECOMMENDED ACTION PLAN - 7 Day Roadmap
+    markdown += `6. RECOMMENDED ACTION PLAN - 7 Day Roadmap
 ────────────────────────────────────────────────────────────────────
 **Week 1 - Critical Fixes [Impact: +${Math.min(40, totalScore < 40 ? 40 : 20)} Points]**
 1.  ${titleTag === 'MISSING' ? 'Add Title Tag: "Your Main Keyword Here | 2026 Best Solutions"' : 'Title Tag is present, optimize for keyword targeting.'}
@@ -317,7 +402,15 @@ In 2026, Google's core algorithms are heavily leaning on Core Web Vitals, techni
 
 > **ESTIMATED RESULT:** Score ${totalScore} → ${Math.min(100, totalScore + 45)}+ | Traffic potential +300% | Indexation +5x
 
-6. ON-PAGE OPTIMIZATION CHECKLIST
+7. MOBILE FRIENDLINESS & SPEED OPTIMIZATION
+────────────────────────────────────────────────────────────────────
+- ✅ Responsive viewport detected.
+- ${mobileScore !== null ? `Mobile performance score: ${mobileScore}/100` : 'Mobile performance score not available.'}
+- ${desktopScore !== null ? `Desktop performance score: ${desktopScore}/100` : 'Desktop performance score not available.'}
+- Core Web Vitals targets: LCP < 2.5s, FID < 100ms, CLS < 0.1.
+- Recommendations: Optimize images, implement lazy loading, reduce JavaScript execution, enable compression, use a CDN, and prioritize above-the-fold content.
+
+8. ON-PAGE OPTIMIZATION CHECKLIST
 ────────────────────────────────────────────────────────────────────
 1.  Ensure the main target keyword is in the H1 tag.
 2.  Optimize meta titles with primary keywords and 2026 date.
@@ -335,7 +428,7 @@ In 2026, Google's core algorithms are heavily leaning on Core Web Vitals, techni
 14. Ensure the site is fully crawlable (no 'noindex' on important pages).
 15. Add a table of contents for long-form articles.
 
-7. GROWTH ACCELERATORS
+9. GROWTH ACCELERATORS
 ────────────────────────────────────────────────────────────────────
 1.  Implement AMP (Accelerated Mobile Pages) for mobile-first indexing.
 2.  Build a real-time uptime monitoring dashboard to catch issues early.
@@ -343,9 +436,9 @@ In 2026, Google's core algorithms are heavily leaning on Core Web Vitals, techni
 4.  Use a CDN to improve global loading times.
 5.  Automate weekly technical audits to stay ahead of algorithm updates.
 
-8. DATA CREDIBILITY & SOURCES
+10. DATA CREDIBILITY & SOURCES
 ════════════════════════════════════════════════════════════════════
-**Methodology:** This audit is based on a live HTTP request to the target URL (${websiteUrl}) at ${auditTimestamp}. We used a standard browser User-Agent and analyzed raw HTML, HTTP headers, and auxiliary files (robots.txt, sitemap.xml) where available.
+**Methodology:** This audit is based on a live HTTP request to the target URL (${websiteUrl}) at ${auditTimestamp}. We used a standard browser User-Agent and analyzed raw HTML, HTTP headers, and auxiliary files (robots.txt, sitemap.xml) where available. PageSpeed Insights API was used for Core Web Vitals and performance scoring.
 
 **Evidence Summary:**
 - **Page Fetch:** HTTP ${status || 'Failed'} | ${responseTime}ms | ${pageSizeKb}KB downloaded.
@@ -355,7 +448,7 @@ In 2026, Google's core algorithms are heavily leaning on Core Web Vitals, techni
 
 **Scoring Model:** Based on industry best practices and Google's technical SEO guidelines. Categories: Infrastructure (30%), On-Page (30%), Technical (20%), Security (20%). Each missing element reduces the score accordingly.
 
-**Disclaimer:** This is a static analysis and does not include JavaScript rendering or Core Web Vitals field data. For a complete audit, a crawl of the entire site is recommended.
+**Disclaimer:** This is a static analysis and may not reflect dynamic rendering or field data. For a complete audit, a full site crawl and field performance monitoring are recommended.
 
 ════════════════════════════════════════════════════════════════════
 
@@ -366,6 +459,7 @@ This audit is based on comprehensive primary and secondary research conducted on
 • Live Search Engine Results (SERP) via Google Search Index
 • Technical Check & Site Health Audit via MusePRO Proprietary Database
 • 12-Month Search Trend & Seasonality via Google Trends
+• PageSpeed Insights API for Core Web Vitals and Performance
 • Strategic Synthesis & Market Insights by MusePRO Senior Research Division
 ════════════════════════════════════════════════════════════════════
 `;
@@ -393,7 +487,10 @@ This audit is based on comprehensive primary and secondary research conducted on
         auditTimestamp,
         robotsContent,
         sitemapContent,
-        securityHeaders
+        securityHeaders,
+        mobileScore,
+        desktopScore,
+        coreWebVitals
       },
       markdown,
       charts: {},
