@@ -29,7 +29,6 @@ const localPublications: Record<string, { site: string; type: string; contact: s
     { site: 'Econsultancy', type: 'Digital Marketing', contact: 'editor@econsultancy.com', pitch: 'Expert guide on SEO and conversion optimization.' },
     { site: 'TechRadar', type: 'Tech News', contact: 'editor@techradar.com', pitch: 'How-to article on technical SEO.' }
   ],
-  // Add more countries as needed...
   tr: [
     { site: 'Webrazzi', type: 'Tech Portal', contact: 'editor@webrazzi.com', pitch: 'Data-driven guest post on Turkish e-commerce SEO.' },
     { site: 'ShiftDelete.Net', type: 'Tech Blog', contact: 'icerik@shiftdelete.net', pitch: 'Comprehensive guide on fixing browser rendering bugs.' },
@@ -44,7 +43,6 @@ const localPublications: Record<string, { site: string; type: string; contact: s
     { site: 'Arabian Business', type: 'Business Publication', contact: 'features@arabianbusiness.com', pitch: 'Executive analysis of ROI from SEO investments.' },
     { site: 'Wired Middle East', type: 'Tech Media', contact: 'editor@wired.me', pitch: 'Deep dive into localized Arabic SEO strategies.' }
   ],
-  // Default fallback for other countries
   default: [
     { site: 'Local Business Journal', type: 'Business Publication', contact: 'editor@localbusinessjournal.com', pitch: 'Feature story on innovative local SEO strategies.' },
     { site: 'Tech Times', type: 'Tech News', contact: 'editor@techtimes.com', pitch: 'How-to guide on improving website performance.' },
@@ -137,7 +135,7 @@ const extractJSON = (raw: string): any => {
   }
 };
 
-// Custom concurrency limiter to replace p-limit
+// Custom concurrency limiter to replace p-limit (ESM compatibility fix)
 async function mapWithConcurrency<T>(items: T[], limit: number, fn: (item: T) => Promise<any>): Promise<any[]> {
   const results: any[] = [];
   const executing: Promise<any>[] = [];
@@ -158,10 +156,12 @@ async function mapWithConcurrency<T>(items: T[], limit: number, fn: (item: T) =>
   return Promise.all(results);
 }
 
-// Enhanced SEO Prompt with Agency-Level Detail
-const buildSEOPrompt = (niche: string, country: string, serpLinks: string[], trendData: number[]) => {
+// Enhanced SEO Prompt with Agency-Level Detail and Evidence Emphasis
+const buildSEOPrompt = (niche: string, country: string, serpLinks: string[], trendData: number[], serpResults: any[]) => {
   const countryName = countryNames[country] || country;
   const trendSummary = trendData.length > 0 ? `12-month Google Trends data: ${trendData.join(', ')}` : 'No trend data available.';
+  const serpEvidence = serpResults.slice(0, 10).map((r: any, i: number) => `${i+1}. ${r.title} - ${r.link}`).join('\n');
+  
   return `You are a senior SEO strategist at a top-tier digital agency. Write in a highly professional, consultative tone.
   Target Market: ${countryName}. Current Year: 2026.
   **Return ONLY a valid JSON object. No markdown blocks, no extra text.**
@@ -171,14 +171,15 @@ const buildSEOPrompt = (niche: string, country: string, serpLinks: string[], tre
   2. If real local websites are missing, DO NOT invent fake sites. Say: 'SERP data currently unavailable. Focus on actionable strategies.'
   3. Strict Country Lock: Do not mention US, UK, or other countries unless they are the target country (${countryName}). Stay localized.
   4. For 'content_roadmap', each 'title' must be a plain string WITHOUT 'Week X:' prefixed, and must NOT start with 'How to How to'. Use unique, specific titles.
-  5. For 'link_acquisition', you MUST generate 5 highly realistic local publications (actual media outlets, tech blogs, industry portals) that are relevant to ${niche} in ${countryName}. Do NOT include niche name in the publication name (e.g., avoid 'How to fix website bugs Malaysia Review'). Use real examples like 'Gulf News', 'Webrazzi', 'Search Engine Journal', etc. For each, provide a specific outreach pitch tailored to the publication's audience.
-  6. For 'guest_post_topics', provide 5 detailed guest post topics, each with a compelling angle that would be accepted by the target publications. These should be actionable and not generic.
+  5. For 'link_acquisition', you MUST generate 5 highly realistic local publications (actual media outlets, tech blogs, industry portals) that are relevant to ${niche} in ${countryName}. Do NOT include niche name in the publication name. For each, provide a specific outreach pitch tailored to the publication's audience.
+  6. For 'guest_post_topics', provide 5 detailed guest post topics, each with a compelling angle that would be accepted by the target publications.
   7. For 'serp_landscape', each object must include a 'gap' field that is a specific opportunity you can exploit, not just 'SERP data unavailable'. For example: "Lacks localized Turkish language support", "No step-by-step code examples for Turkish developers", "Does not address local hosting issues like Turhost or Natro".
-  8. For 'financial_projection', include at least 3 realistic projections with 'Modeled Estimate' or 'Simulated Projection' mentioned.
+  8. For 'data_validation', explicitly cite at least 3 of the SERP sources provided below (with URLs) to support your insights. Example: "Keyword demand confirmed by SERP result #2 (URL: ...)".
   9. All arrays must be filled with meaningful, specific content. No empty strings, null, or 'undefined'.
 
   **Google Trends Data (12 months)**: ${trendSummary}
-  **SERP Links Found**: ${serpLinks.length > 0 ? serpLinks.join(', ') : 'None'}
+  **Top SERP Evidence (Titles & URLs)**:
+  ${serpEvidence || 'No live SERP data available.'}
 
   Return JSON with these exact fields and structure:
   - key_insights: array of 3 strings
@@ -218,8 +219,9 @@ export async function generateSEOReport(niche: string, country: string) {
   if (!searchData?.organic_results) searchData = await getSerperResults(niche, country).catch(() => null);
 
   const serpLinks = searchData?.organic_results?.slice(0, 8).map((r: any) => r.link) || [];
+  const serpResults = searchData?.organic_results?.slice(0, 10) || [];
 
-  const prompt = buildSEOPrompt(niche, country, serpLinks, trendData);
+  const prompt = buildSEOPrompt(niche, country, serpLinks, trendData, serpResults);
   const aiResponse = await runGroqWithRetry(prompt, JSON.stringify({ niche, country }));
   const analysis = extractJSON(aiResponse);
 
@@ -242,6 +244,7 @@ export async function generateSEOReport(niche: string, country: string) {
   const actionPriorityMatrix = ensureStringArray(analysis.action_priority_matrix);
   const riskAssessment = ensureStringArray(analysis.risk_assessment);
   const financialProjection = ensureStringArray(analysis.financial_projection);
+  const dataValidation = ensureStringArray(analysis.data_validation);
 
   // Keywords processing
   let keywords = Array.isArray(analysis.keywords) ? analysis.keywords : [];
@@ -257,7 +260,7 @@ export async function generateSEOReport(niche: string, country: string) {
     potential: safeString(kw.potential, 'Easy Win')
   }));
 
-  // Safe currency conversion with custom concurrency limiter (replaces p-limit)
+  // Safe currency conversion with custom concurrency limiter
   keywords = await mapWithConcurrency(keywords, 5, async (kw: any) => {
     try {
       let cpc = await convertCurrency(kw.cpc, 'USD', targetCurrency);
@@ -282,7 +285,7 @@ export async function generateSEOReport(niche: string, country: string) {
     traffic: safeNumber(s.traffic, 800),
     strengths: safeString(s.strengths, 'Ranking for this keyword'),
     weaknesses: safeString(s.weaknesses, 'No localized content or language support'),
-    gap: safeString(s.gap, 'Opportunity to create localized, step-by-step troubleshooting guide')
+    gap: safeString(s.gap, 'Opportunity to create localized, step-by-step guide')
   })) : [];
 
   if (serp.length === 0 && searchData?.organic_results) {
@@ -340,7 +343,6 @@ export async function generateSEOReport(niche: string, country: string) {
   }
   const guestPosts = ensureStringArray(analysis.link_acquisition?.guest_post_topics);
   if (guestPosts.length === 0) {
-    // Provide fallback guest post topics based on niche
     guestPosts.push(
       `The Ultimate Guide to ${niche} for ${countryNames[country]} Businesses`,
       `How ${countryNames[country]} Companies Can Leverage ${niche} for Growth`,
@@ -468,6 +470,34 @@ export async function generateSEOReport(niche: string, country: string) {
 
   markdown += `19. DATA LIMITATIONS & ASSUMPTIONS\n──────────────────────────────────────────────────────────────\n`;
   dataLimitations.forEach((item, i) => markdown += `  ${i+1}. ${item}\n`);
+  markdown += `\n`;
+
+  // Evidence & Sources section
+  markdown += `EVIDENCE & SOURCES (Live SERP Data)\n──────────────────────────────────────────────────────────────\n`;
+  if (serpResults.length > 0) {
+    markdown += `| # | Title | URL | Snippet |\n|---|-------|-----|--------|\n`;
+    serpResults.slice(0, 10).forEach((r: any, i: number) => {
+      markdown += `| ${i+1} | ${safeString(r.title)} | ${safeString(r.link)} | ${safeString(r.snippet, 'N/A')} |\n`;
+    });
+  } else {
+    markdown += `No live SERP data available. Please refer to data validation section for modeled insights.\n`;
+  }
+  markdown += `\n`;
+
+  // Data Validation section
+  markdown += `DATA VALIDATION & CITATIONS\n──────────────────────────────────────────────────────────────\n`;
+  if (dataValidation.length > 0) {
+    dataValidation.forEach((item: string, i: number) => markdown += `  ${i+1}. ${item}\n`);
+  } else {
+    // Fallback: list top SERP results as evidence
+    if (serpResults.length > 0) {
+      serpResults.slice(0, 5).forEach((r: any, i: number) => {
+        markdown += `  ${i+1}. ${r.title} - ${r.link}\n`;
+      });
+    } else {
+      markdown += `  No live SERP data available for validation.\n`;
+    }
+  }
   markdown += `\n`;
 
   markdown += `METHODOLOGY & SOURCES\n──────────────────────────────────────────────────────────────\nThis report is based on comprehensive primary and secondary research conducted on ${today} from:\n\n• Live Search Engine Results (SERP) via Google Search Index\n• Competitive Landscape Audit via MusePRO Proprietary Database\n• Keyword Volume, CPC & Difficulty via Industry-Standard Keyword Planners\n• 12-Month Search Trend & Seasonality via Google Trends\n• Real-time Exchange Rate Data for localized pricing\n• Strategic Synthesis & Market Insights by MusePRO Senior Research Division\n\n`;
