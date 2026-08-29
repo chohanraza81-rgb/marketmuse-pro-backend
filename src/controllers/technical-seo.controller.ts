@@ -21,6 +21,7 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
     }
 
     const startTime = Date.now();
+    const auditTimestamp = new Date().toISOString();
     let responseTime = 0;
     let status = 0;
     let isBlocked = false;
@@ -29,6 +30,8 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
     let hasSSL = parsedUrl.protocol === 'https:';
     let hasRobots = false;
     let hasSitemap = false;
+    let robotsContent = '';
+    let sitemapContent = '';
     let securityHeaders: Record<string, string> = {};
 
     let titleTag = 'MISSING';
@@ -50,6 +53,7 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
     let pageSizeKb = 0;
     let textToHtmlRatio = 0;
 
+    // Fetch page
     try {
       const response = await axios.get(websiteUrl, {
         timeout: 15000,
@@ -128,16 +132,24 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
       }
     }
 
+    // Check robots.txt and sitemap.xml with content capture
     try {
       const robotsRes = await axios.get(new URL('/robots.txt', websiteUrl).toString(), { timeout: 5000 });
-      if (robotsRes.status === 200) hasRobots = true;
+      if (robotsRes.status === 200) {
+        hasRobots = true;
+        robotsContent = robotsRes.data.substring(0, 200); // first 200 chars for evidence
+      }
     } catch {}
 
     try {
       const sitemapRes = await axios.get(new URL('/sitemap.xml', websiteUrl).toString(), { timeout: 5000 });
-      if (sitemapRes.status === 200) hasSitemap = true;
+      if (sitemapRes.status === 200) {
+        hasSitemap = true;
+        sitemapContent = sitemapRes.data.substring(0, 200); // first 200 chars for evidence
+      }
     } catch {}
 
+    // ============ SCORING ============
     let infrastructureScore = 30;
     let onPageScore = 30;
     let technicalScore = 20;
@@ -146,12 +158,14 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
     let criticalIssues: string[] = [];
     let warnings: string[] = [];
 
+    // Infrastructure (30)
     if (!hasSSL) { infrastructureScore -= 10; criticalIssues.push("Missing SSL (HTTPS)."); }
     if (responseTime > 2000) { infrastructureScore -= 5; warnings.push(`Slow response time (${responseTime}ms).`); }
     if (pageSizeKb > 2000) { infrastructureScore -= 5; warnings.push(`Heavy page size (${pageSizeKb}KB).`); }
     if (!hasViewport && !isBlocked) { infrastructureScore -= 5; criticalIssues.push("Missing Viewport meta tag."); }
     if (responseTime === 0 && isBlocked) { infrastructureScore -= 10; criticalIssues.push("Site unreachable or blocked."); }
 
+    // On-Page (30)
     if (!isBlocked && status !== 0) {
       if (titleTag === 'MISSING') { onPageScore -= 10; criticalIssues.push("No Title Tag found."); }
       if (metaDescription === 'MISSING') { onPageScore -= 5; warnings.push("Missing Meta Description."); }
@@ -162,12 +176,14 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
       if (missingAltCount > 0) { onPageScore -= 5; warnings.push(`${missingAltCount} images missing Alt Text.`); }
     }
 
+    // Technical (20)
     if (!hasRobots) { technicalScore -= 5; warnings.push("No robots.txt found."); }
     if (!hasSitemap) { technicalScore -= 5; warnings.push("No sitemap.xml found."); }
     if (!isBlocked && status !== 0 && !hasLang) { technicalScore -= 3; warnings.push("Missing lang attribute on <html> tag."); }
     if (!isBlocked && status !== 0 && internalLinks === 0) { technicalScore -= 3; warnings.push("No internal links found."); }
     if (!isBlocked && status !== 0 && textToHtmlRatio < 10) { technicalScore -= 4; warnings.push(`Low text-to-HTML ratio (${textToHtmlRatio}%).`); }
 
+    // Security (20)
     if (!securityHeaders['X-Frame-Options']) { securityScore -= 4; warnings.push("Missing X-Frame-Options header."); }
     if (!securityHeaders['X-Content-Type-Options']) { securityScore -= 4; warnings.push("Missing X-Content-Type-Options header."); }
     if (!securityHeaders['Strict-Transport-Security']) { securityScore -= 4; warnings.push("Missing HSTS header."); }
@@ -187,6 +203,7 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
     const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
     const reference = `MKT-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
 
+    // ============ MARKDOWN GENERATION ============
     let markdown = `MusePRO
 Real-Time Market Research
 Intelligence Division
@@ -196,6 +213,7 @@ TECHNICAL SEO AUDIT REPORT
 
 **Prepared For:** [Client Name]
 **Date:** ${today}
+**Audit Timestamp (UTC):** ${auditTimestamp}
 **Prepared By:** MusePRO SEO Team
 **Reference:** ${reference}
 **Classification:** CONFIDENTIAL
@@ -325,6 +343,22 @@ In 2026, Google's core algorithms are heavily leaning on Core Web Vitals, techni
 4.  Use a CDN to improve global loading times.
 5.  Automate weekly technical audits to stay ahead of algorithm updates.
 
+8. DATA CREDIBILITY & SOURCES
+════════════════════════════════════════════════════════════════════
+**Methodology:** This audit is based on a live HTTP request to the target URL (${websiteUrl}) at ${auditTimestamp}. We used a standard browser User-Agent and analyzed raw HTML, HTTP headers, and auxiliary files (robots.txt, sitemap.xml) where available.
+
+**Evidence Summary:**
+- **Page Fetch:** HTTP ${status || 'Failed'} | ${responseTime}ms | ${pageSizeKb}KB downloaded.
+- **robots.txt:** ${hasRobots ? 'Found' : 'Not Found'} | ${robotsContent ? 'Snippet: "' + robotsContent.replace(/\n/g, ' ') + '"' : 'N/A'}
+- **sitemap.xml:** ${hasSitemap ? 'Found' : 'Not Found'} | ${sitemapContent ? 'Snippet: "' + sitemapContent.replace(/\n/g, ' ') + '"' : 'N/A'}
+- **Security Headers:** ${Object.values(securityHeaders).every(v => v === '') ? 'None present' : 'Partial presence detected'}.
+
+**Scoring Model:** Based on industry best practices and Google's technical SEO guidelines. Categories: Infrastructure (30%), On-Page (30%), Technical (20%), Security (20%). Each missing element reduces the score accordingly.
+
+**Disclaimer:** This is a static analysis and does not include JavaScript rendering or Core Web Vitals field data. For a complete audit, a crawl of the entire site is recommended.
+
+════════════════════════════════════════════════════════════════════
+
 METHODOLOGY & SOURCES
 ════════════════════════════════════════════════════════════════════
 This audit is based on comprehensive primary and secondary research conducted on ${today} from:
@@ -336,7 +370,7 @@ This audit is based on comprehensive primary and secondary research conducted on
 ════════════════════════════════════════════════════════════════════
 `;
 
-    // Changed type to 'seo' and added subtype in data for distinction
+    // Save report with type 'seo' and subtype 'technical'
     const report = await Report.create({
       type: 'seo',
       niche: `Technical Audit: ${parsedUrl.hostname}`,
@@ -355,7 +389,11 @@ This audit is based on comprehensive primary and secondary research conducted on
         metaDescription,
         pageSizeKb,
         isBlocked,
-        subtype: 'technical'
+        subtype: 'technical',
+        auditTimestamp,
+        robotsContent,
+        sitemapContent,
+        securityHeaders
       },
       markdown,
       charts: {},
