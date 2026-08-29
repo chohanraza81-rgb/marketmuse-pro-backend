@@ -119,7 +119,6 @@ const buildProductPrompt = (niche: string, country: string, serpContext: string,
   const countryName = countryNames[country] || country;
   const trendSummary = trendData.length > 0 ? `12-month Google Trends data: ${trendData.join(', ')}` : 'No trend data available.';
   
-  // Prepare concise SERP evidence list (title + URL) for AI to reference
   const serpEvidence = serpResults.slice(0, 10).map((r: any, i: number) => `${i+1}. ${r.title} - ${r.link}`).join('\n');
   
   return `You are a veteran E-commerce and Product Consultant at MusePRO. Write in a human, confident, and highly professional tone.
@@ -216,12 +215,11 @@ export async function generateProductReport(niche: string, country: string) {
   const cached = cacheService.get(cacheKey);
   if (cached) return cached;
 
-  // 🔥 ALL APIS: SerpAPI FIRST, then Scraper, then Serper (Full Data Extraction)
   const trendData = await getGoogleTrends(niche, country).catch(() => []);
   
-  let searchData = await getSearchResults(niche, country).catch(() => null); // SerpAPI
-  if (!searchData?.organic_results) searchData = await getScraperAPISearch(niche, country).catch(() => null); // Scraper
-  if (!searchData?.organic_results) searchData = await getSerperResults(niche, country).catch(() => null); // Serper
+  let searchData = await getSearchResults(niche, country).catch(() => null);
+  if (!searchData?.organic_results) searchData = await getScraperAPISearch(niche, country).catch(() => null);
+  if (!searchData?.organic_results) searchData = await getSerperResults(niche, country).catch(() => null);
 
   let serpContext = "SERP Data currently unavailable. Please focus on generating realistic local market insights.";
   let serpResults: any[] = [];
@@ -232,7 +230,6 @@ export async function generateProductReport(niche: string, country: string) {
     ).join('\n');
     serpContext = `Here are the top real competitors found via Google SERP:\n${topSites}`;
   } else {
-    // Provide fallback realistic competitor data based on common e-commerce niches (can be tailored)
     serpContext = `SERP Data unavailable. However, based on our knowledge of the ${countryNames[country] || country} market for ${niche}, typical competitors include local leaders, cross-border budget sellers, and specialized niche players. Please create realistic competitor brands and data accordingly.`;
   }
 
@@ -348,7 +345,6 @@ export async function generateProductReport(niche: string, country: string) {
   if (dataValidation.length > 0) {
     dataValidation.forEach((item: string, i: number) => markdown += `  ${i+1}. ${item}\n`);
   } else {
-    // Fallback: Use real SERP results if available
     if (serpResults.length > 0) {
       serpResults.slice(0, 5).forEach((r: any, i: number) => {
         markdown += `  ${i+1}. ${r.title} - ${r.link}\n`;
@@ -421,7 +417,6 @@ export async function generateProductReport(niche: string, country: string) {
   dataLimitations.forEach((item: string, i: number) => markdown += `  ${i+1}. ${item}\n`);
   markdown += `\nThis report is based on comprehensive primary and secondary research conducted on ${today} from:\n\n• Real-time Market & Consumer Demand Trends\n• Live Search Engine Results (SERP) via SerpAPI/ScraperAPI/SerperAPI\n• Local Sourcing & Logistics Audit via MusePRO Proprietary Database\n• Financial Modeling, Margin & Break-even Calculations\n• Strategic Synthesis & Market Insights by MusePRO Senior Research Division\n\n`;
 
-  // ============ RESULT OBJECT ============
   const result = {
     niche, country, type: 'product',
     data: analysis,
