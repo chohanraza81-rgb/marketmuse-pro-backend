@@ -1,9 +1,8 @@
-// technicalSEO.controller.ts
+// technical-seo.controller.ts
 import { Request, Response, NextFunction } from 'express';
 import axios from 'axios';
 import { z, ZodError } from 'zod';
 import { Report } from '../models/Report';
-import { env } from '../config/env';
 
 const technicalSeoSchema = z.object({
   websiteUrl: z.string().url({ message: "Invalid URL" }),
@@ -158,13 +157,13 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
       desktop: { lcp: null, fid: null, cls: null, fcp: null, tbt: null }
     };
 
-    if (env.GOOGLE_API_KEY) {
+    if (process.env.GOOGLE_API_KEY) {
       try {
         const apiUrl = 'https://www.googleapis.com/pagespeedonline/v5/runPagespeed';
         const params = {
           url: websiteUrl,
-          key: env.GOOGLE_API_KEY,
-          strategy: 'mobile', // or 'desktop'
+          key: process.env.GOOGLE_API_KEY,
+          strategy: 'mobile',
           category: 'performance',
           locale: 'en_US'
         };
