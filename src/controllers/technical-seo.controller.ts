@@ -13,7 +13,6 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
   try {
     const { websiteUrl, country } = technicalSeoSchema.parse(req.body);
 
-    // Safely parse the URL
     let parsedUrl: URL;
     try {
       parsedUrl = new URL(websiteUrl);
@@ -27,13 +26,11 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
     let isBlocked = false;
     let html = '';
 
-    // Infrastructure flags
     let hasSSL = parsedUrl.protocol === 'https:';
     let hasRobots = false;
     let hasSitemap = false;
     let securityHeaders: Record<string, string> = {};
 
-    // On-page flags
     let titleTag = 'MISSING';
     let metaDescription = 'MISSING';
     let h1Count = 0;
@@ -53,7 +50,6 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
     let pageSizeKb = 0;
     let textToHtmlRatio = 0;
 
-    // Fetch page
     try {
       const response = await axios.get(websiteUrl, {
         timeout: 15000,
@@ -132,7 +128,6 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
       }
     }
 
-    // Check robots.txt and sitemap.xml
     try {
       const robotsRes = await axios.get(new URL('/robots.txt', websiteUrl).toString(), { timeout: 5000 });
       if (robotsRes.status === 200) hasRobots = true;
@@ -143,7 +138,6 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
       if (sitemapRes.status === 200) hasSitemap = true;
     } catch {}
 
-    // ============ SCORING ============
     let infrastructureScore = 30;
     let onPageScore = 30;
     let technicalScore = 20;
@@ -152,14 +146,12 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
     let criticalIssues: string[] = [];
     let warnings: string[] = [];
 
-    // Infrastructure (30)
     if (!hasSSL) { infrastructureScore -= 10; criticalIssues.push("Missing SSL (HTTPS)."); }
     if (responseTime > 2000) { infrastructureScore -= 5; warnings.push(`Slow response time (${responseTime}ms).`); }
     if (pageSizeKb > 2000) { infrastructureScore -= 5; warnings.push(`Heavy page size (${pageSizeKb}KB).`); }
     if (!hasViewport && !isBlocked) { infrastructureScore -= 5; criticalIssues.push("Missing Viewport meta tag."); }
     if (responseTime === 0 && isBlocked) { infrastructureScore -= 10; criticalIssues.push("Site unreachable or blocked."); }
 
-    // On-Page (30)
     if (!isBlocked && status !== 0) {
       if (titleTag === 'MISSING') { onPageScore -= 10; criticalIssues.push("No Title Tag found."); }
       if (metaDescription === 'MISSING') { onPageScore -= 5; warnings.push("Missing Meta Description."); }
@@ -170,14 +162,12 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
       if (missingAltCount > 0) { onPageScore -= 5; warnings.push(`${missingAltCount} images missing Alt Text.`); }
     }
 
-    // Technical (20)
     if (!hasRobots) { technicalScore -= 5; warnings.push("No robots.txt found."); }
     if (!hasSitemap) { technicalScore -= 5; warnings.push("No sitemap.xml found."); }
     if (!isBlocked && status !== 0 && !hasLang) { technicalScore -= 3; warnings.push("Missing lang attribute on <html> tag."); }
     if (!isBlocked && status !== 0 && internalLinks === 0) { technicalScore -= 3; warnings.push("No internal links found."); }
     if (!isBlocked && status !== 0 && textToHtmlRatio < 10) { technicalScore -= 4; warnings.push(`Low text-to-HTML ratio (${textToHtmlRatio}%).`); }
 
-    // Security (20)
     if (!securityHeaders['X-Frame-Options']) { securityScore -= 4; warnings.push("Missing X-Frame-Options header."); }
     if (!securityHeaders['X-Content-Type-Options']) { securityScore -= 4; warnings.push("Missing X-Content-Type-Options header."); }
     if (!securityHeaders['Strict-Transport-Security']) { securityScore -= 4; warnings.push("Missing HSTS header."); }
@@ -197,7 +187,6 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
     const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
     const reference = `MKT-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
 
-    // ============ MARKDOWN GENERATION ============
     let markdown = `MusePRO
 Real-Time Market Research
 Intelligence Division
@@ -347,9 +336,9 @@ This audit is based on comprehensive primary and secondary research conducted on
 ════════════════════════════════════════════════════════════════════
 `;
 
-    // ============ SAVE REPORT (Simplified data to avoid schema errors) ============
+    // Changed type to 'seo' and added subtype in data for distinction
     const report = await Report.create({
-      type: 'technical-seo',
+      type: 'seo',
       niche: `Technical Audit: ${parsedUrl.hostname}`,
       country,
       value: '$99',
@@ -366,7 +355,7 @@ This audit is based on comprehensive primary and secondary research conducted on
         metaDescription,
         pageSizeKb,
         isBlocked,
-        markdown // store the full markdown so it can be retrieved
+        subtype: 'technical'
       },
       markdown,
       charts: {},
@@ -382,7 +371,6 @@ This audit is based on comprehensive primary and secondary research conducted on
     if (err instanceof ZodError) {
       return res.status(400).json({ error: err.errors });
     }
-    // Generic error response with details (for debugging)
     return res.status(500).json({ 
       error: 'Failed to run technical audit', 
       details: err instanceof Error ? err.message : 'Unknown error' 
