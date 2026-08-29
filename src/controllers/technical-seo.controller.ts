@@ -1,3 +1,4 @@
+// technicalSEO.controller.ts
 import { Request, Response, NextFunction } from 'express';
 import axios from 'axios';
 import { z, ZodError } from 'zod';
@@ -155,17 +156,10 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
     } catch {}
 
     // ============ SCORING ============
-    // Categories with max points
-    let infrastructureScore = 50;
+    let infrastructureScore = 30;
     let onPageScore = 30;
     let technicalScore = 20;
-    let securityScore = 0; // bonus? We'll make total 100 by distributing 50/30/20, and incorporate security into technical?
-
-    // Actually re-arrange: Infrastructure (30), On-Page (30), Technical (20), Security (20) = 100
-    infrastructureScore = 30;
-    onPageScore = 30;
-    technicalScore = 20;
-    securityScore = 20;
+    let securityScore = 20;
 
     let criticalIssues: string[] = [];
     let warnings: string[] = [];
