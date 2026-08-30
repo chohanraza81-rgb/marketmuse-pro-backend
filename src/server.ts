@@ -1,8 +1,6 @@
 import mongoose from 'mongoose';
 import app from './app';
 import { env } from './config/env';
-import reportRoutes from './routes/report.routes';
-app.use('/api/reports', reportRoutes);
 
 const startServer = async (): Promise<void> => {
   try {
