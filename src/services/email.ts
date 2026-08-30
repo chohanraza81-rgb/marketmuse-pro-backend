@@ -1,6 +1,22 @@
+// services/email.service.ts
 import { env } from '../config/env';
 
-export async function sendReportEmail(to: string, subject: string, markdown: string, reportTitle: string) {
+export interface EmailAttachment {
+  name: string;
+  content: string; // base64
+  contentType: string;
+}
+
+export interface SendEmailOptions {
+  to: string[];
+  subject: string;
+  body?: string;
+  attachments?: EmailAttachment[];
+}
+
+export async function sendReportEmail(options: SendEmailOptions) {
+  const { to, subject, body, attachments = [] } = options;
+
   const response = await fetch('https://api.brevo.com/v3/smtp/email', {
     method: 'POST',
     headers: {
@@ -9,16 +25,10 @@ export async function sendReportEmail(to: string, subject: string, markdown: str
     },
     body: JSON.stringify({
       sender: { email: 'reports@musepro.com', name: 'MusePRO' },
-      to: [{ email: to }],
+      to: to.map(email => ({ email })),
       subject,
-      htmlContent: `<p>Dear Client,</p><p>Please find your report attached.</p><p><strong>${reportTitle}</strong></p>`,
-      attachment: [
-        {
-          name: `${reportTitle.replace(/\s+/g, '_')}.md`,
-          content: Buffer.from(markdown).toString('base64'),
-          contentType: 'text/markdown',
-        },
-      ],
+      htmlContent: body || '<p>Dear Client, please find your report attached.</p>',
+      attachment: attachments,
     }),
   });
 
