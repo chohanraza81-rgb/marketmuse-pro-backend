@@ -16,16 +16,15 @@ import {
   searchReports
 } from '../controllers/report.controller';
 import { getAgencySettings, updateAgencySettings } from '../controllers/agency.controller';
-import { sendReportEmail } from '../services/email.service';
+import { sendReportEmail } from '../services/email';
 import { Report } from '../models/Report';
 import { SharedReport } from '../models/SharedReport';
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
-import { sendReportEmail } from '../services/email';
 
 const router = Router();
 
-// Health Check
+// ============ Health Check ============
 router.get('/health', (req, res) => {
   res.json({ 
     status: 'ok', 
@@ -79,7 +78,6 @@ router.post('/send-report', async (req, res, next) => {
       return res.status(404).json({ error: 'Report not found' });
     }
 
-    // Prepare email options
     const emailAttachments = attachments?.length ? attachments : [{
       name: `${report.niche.replace(/\s+/g, '_')}_report.md`,
       content: Buffer.from(report.markdown || '').toString('base64'),
