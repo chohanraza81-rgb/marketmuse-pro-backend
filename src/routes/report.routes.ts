@@ -1,4 +1,4 @@
-// backend/src/routes/report.routes.ts
+// src/routes/report.routes.ts
 import express from 'express';
 import { Report } from '../models/Report';
 import { SharedReport } from '../models/SharedReport';
@@ -14,8 +14,9 @@ router.get('/:id', async (req, res) => {
     const report = await Report.findById(req.params.id);
     if (!report) return res.status(404).json({ error: 'Report not found' });
     res.json(report);
-  } catch (err) {
-    res.status(500).json({ error: 'Server error' });
+  } catch (err: unknown) {
+    const errorMessage = err instanceof Error ? err.message : 'Server error';
+    res.status(500).json({ error: errorMessage });
   }
 });
 
@@ -34,8 +35,9 @@ router.post('/:id/share', async (req, res) => {
     });
 
     res.json({ link: `/share/${token}`, expiresAt });
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to create share link' });
+  } catch (err: unknown) {
+    const errorMessage = err instanceof Error ? err.message : 'Failed to create share link';
+    res.status(500).json({ error: errorMessage });
   }
 });
 
@@ -56,8 +58,9 @@ router.get('/share/:token', async (req, res) => {
     const report = await Report.findById(shared.reportId);
     if (!report) return res.status(404).json({ error: 'Report not found' });
     res.json(report);
-  } catch (err) {
-    res.status(500).json({ error: 'Server error' });
+  } catch (err: unknown) {
+    const errorMessage = err instanceof Error ? err.message : 'Server error';
+    res.status(500).json({ error: errorMessage });
   }
 });
 
@@ -82,8 +85,9 @@ router.post('/:id/email', async (req, res) => {
     });
 
     res.json({ success: true, result });
-  } catch (err) {
-    res.status(500).json({ error: 'Email failed', details: err.message });
+  } catch (err: unknown) {
+    const errorMessage = err instanceof Error ? err.message : 'Email failed';
+    res.status(500).json({ error: 'Email failed', details: errorMessage });
   }
 });
 
