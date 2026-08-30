@@ -4,8 +4,7 @@ import { Report } from '../models/Report';
 import { SharedReport } from '../models/SharedReport';
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
-import { sendReportEmail } from '../services/email.service';
-
+import { sendReportEmail } from '../services/email';
 const router = express.Router();
 
 // GET report by ID
