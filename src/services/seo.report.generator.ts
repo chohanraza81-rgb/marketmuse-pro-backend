@@ -1,7 +1,7 @@
 // seo.report.generator.ts
 import { cacheService } from './cache';
 import { getGoogleTrends } from './trends';
-import { getSearchResults, getKeywordSuggestions } from './serpapi';
+import { getSearchResults } from './serpapi';
 import { getSerperResults } from './serper';
 import { getScraperAPISearch } from './scraperapi';
 import { convertCurrency } from './exchange';
@@ -28,6 +28,13 @@ const localPublications: Record<string, { site: string; type: string; contact: s
     { site: 'Campaign', type: 'Advertising Publication', contact: 'news@campaignlive.co.uk', pitch: 'Feature on digital marketing ROI.' },
     { site: 'Econsultancy', type: 'Digital Marketing', contact: 'editor@econsultancy.com', pitch: 'Expert guide on SEO and conversion optimization.' },
     { site: 'TechRadar', type: 'Tech News', contact: 'editor@techradar.com', pitch: 'How-to article on technical SEO.' }
+  ],
+  au: [
+    { site: 'Startup Daily', type: 'Tech & Startup Portal', contact: 'editor@startupdaily.net', pitch: 'Exclusive data-backed study on Australian e-commerce trends.' },
+    { site: 'SmartCompany', type: 'SME Business Publication', contact: 'editorial@smartcompany.com.au', pitch: 'Case study on Australian entrepreneur scaling with organic TikTok.' },
+    { site: 'Power Retail', type: 'E-commerce Intelligence', contact: 'content@powerretail.com.au', pitch: 'Actionable product validation frameworks for AU startups.' },
+    { site: 'Inside Retail Australia', type: 'Retail Industry Publication', contact: 'news@insideretail.com.au', pitch: 'Expert commentary on micro-warehousing impact.' },
+    { site: 'Dynamic Business', type: 'SME Business Portal', contact: 'editor@dynamicbusiness.com.au', pitch: 'Guide on navigating GST and consumer law for dropshipping.' }
   ],
   tr: [
     { site: 'Webrazzi', type: 'Tech Portal', contact: 'editor@webrazzi.com', pitch: 'Data-driven guest post on Turkish e-commerce SEO.' },
@@ -135,7 +142,7 @@ const extractJSON = (raw: string): any => {
   }
 };
 
-// Custom concurrency limiter to replace p-limit (ESM compatibility fix)
+// Custom concurrency limiter (avoids p-limit ES module issue)
 async function mapWithConcurrency<T>(items: T[], limit: number, fn: (item: T) => Promise<any>): Promise<any[]> {
   const results: any[] = [];
   const executing: Promise<any>[] = [];
@@ -156,7 +163,7 @@ async function mapWithConcurrency<T>(items: T[], limit: number, fn: (item: T) =>
   return Promise.all(results);
 }
 
-// Enhanced SEO Prompt with Agency-Level Detail and Evidence Emphasis
+// Enhanced SEO Prompt - Premium
 const buildSEOPrompt = (niche: string, country: string, serpLinks: string[], trendData: number[], serpResults: any[]) => {
   const countryName = countryNames[country] || country;
   const trendSummary = trendData.length > 0 ? `12-month Google Trends data: ${trendData.join(', ')}` : 'No trend data available.';
@@ -171,11 +178,12 @@ const buildSEOPrompt = (niche: string, country: string, serpLinks: string[], tre
   2. If real local websites are missing, DO NOT invent fake sites. Say: 'SERP data currently unavailable. Focus on actionable strategies.'
   3. Strict Country Lock: Do not mention US, UK, or other countries unless they are the target country (${countryName}). Stay localized.
   4. For 'content_roadmap', each 'title' must be a plain string WITHOUT 'Week X:' prefixed, and must NOT start with 'How to How to'. Use unique, specific titles.
-  5. For 'link_acquisition', you MUST generate 5 highly realistic local publications (actual media outlets, tech blogs, industry portals) that are relevant to ${niche} in ${countryName}. Do NOT include niche name in the publication name. For each, provide a specific outreach pitch tailored to the publication's audience.
-  6. For 'guest_post_topics', provide 5 detailed guest post topics, each with a compelling angle that would be accepted by the target publications.
-  7. For 'serp_landscape', each object must include a 'gap' field that is a specific opportunity you can exploit, not just 'SERP data unavailable'. For example: "Lacks localized Turkish language support", "No step-by-step code examples for Turkish developers", "Does not address local hosting issues like Turhost or Natro".
-  8. For 'data_validation', explicitly cite at least 3 of the SERP sources provided below (with URLs) to support your insights. Example: "Keyword demand confirmed by SERP result #2 (URL: ...)".
-  9. All arrays must be filled with meaningful, specific content. No empty strings, null, or 'undefined'.
+  5. For 'link_acquisition', you MUST generate 5 highly realistic local publications (actual media outlets, tech blogs, industry portals) relevant to ${niche} in ${countryName}. Do NOT include niche name in the publication name. Provide a specific outreach pitch tailored to each publication.
+  6. For 'guest_post_topics', provide 5 detailed guest post topics, each with a compelling angle accepted by target publications.
+  7. For 'serp_landscape', each object must include a 'gap' field that is a specific opportunity you can exploit, not just 'SERP data unavailable'. For example: "Lacks localized Turkish language support", "No step-by-step code examples for Turkish developers".
+  8. For 'data_validation', explicitly cite at least 3 SERP sources (with URLs) supporting your insights.
+  9. NEVER use the word "Est." or "Estimated". For traffic/volume use "Approx." or "Typical". For prices use "Typical Price" or "Market Price".
+  10. All arrays must be filled with meaningful, specific content. No empty strings, null, or 'undefined'.
 
   **Google Trends Data (12 months)**: ${trendSummary}
   **Top SERP Evidence (Titles & URLs)**:
@@ -188,7 +196,7 @@ const buildSEOPrompt = (niche: string, country: string, serpLinks: string[], tre
   - trend_assessment: string
   - keywords: array of 50 objects, each with { keyword, volume, cpc, kd, intent, potential }
   - serp_landscape: array of up to 8 objects, each with { position, title, link, da, words, backlinks, traffic, strengths, weaknesses, gap }
-  - content_roadmap: array of 12 objects, each with { week (number 1-12), title (string without 'Week X:'), primary_keyword, type, expected_traffic }
+  - content_roadmap: array of 12 objects, each with { week, title, primary_keyword, type, expected_traffic }
   - link_acquisition: object with { overview: string, target_sites: array of 5 objects {site, type, contact, pitch}, guest_post_topics: array of 5 strings }
   - onpage_checklist: array of 15 strings
   - growth_accelerators: array of 5 strings
@@ -218,8 +226,13 @@ export async function generateSEOReport(niche: string, country: string) {
   if (!searchData?.organic_results) searchData = await getSearchResults(niche, country).catch(() => null);
   if (!searchData?.organic_results) searchData = await getSerperResults(niche, country).catch(() => null);
 
-  const serpLinks = searchData?.organic_results?.slice(0, 8).map((r: any) => r.link) || [];
-  const serpResults = searchData?.organic_results?.slice(0, 10) || [];
+  // Filter out Google redirect URLs
+  const cleanOrganicResults = (searchData?.organic_results || [])
+    .filter((r: any) => r.link && !r.link.includes('google.com/goto?url='))
+    .slice(0, 10);
+
+  const serpLinks = cleanOrganicResults.map((r: any) => r.link);
+  const serpResults = cleanOrganicResults;
 
   const prompt = buildSEOPrompt(niche, country, serpLinks, trendData, serpResults);
   const aiResponse = await runGroqWithRetry(prompt, JSON.stringify({ niche, country }));
@@ -260,7 +273,7 @@ export async function generateSEOReport(niche: string, country: string) {
     potential: safeString(kw.potential, 'Easy Win')
   }));
 
-  // Safe currency conversion with custom concurrency limiter
+  // Safe currency conversion
   keywords = await mapWithConcurrency(keywords, 5, async (kw: any) => {
     try {
       let cpc = await convertCurrency(kw.cpc, 'USD', targetCurrency);
@@ -274,22 +287,27 @@ export async function generateSEOReport(niche: string, country: string) {
     return kw;
   });
 
-  // SERP landscape processing with improved fallback
-  let serp = Array.isArray(analysis.serp_landscape) ? analysis.serp_landscape.filter((s: any) => s.title && s.link).map((s: any, i: number) => ({
-    position: s.position || i + 1,
-    title: safeString(s.title),
-    link: safeString(s.link),
-    da: safeNumber(s.da, 35),
-    words: safeNumber(s.words, 1000),
-    backlinks: safeNumber(s.backlinks, 15),
-    traffic: safeNumber(s.traffic, 800),
-    strengths: safeString(s.strengths, 'Ranking for this keyword'),
-    weaknesses: safeString(s.weaknesses, 'No localized content or language support'),
-    gap: safeString(s.gap, 'Opportunity to create localized, step-by-step guide')
-  })) : [];
+  // SERP landscape processing with improved fallback and cleanup
+  let serp = Array.isArray(analysis.serp_landscape) 
+    ? analysis.serp_landscape
+        .filter((s: any) => s.title && s.link && !s.link.includes('google.com/goto?url='))
+        .map((s: any, i: number) => ({
+          position: s.position || i + 1,
+          title: safeString(s.title),
+          link: safeString(s.link),
+          da: safeNumber(s.da, 35),
+          words: safeNumber(s.words, 1000),
+          backlinks: safeNumber(s.backlinks, 15),
+          traffic: safeNumber(s.traffic, 800),
+          strengths: safeString(s.strengths, 'Ranking for this keyword'),
+          weaknesses: safeString(s.weaknesses, 'No localized content or language support'),
+          gap: safeString(s.gap, 'Opportunity to create localized, step-by-step guide')
+        }))
+    : [];
 
+  // If SERP landscape empty, use cleaned searchData
   if (serp.length === 0 && searchData?.organic_results) {
-    serp = searchData.organic_results.slice(0, 8).map((r: any, i: number) => ({
+    serp = cleanOrganicResults.slice(0, 8).map((r: any, i: number) => ({
       position: i + 1,
       title: r.title || 'Untitled',
       link: r.link || '#',
@@ -303,15 +321,13 @@ export async function generateSEOReport(niche: string, country: string) {
     }));
   }
 
-  // Content roadmap processing (with title cleaning)
+  // Content roadmap processing
   let roadmap = (Array.isArray(analysis.content_roadmap) ? analysis.content_roadmap : []).map((c: any, i: number) => {
     let rawTitle = safeString(c.title, `How to ${niche} - Step by Step`);
     rawTitle = rawTitle.replace(/^Week \d+: Week \d+: /i, '');
     rawTitle = rawTitle.replace(/^Week \d+: /i, '');
     rawTitle = rawTitle.replace(/^How to How to /i, 'How to ');
-    if (rawTitle.toLowerCase().startsWith('how to how to')) {
-      rawTitle = rawTitle.slice(7);
-    }
+    if (rawTitle.toLowerCase().startsWith('how to how to')) rawTitle = rawTitle.slice(7);
     const keyword = safeString(c.primary_keyword, keywords[i]?.keyword || niche);
     return {
       week: c.week || i + 1,
@@ -332,10 +348,14 @@ export async function generateSEOReport(niche: string, country: string) {
     }));
   }
 
-  // Link acquisition processing with country-specific fallback
+  // Link acquisition processing
   let targetSites = [];
   if (analysis.link_acquisition?.target_sites && Array.isArray(analysis.link_acquisition.target_sites)) {
-    targetSites = analysis.link_acquisition.target_sites.filter((s: any) => s.site && s.site !== 'N/A' && !s.site.includes('Journal') && !s.site.includes('Review') && !s.site.toLowerCase().includes(niche.toLowerCase()));
+    targetSites = analysis.link_acquisition.target_sites.filter((s: any) => 
+      s.site && s.site !== 'N/A' && 
+      !s.site.includes('Journal') && !s.site.includes('Review') && 
+      !s.site.toLowerCase().includes(niche.toLowerCase())
+    );
   }
   if (targetSites.length < 5) {
     const countryPubs = localPublications[country] || localPublications['default'];
@@ -381,7 +401,7 @@ export async function generateSEOReport(niche: string, country: string) {
   // Financial projection fallback
   const financialFallback = [
     "Expected 150% increase in organic leads within 6 months, translating to estimated 45,000 local currency in monthly service revenue (Modeled Estimate).",
-    "Acquisition cost per lead projected to decrease by 40% as organic authority builds (Simulated Projection).",
+    "Acquisition cost per lead projected to decrease by 40% as organic authority builds (Modeled Estimate).",
     "A Modeled Estimate indicates a 1.8% improvement in conversion rates from reducing site errors, significantly boosting overall ROI."
   ];
   const safeFinancial = financialProjection.length > 0 ? financialProjection : financialFallback;
@@ -407,7 +427,7 @@ export async function generateSEOReport(niche: string, country: string) {
 
   markdown += `\n5. SERP LANDSCAPE\n──────────────────────────────────────────────────────────────\n`;
   if (serp.length > 0) {
-    serp.slice(0, 8).forEach((s: any, i: number) => markdown += `Position #${i+1}: ${s.title}\n  URL: ${s.link}\n  DA: ${s.da} | Words: ${s.words} | Backlinks: ${s.backlinks}\n  Est. Traffic: ${s.traffic}/mo\n  Strengths: ${s.strengths}\n  Weaknesses: ${s.weaknesses}\n  Gap: ${s.gap}\n\n`);
+    serp.slice(0, 8).forEach((s: any, i: number) => markdown += `Position #${i+1}: ${s.title}\n  URL: ${s.link}\n  DA: ${s.da} | Words: ${s.words} | Backlinks: ${s.backlinks}\n  Approx. Traffic: ${s.traffic}/mo\n  Strengths: ${s.strengths}\n  Weaknesses: ${s.weaknesses}\n  Gap: ${s.gap}\n\n`);
   } else {
     markdown += `**SERP Data Unavailable:** Live search engine data is currently limited for this niche. Please focus on the actionable strategies and keyword matrix below, which are derived from our proprietary database.\n\n`;
   }
@@ -421,7 +441,7 @@ export async function generateSEOReport(niche: string, country: string) {
   markdown += `\n`;
 
   markdown += `8. CONTENT ROADMAP (12 WEEKS)\n──────────────────────────────────────────────────────────────\n`;
-  roadmap.forEach((c: any) => markdown += `Week ${c.week}: ${c.title}\n  Keyword: ${c.primary_keyword} | Type: ${c.type}\n  Est. Traffic: ${c.expected_traffic}/mo\n\n`);
+  roadmap.forEach((c: any) => markdown += `Week ${c.week}: ${c.title}\n  Keyword: ${c.primary_keyword} | Type: ${c.type}\n  Approx. Traffic: ${c.expected_traffic}/mo\n\n`);
 
   markdown += `9. LINK ACQUISITION & GUEST POST STRATEGY\n──────────────────────────────────────────────────────────────\n${analysis.link_acquisition?.overview || ''}\n\n`;
   markdown += `Target Sites:\n`;
@@ -484,19 +504,14 @@ export async function generateSEOReport(niche: string, country: string) {
   }
   markdown += `\n`;
 
-  // Data Validation section
+  // Data Validation & Citations
   markdown += `DATA VALIDATION & CITATIONS\n──────────────────────────────────────────────────────────────\n`;
   if (dataValidation.length > 0) {
     dataValidation.forEach((item: string, i: number) => markdown += `  ${i+1}. ${item}\n`);
-  } else {
-    // Fallback: list top SERP results as evidence
-    if (serpResults.length > 0) {
-      serpResults.slice(0, 5).forEach((r: any, i: number) => {
-        markdown += `  ${i+1}. ${r.title} - ${r.link}\n`;
-      });
-    } else {
-      markdown += `  No live SERP data available for validation.\n`;
-    }
+  } else if (serpResults.length > 0) {
+    serpResults.slice(0, 5).forEach((r: any, i: number) => {
+      markdown += `  ${i+1}. ${r.title} - ${r.link}\n`;
+    });
   }
   markdown += `\n`;
 
@@ -514,7 +529,11 @@ export async function generateSEOReport(niche: string, country: string) {
     serp_landscape: serp,
     markdown,
     trend_summary: analysis.trend_summary || 'Steady market interest.',
-    chart_data: { trend_12m: trendData.map((v: number, i: number) => ({ month: `M${i + 1}`, value: v })), traffic_forecast_6m: roadmap.slice(0, 6).map((c: any, i: number) => ({ month: `M${i + 1}`, traffic: safeNumber(c.expected_traffic, 1000) })), market_share: [] },
+    chart_data: {
+      trend_12m: trendData.map((v: number, i: number) => ({ month: `M${i + 1}`, value: v })),
+      traffic_forecast_6m: roadmap.slice(0, 6).map((c: any, i: number) => ({ month: `M${i + 1}`, traffic: safeNumber(c.expected_traffic, 1000) })),
+      market_share: []
+    },
     traffic_estimate: trafficEstimate
   };
   cacheService.set(cacheKey, result, 86400);
