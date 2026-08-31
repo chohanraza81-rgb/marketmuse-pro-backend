@@ -152,10 +152,12 @@ const buildProductPrompt = (niche: string, country: string, serpContext: string,
   **STRICT INSTRUCTION**:
   - Use these REAL competitors, titles, and URLs to identify actual local brands in your report. DO NOT invent fake brands or say 'Modeled'.
   - When referring to pricing, use "Typical Price", "Market Price", or "From $XX" (e.g., "Typical Price: $49 SGD/month"). NEVER use "Est." or "Estimated".
+  - Avoid unsubstantiated claims such as "guaranteed cost reduction", "guaranteed savings", "up to X% savings" unless you have direct evidence from the SERP sources. Instead, use phrases like "potential cost savings", "data-driven opportunities", or "optimization potential".
   - ALWAYS provide specific goals, buying triggers, action plans, and realistic financial numbers. NEVER use 'N/A' or 'No specific goals identified'.
   - All fields must be filled with meaningful, specific content. No empty strings, null, or 'undefined'.
   - For 'data_validation', explicitly cite at least 2-3 of the SERP sources (with URLs) that support your insights.
   - Provide at least 2 consumer personas. If only one comes to mind, add a second plausible persona based on the market.
+  - Return a JSON object with ALL 27 keys exactly as specified below. Do not omit any key. If a key is an array and you have no data, return an empty array.
   
   **Return ONLY a valid JSON object. No markdown blocks, no extra text.**
   
