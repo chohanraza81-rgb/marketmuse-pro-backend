@@ -438,7 +438,12 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
         else if (c.name.includes('sitemap')) impactDescription = 'Incomplete indexing of site pages';
         else if (c.name.includes('robots')) impactDescription = 'Risk of crawl blocks or misconfigurations';
         else if (c.name.includes('HTTPS') || c.name.includes('Mixed Content')) impactDescription = 'Security warnings, trust issues';
-        else if (c.name.includes('X-Frame') || c.name.includes('X-Content') || c.name.includes('HSTS') || c.name.includes('Content-Security-Policy') || c.name.includes('X-Robots') || c.name.includes('Permissions-Policy') || c.name.includes('Referrer-Policy')) impactDescription = 'Security vulnerabilities, potential attacks';
+        else if (c.name.includes('X-Robots-Tag')) {
+          impactDescription = /noindex/i.test(securityHeaders['X-Robots-Tag']) 
+            ? 'Page blocked from indexing by search engines, causing complete loss of organic visibility' 
+            : 'Security vulnerabilities, potential attacks';
+        }
+        else if (c.name.includes('X-Frame') || c.name.includes('X-Content') || c.name.includes('HSTS') || c.name.includes('Content-Security-Policy') || c.name.includes('Permissions-Policy') || c.name.includes('Referrer-Policy')) impactDescription = 'Security vulnerabilities, potential attacks';
         else if (c.name.includes('Performance')) impactDescription = 'Poor user experience, higher bounce rate';
         else if (c.name.includes('Image Alt')) impactDescription = 'Reduced accessibility and image search traffic';
         else if (c.name.includes('Internal Links')) impactDescription = 'Weak site architecture, crawl inefficiency';
