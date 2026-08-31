@@ -339,7 +339,9 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
         impactScore: 6,
         effort: 'Low',
         evidence: securityHeaders['X-Frame-Options'] || 'Missing',
-        recommendation: 'Add X-Frame-Options header to prevent clickjacking.'
+        recommendation: securityHeaders['X-Frame-Options']
+          ? 'Header is properly set. Good.'
+          : 'Add X-Frame-Options header to prevent clickjacking.'
       },
       {
         name: 'X-Content-Type-Options Header',
@@ -348,7 +350,9 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
         impactScore: 5,
         effort: 'Low',
         evidence: securityHeaders['X-Content-Type-Options'] || 'Missing',
-        recommendation: 'Add X-Content-Type-Options: nosniff.'
+        recommendation: securityHeaders['X-Content-Type-Options']
+          ? 'Header is properly set. Good.'
+          : 'Add X-Content-Type-Options: nosniff.'
       },
       {
         name: 'HSTS Header',
@@ -357,7 +361,9 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
         impactScore: 7,
         effort: 'Low',
         evidence: securityHeaders['Strict-Transport-Security'] || 'Missing',
-        recommendation: 'Add Strict-Transport-Security header.'
+        recommendation: securityHeaders['Strict-Transport-Security']
+          ? 'HSTS is enabled. Good.'
+          : 'Add Strict-Transport-Security header.'
       },
       {
         name: 'Content-Security-Policy',
@@ -366,7 +372,20 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
         impactScore: 6,
         effort: 'Medium',
         evidence: securityHeaders['Content-Security-Policy'] || 'Missing',
-        recommendation: 'Implement Content-Security-Policy to prevent XSS attacks.'
+        recommendation: securityHeaders['Content-Security-Policy']
+          ? 'CSP is implemented. Good.'
+          : 'Implement Content-Security-Policy to prevent XSS attacks.'
+      },
+      {
+        name: 'X-Robots-Tag Header',
+        passed: !!securityHeaders['X-Robots-Tag'],
+        measured: true,
+        impactScore: 4,
+        effort: 'Low',
+        evidence: securityHeaders['X-Robots-Tag'] || 'Missing',
+        recommendation: securityHeaders['X-Robots-Tag']
+          ? 'Header is set.'
+          : 'Add X-Robots-Tag if you need to control indexing.'
       },
       {
         name: 'Performance Score (Mobile)',
@@ -434,8 +453,8 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
       'Mobile & User Experience': [checks[3]], // viewport
       'Structured Data & Rich Results': [checks[4]],
       'Technical Foundation': [checks[5], checks[6], checks[7], checks[17]], // canonical, robots, sitemap, internal links
-      'Security & Trust': [checks[8], checks[9], checks[10], checks[11], checks[12], checks[13]],
-      'Performance & Core Web Vitals': [checks[14], checks[15]],
+      'Security & Trust': [checks[8], checks[9], checks[10], checks[11], checks[12], checks[13], checks[14]], // HTTPS, mixed content, X-Frame, X-Content, HSTS, CSP, X-Robots
+      'Performance & Core Web Vitals': [checks[15], checks[16]], // mobile, desktop
     };
 
     // Compute category scores, only measured items
