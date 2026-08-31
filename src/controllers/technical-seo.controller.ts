@@ -19,7 +19,6 @@ interface AuditCheck {
   recommendation: string;
 }
 
-// Priority classification based on impact score
 function getPriority(impactScore: number): 'Critical' | 'High' | 'Medium' | 'Low' {
   if (impactScore >= 9) return 'Critical';
   if (impactScore >= 7) return 'High';
@@ -52,7 +51,6 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
       responseTime = Date.now() - startTime;
       html = response.data;
 
-      // Only capture security headers if page loaded successfully
       if (status === 200) {
         const headers = response.headers;
         securityHeaders = {
@@ -78,9 +76,8 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
       }
     }
 
-    // ============ FALLBACK: ScraperAPI only for bot blocks (403, 429, 503) ============
+    // ============ FALLBACK: ScraperAPI only for bot blocks ============
     if (isBlocked && [403, 429, 503].includes(status)) {
-      console.log('⚠️ Bot protection detected. Attempting ScraperAPI fallback...');
       try {
         const scraperResponse = await axios.get('http://api.scraperapi.com/', {
           params: {
@@ -105,17 +102,16 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
             'Permissions-Policy': '',
             'Referrer-Policy': ''
           };
-          console.log('✅ ScraperAPI fallback succeeded.');
         } else {
           isBlocked = true;
           status = scraperResponse.status || status;
         }
       } catch (scraperError: any) {
-        console.warn('❌ ScraperAPI fallback failed:', scraperError.message);
+        console.warn('ScraperAPI fallback failed:', scraperError.message);
       }
     }
 
-    // ============ HANDLE NON-200 STATUS (Including 404) ============
+    // ============ HANDLE NON-200 STATUS ============
     if (status !== 200) {
       const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
       const reference = `MKT-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
@@ -154,7 +150,7 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
       return res.status(201).json({ id: report._id, ...report.toObject() });
     }
 
-    // ============ FULL AUDIT (Only runs when status === 200) ============
+    // ============ FULL AUDIT (status 200) ============
     let hasSSL = parsedUrl.protocol === 'https:';
     let hasRobots = false;
     let hasSitemap = false;
@@ -217,7 +213,7 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
       }
     }
 
-    // robots.txt and sitemap.xml (can be checked even if page HTML is empty, but need valid host)
+    // robots.txt and sitemap.xml
     try {
       const robotsRes = await axios.get(new URL('/robots.txt', websiteUrl).toString(), { timeout: 5000 });
       if (robotsRes.status === 200) hasRobots = true;
@@ -227,7 +223,7 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
       if (sitemapRes.status === 200) hasSitemap = true;
     } catch {}
 
-    // PageSpeed Insights (optional)
+    // PageSpeed Insights
     let mobileScore: number | null = null;
     let desktopScore: number | null = null;
     let coreWebVitals: any = { mobile: {}, desktop: {} };
@@ -271,186 +267,26 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
 
     // ============ BUILD CHECKS ============
     const checks: AuditCheck[] = [
-      {
-        name: 'Title Tag Present',
-        passed: titleTag !== 'MISSING',
-        measured: true,
-        impactScore: 9,
-        effort: 'Low',
-        evidence: titleTag !== 'MISSING' ? `Current: "${titleTag}"` : 'Missing',
-        recommendation: titleTag !== 'MISSING' ? 'Ensure title includes target keyword and is under 60 characters.' : 'Add a concise, keyword-rich title tag.'
-      },
-      {
-        name: 'Meta Description Present',
-        passed: metaDescription !== 'MISSING',
-        measured: true,
-        impactScore: 7,
-        effort: 'Low',
-        evidence: metaDescription !== 'MISSING' ? `Current: "${metaDescription.substring(0, 80)}..."` : 'Missing',
-        recommendation: metaDescription !== 'MISSING' ? 'Optimize with compelling copy and CTA under 155 characters.' : 'Add meta description to improve CTR.'
-      },
-      {
-        name: 'Single H1 Tag',
-        passed: h1Count === 1,
-        measured: true,
-        impactScore: 6,
-        effort: 'Low',
-        evidence: `Found ${h1Count} H1 tags`,
-        recommendation: h1Count === 0 ? 'Add exactly one H1 containing the primary keyword.' : h1Count > 1 ? 'Reduce to a single H1 for proper structure.' : 'H1 is present.'
-      },
-      {
-        name: 'Viewport Meta Tag',
-        passed: hasViewport,
-        measured: true,
-        impactScore: 8,
-        effort: 'Low',
-        evidence: hasViewport ? 'Present' : 'Missing',
-        recommendation: hasViewport ? 'Good.' : 'Add viewport meta tag for mobile responsiveness.'
-      },
-      {
-        name: 'Structured Data (JSON-LD)',
-        passed: hasJSONLD,
-        measured: true,
-        impactScore: 8,
-        effort: 'Medium',
-        evidence: hasJSONLD ? 'Found' : 'Not found',
-        recommendation: hasJSONLD ? 'Ensure schema type matches page content.' : 'Add appropriate JSON-LD schema for rich snippets.'
-      },
-      {
-        name: 'Canonical Tag',
-        passed: hasCanonical,
-        measured: true,
-        impactScore: 5,
-        effort: 'Low',
-        evidence: hasCanonical ? 'Present' : 'Missing',
-        recommendation: hasCanonical ? 'Verify canonical URLs are correct.' : 'Add canonical tags to prevent duplicate content.'
-      },
-      {
-        name: 'robots.txt Exists',
-        passed: hasRobots,
-        measured: true,
-        impactScore: 4,
-        effort: 'Low',
-        evidence: hasRobots ? 'Found' : 'Missing',
-        recommendation: hasRobots ? 'Review for accidental blocks.' : 'Create robots.txt and submit to Google Search Console.'
-      },
-      {
-        name: 'sitemap.xml Exists',
-        passed: hasSitemap,
-        measured: true,
-        impactScore: 5,
-        effort: 'Low',
-        evidence: hasSitemap ? 'Found' : 'Missing',
-        recommendation: hasSitemap ? 'Ensure it is up-to-date.' : 'Create XML sitemap and submit.'
-      },
-      {
-        name: 'HTTPS Enabled',
-        passed: hasSSL,
-        measured: true,
-        impactScore: 10,
-        effort: 'Low',
-        evidence: hasSSL ? 'Yes' : 'No',
-        recommendation: hasSSL ? 'Good.' : 'Install SSL and force HTTPS sitewide.'
-      },
-      {
-        name: 'Mixed Content',
-        passed: !hasMixedContent,
-        measured: true,
-        impactScore: 9,
-        effort: 'Medium',
-        evidence: hasMixedContent ? 'Detected' : 'None',
-        recommendation: hasMixedContent ? 'Replace all HTTP resources with HTTPS.' : 'No action needed.'
-      },
-      {
-        name: 'X-Frame-Options Header',
-        passed: !!securityHeaders['X-Frame-Options'],
-        measured: true,
-        impactScore: 6,
-        effort: 'Low',
-        evidence: securityHeaders['X-Frame-Options'] || 'Missing',
-        recommendation: securityHeaders['X-Frame-Options'] ? 'Header is properly set. Good.' : 'Add X-Frame-Options header to prevent clickjacking.'
-      },
-      {
-        name: 'X-Content-Type-Options Header',
-        passed: !!securityHeaders['X-Content-Type-Options'],
-        measured: true,
-        impactScore: 5,
-        effort: 'Low',
-        evidence: securityHeaders['X-Content-Type-Options'] || 'Missing',
-        recommendation: securityHeaders['X-Content-Type-Options'] ? 'Header is properly set. Good.' : 'Add X-Content-Type-Options: nosniff.'
-      },
-      {
-        name: 'HSTS Header',
-        passed: !!securityHeaders['Strict-Transport-Security'],
-        measured: true,
-        impactScore: 7,
-        effort: 'Low',
-        evidence: securityHeaders['Strict-Transport-Security'] || 'Missing',
-        recommendation: securityHeaders['Strict-Transport-Security'] ? 'HSTS is enabled. Good.' : 'Add Strict-Transport-Security header.'
-      },
-      {
-        name: 'Content-Security-Policy',
-        passed: !!securityHeaders['Content-Security-Policy'],
-        measured: true,
-        impactScore: 6,
-        effort: 'Medium',
-        evidence: securityHeaders['Content-Security-Policy'] || 'Missing',
-        recommendation: securityHeaders['Content-Security-Policy'] ? 'CSP is implemented. Good.' : 'Implement Content-Security-Policy to prevent XSS attacks.'
-      },
-      {
-        name: 'X-Robots-Tag Header',
-        passed: !!securityHeaders['X-Robots-Tag'],
-        measured: true,
-        impactScore: 4,
-        effort: 'Low',
-        evidence: securityHeaders['X-Robots-Tag'] || 'Missing',
-        recommendation: securityHeaders['X-Robots-Tag'] ? 'Header is set.' : 'Add X-Robots-Tag if you need to control indexing.'
-      },
-      {
-        name: 'Performance Score (Mobile)',
-        passed: mobileScore !== null && mobileScore >= 80,
-        measured: mobileScore !== null,
-        impactScore: 9,
-        effort: 'High',
-        evidence: mobileScore !== null ? `${mobileScore}/100` : 'Not measured',
-        recommendation: mobileScore === null ? 'Performance data is not available in this audit cycle. We will provide complete speed analysis once the necessary data integration is in place.' : mobileScore < 80 ? 'Optimize images, minify CSS/JS, improve server response.' : 'Maintain current performance.'
-      },
-      {
-        name: 'Performance Score (Desktop)',
-        passed: desktopScore !== null && desktopScore >= 80,
-        measured: desktopScore !== null,
-        impactScore: 7,
-        effort: 'Medium',
-        evidence: desktopScore !== null ? `${desktopScore}/100` : 'Not measured',
-        recommendation: desktopScore === null ? 'Performance data is not available in this audit cycle. We will provide complete speed analysis once the necessary data integration is in place.' : desktopScore < 80 ? 'Improve caching, reduce render-blocking resources.' : 'Good.'
-      },
-      {
-        name: 'Image Alt Text',
-        passed: missingAltCount === 0,
-        measured: true,
-        impactScore: 7,
-        effort: 'Low',
-        evidence: `${missingAltCount} images detected without ALT attributes`,
-        recommendation: missingAltCount > 0 ? 'Add descriptive alt text to all images.' : 'All images have alt text.'
-      },
-      {
-        name: 'Internal Links Present',
-        passed: internalLinks > 0,
-        measured: true,
-        impactScore: 3,
-        effort: 'Low',
-        evidence: `${internalLinks} internal links found`,
-        recommendation: internalLinks === 0 ? 'Add internal links to improve navigation and distribute link equity.' : 'Internal linking present.'
-      },
-      {
-        name: 'Text-to-HTML Ratio',
-        passed: textToHtmlRatio >= 10,
-        measured: true,
-        impactScore: 4,
-        effort: 'Low',
-        evidence: `${textToHtmlRatio}%`,
-        recommendation: textToHtmlRatio < 10 ? 'Increase text content relative to HTML markup for better crawlability.' : 'Text-to-HTML ratio is healthy.'
-      }
+      { name: 'Title Tag Present', passed: titleTag !== 'MISSING', measured: true, impactScore: 9, effort: 'Low', evidence: titleTag !== 'MISSING' ? `Current: "${titleTag}"` : 'Missing', recommendation: titleTag !== 'MISSING' ? 'Ensure title includes target keyword and is under 60 characters.' : 'Add a concise, keyword-rich title tag.' },
+      { name: 'Meta Description Present', passed: metaDescription !== 'MISSING', measured: true, impactScore: 7, effort: 'Low', evidence: metaDescription !== 'MISSING' ? `Current: "${metaDescription.substring(0, 80)}..."` : 'Missing', recommendation: metaDescription !== 'MISSING' ? 'Optimize with compelling copy and CTA under 155 characters.' : 'Add meta description to improve CTR.' },
+      { name: 'Single H1 Tag', passed: h1Count === 1, measured: true, impactScore: 6, effort: 'Low', evidence: `Found ${h1Count} H1 tags`, recommendation: h1Count === 0 ? 'Add exactly one H1 containing the primary keyword.' : h1Count > 1 ? 'Reduce to a single H1 for proper structure.' : 'H1 is present.' },
+      { name: 'Viewport Meta Tag', passed: hasViewport, measured: true, impactScore: 8, effort: 'Low', evidence: hasViewport ? 'Present' : 'Missing', recommendation: hasViewport ? 'Good.' : 'Add viewport meta tag for mobile responsiveness.' },
+      { name: 'Structured Data (JSON-LD)', passed: hasJSONLD, measured: true, impactScore: 8, effort: 'Medium', evidence: hasJSONLD ? 'Found' : 'Not found', recommendation: hasJSONLD ? 'Ensure schema type matches page content.' : 'Add appropriate JSON-LD schema for rich snippets.' },
+      { name: 'Canonical Tag', passed: hasCanonical, measured: true, impactScore: 5, effort: 'Low', evidence: hasCanonical ? 'Present' : 'Missing', recommendation: hasCanonical ? 'Verify canonical URLs are correct.' : 'Add canonical tags to prevent duplicate content.' },
+      { name: 'robots.txt Exists', passed: hasRobots, measured: true, impactScore: 4, effort: 'Low', evidence: hasRobots ? 'Found' : 'Missing', recommendation: hasRobots ? 'Review for accidental blocks.' : 'Create robots.txt and submit to Google Search Console.' },
+      { name: 'sitemap.xml Exists', passed: hasSitemap, measured: true, impactScore: 5, effort: 'Low', evidence: hasSitemap ? 'Found' : 'Missing', recommendation: hasSitemap ? 'Ensure it is up-to-date.' : 'Create XML sitemap and submit.' },
+      { name: 'HTTPS Enabled', passed: hasSSL, measured: true, impactScore: 10, effort: 'Low', evidence: hasSSL ? 'Yes' : 'No', recommendation: hasSSL ? 'Good.' : 'Install SSL and force HTTPS sitewide.' },
+      { name: 'Mixed Content', passed: !hasMixedContent, measured: true, impactScore: 9, effort: 'Medium', evidence: hasMixedContent ? 'Detected' : 'None', recommendation: hasMixedContent ? 'Replace all HTTP resources with HTTPS.' : 'No action needed.' },
+      { name: 'X-Frame-Options Header', passed: !!securityHeaders['X-Frame-Options'], measured: true, impactScore: 6, effort: 'Low', evidence: securityHeaders['X-Frame-Options'] || 'Missing', recommendation: securityHeaders['X-Frame-Options'] ? 'Header is properly set. Good.' : 'Add X-Frame-Options header to prevent clickjacking.' },
+      { name: 'X-Content-Type-Options Header', passed: !!securityHeaders['X-Content-Type-Options'], measured: true, impactScore: 5, effort: 'Low', evidence: securityHeaders['X-Content-Type-Options'] || 'Missing', recommendation: securityHeaders['X-Content-Type-Options'] ? 'Header is properly set. Good.' : 'Add X-Content-Type-Options: nosniff.' },
+      { name: 'HSTS Header', passed: !!securityHeaders['Strict-Transport-Security'], measured: true, impactScore: 7, effort: 'Low', evidence: securityHeaders['Strict-Transport-Security'] || 'Missing', recommendation: securityHeaders['Strict-Transport-Security'] ? 'HSTS is enabled. Good.' : 'Add Strict-Transport-Security header.' },
+      { name: 'Content-Security-Policy', passed: !!securityHeaders['Content-Security-Policy'], measured: true, impactScore: 6, effort: 'Medium', evidence: securityHeaders['Content-Security-Policy'] || 'Missing', recommendation: securityHeaders['Content-Security-Policy'] ? 'CSP is implemented. Good.' : 'Implement Content-Security-Policy to prevent XSS attacks.' },
+      { name: 'X-Robots-Tag Header', passed: !!securityHeaders['X-Robots-Tag'], measured: true, impactScore: 4, effort: 'Low', evidence: securityHeaders['X-Robots-Tag'] || 'Missing', recommendation: securityHeaders['X-Robots-Tag'] ? 'Header is set.' : 'Add X-Robots-Tag if you need to control indexing.' },
+      { name: 'Performance Score (Mobile)', passed: mobileScore !== null && mobileScore >= 80, measured: mobileScore !== null, impactScore: 9, effort: 'High', evidence: mobileScore !== null ? `${mobileScore}/100` : 'Not measured', recommendation: mobileScore === null ? 'Performance data is not available in this audit cycle. We will provide complete speed analysis once the necessary data integration is in place.' : mobileScore < 80 ? 'Optimize images, minify CSS/JS, improve server response.' : 'Maintain current performance.' },
+      { name: 'Performance Score (Desktop)', passed: desktopScore !== null && desktopScore >= 80, measured: desktopScore !== null, impactScore: 7, effort: 'Medium', evidence: desktopScore !== null ? `${desktopScore}/100` : 'Not measured', recommendation: desktopScore === null ? 'Performance data is not available in this audit cycle. We will provide complete speed analysis once the necessary data integration is in place.' : desktopScore < 80 ? 'Improve caching, reduce render-blocking resources.' : 'Good.' },
+      { name: 'Image Alt Text', passed: missingAltCount === 0, measured: true, impactScore: 7, effort: 'Low', evidence: `${missingAltCount} images detected without ALT attributes`, recommendation: missingAltCount > 0 ? 'Add descriptive alt text to all images.' : 'All images have alt text.' },
+      { name: 'Internal Links Present', passed: internalLinks > 0, measured: true, impactScore: 3, effort: 'Low', evidence: `${internalLinks} internal links found`, recommendation: internalLinks === 0 ? 'Add internal links to improve navigation and distribute link equity.' : 'Internal linking present.' },
+      { name: 'Text-to-HTML Ratio', passed: textToHtmlRatio >= 10, measured: true, impactScore: 4, effort: 'Low', evidence: `${textToHtmlRatio}%`, recommendation: textToHtmlRatio < 10 ? 'Increase text content relative to HTML markup for better crawlability.' : 'Text-to-HTML ratio is healthy.' }
     ];
 
     // ============ CATEGORY MAP & WEIGHTS ============
@@ -472,7 +308,7 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
       'Performance & Core Web Vitals': [checks[15], checks[16]],
     };
 
-    // Compute category scores, only measured items
+    // Compute category scores
     const categoryScores: Record<string, number | null> = {};
     const categoryMeasuredCount: Record<string, number> = {};
     let totalWeight = 0;
@@ -509,7 +345,7 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
     markdown += `We performed a live technical audit of ${websiteUrl} on ${auditTimestamp}. The results below highlight critical issues impacting your search visibility and conversion potential.\n\n`;
     markdown += `**Overall Health Score:** ${overallScore}/100\n`;
     if (categoryScores['Performance & Core Web Vitals'] === null) {
-      markdown += `*This score is calculated from the 80% of measurable categories. Performance data was unavailable and has been excluded.*\n\n`;
+      markdown += `*This score is calculated from the ${totalWeight * 100}% of measurable categories. Performance data was unavailable and has been excluded.*\n\n`;
     }
     const criticalCount = checks.filter(c => c.measured && !c.passed && getPriority(c.impactScore) === 'Critical').length;
     const highCount = checks.filter(c => c.measured && !c.passed && getPriority(c.impactScore) === 'High').length;
@@ -600,7 +436,7 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
         else if (c.name.includes('sitemap')) impactDescription = 'Incomplete indexing of site pages';
         else if (c.name.includes('robots')) impactDescription = 'Risk of crawl blocks or misconfigurations';
         else if (c.name.includes('HTTPS') || c.name.includes('Mixed Content')) impactDescription = 'Security warnings, trust issues';
-        else if (c.name.includes('X-Frame') || c.name.includes('X-Content') || c.name.includes('HSTS') || c.name.includes('CSP') || c.name.includes('X-Robots')) impactDescription = 'Security vulnerabilities, potential attacks';
+        else if (c.name.includes('X-Frame') || c.name.includes('X-Content') || c.name.includes('HSTS') || c.name.includes('Content-Security-Policy') || c.name.includes('X-Robots')) impactDescription = 'Security vulnerabilities, potential attacks';
         else if (c.name.includes('Performance')) impactDescription = 'Poor user experience, higher bounce rate';
         else if (c.name.includes('Image Alt')) impactDescription = 'Reduced accessibility and image search traffic';
         else if (c.name.includes('Internal Links')) impactDescription = 'Weak site architecture, crawl inefficiency';
