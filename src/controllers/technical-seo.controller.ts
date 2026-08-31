@@ -376,7 +376,7 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
         effort: 'High',
         evidence: mobileScore !== null ? `${mobileScore}/100` : 'Not measured',
         recommendation: mobileScore === null
-          ? 'Performance measurement requires Google API key. Please configure to enable speed checks.'
+          ? 'Performance data is not available in this audit cycle. We will provide complete speed analysis once the necessary data integration is in place.'
           : mobileScore < 80 ? 'Optimize images, minify CSS/JS, improve server response.' : 'Maintain current performance.'
       },
       {
@@ -387,14 +387,14 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
         effort: 'Medium',
         evidence: desktopScore !== null ? `${desktopScore}/100` : 'Not measured',
         recommendation: desktopScore === null
-          ? 'Performance measurement requires Google API key. Please configure to enable speed checks.'
+          ? 'Performance data is not available in this audit cycle. We will provide complete speed analysis once the necessary data integration is in place.'
           : desktopScore < 80 ? 'Improve caching, reduce render-blocking resources.' : 'Good.'
       },
       {
         name: 'Image Alt Text',
         passed: missingAltCount === 0,
         measured: true,
-        impactScore: 5,
+        impactScore: 7, // increased from 5 to reflect high e-commerce impact
         effort: 'Low',
         evidence: `${missingAltCount} of ${totalImages} images missing alt text`,
         recommendation: missingAltCount > 0 ? 'Add descriptive alt text to all images.' : 'All images have alt text.'
@@ -474,6 +474,9 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
     markdown += `1. EXECUTIVE SUMMARY (BUSINESS IMPACT)\n────────────────────────────────────────────────────────────────────\n`;
     markdown += `We performed a live technical audit of ${websiteUrl} on ${auditTimestamp}. The results below highlight critical issues impacting your search visibility and conversion potential.\n\n`;
     markdown += `**Overall Health Score:** ${overallScore}/100\n`;
+    if (categoryScores['Performance & Core Web Vitals'] === null) {
+      markdown += `*Note: This score is based on ${totalWeight * 100}% of the total weight because performance data was not available in this audit cycle.*\n\n`;
+    }
     const criticalCount = checks.filter(c => c.measured && !c.passed && c.impactScore >= 7).length;
     const warningCount = checks.filter(c => c.measured && !c.passed && c.impactScore >= 4 && c.impactScore < 7).length;
     markdown += `**Critical Issues Found:** ${criticalCount} | **Warnings:** ${warningCount}\n\n`;
@@ -537,17 +540,21 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
     }
     markdown += `\n`;
 
-    // Revenue impact based on measured missed checks
+    // Revenue impact with range
     const measuredHighImpactMissing = checks.filter(c => c.measured && !c.passed && c.impactScore >= 7).length;
     const measuredMediumImpactMissing = checks.filter(c => c.measured && !c.passed && c.impactScore >= 4 && c.impactScore < 7).length;
-    const estimatedMonthlyTrafficLoss = measuredHighImpactMissing * 500 + measuredMediumImpactMissing * 200;
-    const estimatedRevenueLossMonthly = Math.round(estimatedMonthlyTrafficLoss * 0.02 * 100);
-    markdown += `5. REVENUE IMPACT ESTIMATE (MODELED)\n────────────────────────────────────────────────────────────────────\n`;
-    markdown += `Based on typical industry benchmarks, we estimate the following monthly revenue loss due to unfixed technical issues:\n\n`;
-    markdown += `- High-impact missing items (measurable): ${measuredHighImpactMissing} → est. ${measuredHighImpactMissing * 500} visits/month lost.\n`;
-    markdown += `- Medium-impact missing items (measurable): ${measuredMediumImpactMissing} → est. ${measuredMediumImpactMissing * 200} visits/month lost.\n`;
-    markdown += `- Assuming a 2% conversion rate and $100 average order value, **estimated monthly revenue loss: $${estimatedRevenueLossMonthly.toLocaleString()}**.\n\n`;
-    markdown += `*This is a modeled estimate and may vary based on your actual traffic, conversion rates, and product pricing.*\n\n`;
+    // Use ranges for traffic loss and revenue
+    const trafficLossLow = measuredHighImpactMissing * 300 + measuredMediumImpactMissing * 100;
+    const trafficLossHigh = measuredHighImpactMissing * 800 + measuredMediumImpactMissing * 400;
+    const revenueLow = Math.round(trafficLossLow * 0.02 * 100);
+    const revenueHigh = Math.round(trafficLossHigh * 0.02 * 100);
+
+    markdown += `5. REVENUE IMPACT ANALYSIS (ESTIMATED RANGE)\n────────────────────────────────────────────────────────────────────\n`;
+    markdown += `We estimate the following potential monthly revenue impact if the identified technical issues are resolved:\n\n`;
+    markdown += `- High-impact issues: ${measuredHighImpactMissing}, estimated traffic impact: ${trafficLossLow}–${trafficLossHigh} visits/month.\n`;
+    markdown += `- Medium-impact issues: ${measuredMediumImpactMissing}, estimated additional traffic impact: ${measuredMediumImpactMissing * 100}–${measuredMediumImpactMissing * 300} visits/month.\n`;
+    markdown += `- Assuming a 2% conversion rate and average order value of $100, the potential monthly revenue impact ranges from **$${revenueLow.toLocaleString()} to $${revenueHigh.toLocaleString()}**.\n\n`;
+    markdown += `*This is a modeled estimate based on typical industry benchmarks and may vary depending on your actual traffic, conversion metrics, and product pricing.*\n\n`;
 
     markdown += `6. EVIDENCE & METHODOLOGY\n────────────────────────────────────────────────────────────────────\n`;
     markdown += `**Methodology:** We performed a live crawl of ${websiteUrl} on ${auditTimestamp}, analyzing raw HTML, HTTP headers, auxiliary files, and performance data.\n`;
@@ -587,7 +594,7 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
         desktopScore,
         coreWebVitals,
         checks,
-        estimatedRevenueLossMonthly,
+        estimatedRevenueLossMonthly: revenueLow, // store low end of range for reference
         categoryScores,
       },
       markdown,
