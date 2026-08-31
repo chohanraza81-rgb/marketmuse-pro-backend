@@ -72,7 +72,7 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
       try {
         const scraperResponse = await axios.get('http://api.scraperapi.com/', {
           params: {
-            api_key: env.SCRAPER_API_KEY || process.env.SCRAPER_API_KEY,
+            api_key: process.env.SCRAPER_API_KEY,
             url: websiteUrl,
             render: false, // set to true if JavaScript rendering is required
             premium: false,
