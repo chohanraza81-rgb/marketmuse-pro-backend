@@ -12,8 +12,8 @@ const technicalSeoSchema = z.object({
 interface AuditCheck {
   name: string;
   passed: boolean;
-  measured: boolean;       // false if check could not be performed
-  impactScore: number;     // only used if measured === true
+  measured: boolean;
+  impactScore: number;
   effort: 'Low' | 'Medium' | 'High';
   evidence: string;
   recommendation: string;
@@ -164,14 +164,12 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
       hasLang = /<html[^>]+lang=["'][^"']+["']/i.test(html);
       hasMixedContent = hasSSL && (/src=["']http:\/\//i.test(html) || /href=["']http:\/\//i.test(html));
 
-      // Images alt
       const imgTags = html.match(/<img[^>]*>/gi) || [];
       totalImages = imgTags.length;
       for (const img of imgTags) {
         if (!/alt=["']/i.test(img) || /alt=["'']/i.test(img)) missingAltCount++;
       }
 
-      // Links
       const linkTags = html.match(/<a[^>]+href=["']([^"']*)["']/gi) || [];
       for (const link of linkTags) {
         const hrefMatch = link.match(/href=["']([^"']*)["']/i);
@@ -186,7 +184,6 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
         }
       }
 
-      // Text-to-HTML ratio
       const textContent = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
       textToHtmlRatio = Math.round((textContent.length / html.length) * 100);
     }
@@ -342,7 +339,7 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
         impactScore: 6,
         effort: 'Low',
         evidence: securityHeaders['X-Frame-Options'] || 'Missing',
-        recommendation: 'Add X-Frame-Options to prevent clickjacking.'
+        recommendation: 'Add X-Frame-Options header to prevent clickjacking.'
       },
       {
         name: 'X-Content-Type-Options Header',
@@ -369,7 +366,7 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
         impactScore: 6,
         effort: 'Medium',
         evidence: securityHeaders['Content-Security-Policy'] || 'Missing',
-        recommendation: 'Implement CSP to prevent XSS attacks.'
+        recommendation: 'Implement Content-Security-Policy to prevent XSS attacks.'
       },
       {
         name: 'Performance Score (Mobile)',
@@ -399,7 +396,7 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
         measured: true,
         impactScore: 5,
         effort: 'Low',
-        evidence: `${missingAltCount}/${totalImages} images missing alt text`,
+        evidence: `${missingAltCount} of ${totalImages} images missing alt text`,
         recommendation: missingAltCount > 0 ? 'Add descriptive alt text to all images.' : 'All images have alt text.'
       },
       {
@@ -422,7 +419,7 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
       }
     ];
 
-    // ============ CATEGORY SCORING (only measured checks) ============
+    // ============ CATEGORY MAP & WEIGHTS ============
     const categoryWeights: Record<string, number> = {
       'On-Page SEO': 0.25,
       'Technical Foundation': 0.20,
@@ -431,26 +428,6 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
       'Mobile & User Experience': 0.10,
       'Structured Data & Rich Results': 0.10,
     };
-
-    const categoryMap: Record<string, AuditCheck[]> = {
-      'On-Page SEO': [checks[0], checks[1], checks[2], checks[16]], // title, meta, H1, image alt
-      'Mobile & User Experience': [checks[3], checks[17]], // viewport, lang? we removed lang, use viewport and maybe internal links? Actually we'll add viewport and text ratio? Let's adjust.
-      'Structured Data & Rich Results': [checks[4]],
-      'Technical Foundation': [checks[5], checks[6], checks[7], checks[18]], // canonical, robots, sitemap, internal links
-      'Security & Trust': [checks[8], checks[9], checks[10], checks[11], checks[12], checks[13], checks[14], checks[15]],
-      'Performance & Core Web Vitals': [checks[14], checks[15]] // these are the performance checks
-    };
-
-    // Reassign categories properly:
-    // We'll map:
-    // On-Page SEO: title, meta, H1, image alt
-    // Mobile & UX: viewport, text-to-HTML ratio? Actually text-to-HTML is more content structure. We'll put viewport here.
-    // Technical Foundation: canonical, robots, sitemap, internal links
-    // Security & Trust: HTTPS, mixed content, X-Frame, X-Content, HSTS, CSP
-    // Performance: mobile, desktop
-    // Structured Data: JSON-LD
-
-    // We'll recalc:
 
     const finalCategoryMap: Record<string, AuditCheck[]> = {
       'On-Page SEO': [checks[0], checks[1], checks[2], checks[16]], // title, meta, H1, image alt
@@ -461,8 +438,8 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
       'Performance & Core Web Vitals': [checks[14], checks[15]],
     };
 
-    // Compute category scores only from measured checks
-    const categoryScores: Record<string, number> = {};
+    // Compute category scores, only measured items
+    const categoryScores: Record<string, number | null> = {};
     const categoryMeasuredCount: Record<string, number> = {};
     let totalWeight = 0;
     let weightedScoreSum = 0;
@@ -470,7 +447,7 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
     for (const [cat, catChecks] of Object.entries(finalCategoryMap)) {
       const measuredChecks = catChecks.filter(c => c.measured);
       if (measuredChecks.length === 0) {
-        categoryScores[cat] = 0;
+        categoryScores[cat] = null; // N/A
         categoryMeasuredCount[cat] = 0;
         continue;
       }
@@ -516,8 +493,9 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
     for (const cat in finalCategoryMap) {
       const weight = categoryWeights[cat] ? Math.round(categoryWeights[cat] * 100) : 0;
       const measuredCount = categoryMeasuredCount[cat] || 0;
-      const score = categoryScores[cat] || 0;
-      markdown += `| ${cat} | ${weight}% | ${score}/100 | ${measuredCount} |\n`;
+      const score = categoryScores[cat];
+      const scoreDisplay = score === null ? 'N/A' : `${score}/100`;
+      markdown += `| ${cat} | ${weight}% | ${scoreDisplay} | ${measuredCount} |\n`;
     }
     markdown += `\n**Overall Score:** ${overallScore}/100\n\n`;
 
@@ -531,29 +509,35 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
 
     markdown += `4. PRIORITY ACTION PLAN (30/60/90 DAYS)\n────────────────────────────────────────────────────────────────────\n`;
     markdown += `**Week 1 (Critical Fixes – Immediate ROI):**\n`;
-    checks.filter(c => c.measured && !c.passed && c.impactScore >= 7).forEach(c => {
-      markdown += `- ${c.name}: ${c.recommendation} (Effort: ${c.effort})\n`;
-    });
-    if (checks.filter(c => c.measured && !c.passed && c.impactScore >= 7).length === 0) {
+    const criticalFixes = checks.filter(c => c.measured && !c.passed && c.impactScore >= 7);
+    if (criticalFixes.length > 0) {
+      criticalFixes.forEach(c => {
+        markdown += `- ${c.name}: ${c.recommendation} (Effort: ${c.effort})\n`;
+      });
+    } else {
       markdown += `- No critical issues.\n`;
     }
     markdown += `\n**Weeks 2-4 (Technical Foundation):**\n`;
-    checks.filter(c => c.measured && !c.passed && c.impactScore >= 4 && c.impactScore < 7).forEach(c => {
-      markdown += `- ${c.name}: ${c.recommendation} (Effort: ${c.effort})\n`;
-    });
-    if (checks.filter(c => c.measured && !c.passed && c.impactScore >= 4 && c.impactScore < 7).length === 0) {
+    const mediumFixes = checks.filter(c => c.measured && !c.passed && c.impactScore >= 4 && c.impactScore < 7);
+    if (mediumFixes.length > 0) {
+      mediumFixes.forEach(c => {
+        markdown += `- ${c.name}: ${c.recommendation} (Effort: ${c.effort})\n`;
+      });
+    } else {
       markdown += `- No medium-impact issues.\n`;
     }
     markdown += `\n**Months 2-3 (Optimization & Scale):**\n`;
-    checks.filter(c => c.measured && !c.passed && c.impactScore < 4).forEach(c => {
-      markdown += `- ${c.name}: ${c.recommendation} (Effort: ${c.effort})\n`;
-    });
-    if (checks.filter(c => c.measured && !c.passed && c.impactScore < 4).length === 0) {
+    const lowFixes = checks.filter(c => c.measured && !c.passed && c.impactScore < 4);
+    if (lowFixes.length > 0) {
+      lowFixes.forEach(c => {
+        markdown += `- ${c.name}: ${c.recommendation} (Effort: ${c.effort})\n`;
+      });
+    } else {
       markdown += `- No low-impact issues.\n`;
     }
     markdown += `\n`;
 
-    // Revenue impact based only on measured missed checks
+    // Revenue impact based on measured missed checks
     const measuredHighImpactMissing = checks.filter(c => c.measured && !c.passed && c.impactScore >= 7).length;
     const measuredMediumImpactMissing = checks.filter(c => c.measured && !c.passed && c.impactScore >= 4 && c.impactScore < 7).length;
     const estimatedMonthlyTrafficLoss = measuredHighImpactMissing * 500 + measuredMediumImpactMissing * 200;
@@ -573,7 +557,7 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
     markdown += `- sitemap.xml: ${hasSitemap ? 'Found' : 'Not Found'}\n`;
     markdown += `- Security Headers: ${Object.values(securityHeaders).every(v => v === '') ? 'None present' : 'Partial presence detected'}.\n`;
     markdown += `- PageSpeed: Mobile ${mobileScore !== null ? mobileScore + '/100' : 'N/A'} | Desktop ${desktopScore !== null ? desktopScore + '/100' : 'N/A'}\n\n`;
-    markdown += `**Scoring Model:** Weighted categories reflect business impact: On-Page (25%), Technical (20%), Performance (20%), Security (15%), Mobile/UX (10%), Structured Data (10%). Only measurable checks are included in the score; categories with missing data are excluded.\n\n`;
+    markdown += `**Scoring Model:** Weighted categories reflect business impact: On-Page (25%), Technical (20%), Performance (20%), Security (15%), Mobile/UX (10%), Structured Data (10%). Only measurable checks are included in the score; categories with missing data are excluded and shown as N/A.\n\n`;
     markdown += `**Disclaimer:** This is a static analysis and does not include JavaScript rendering. For a complete audit, a full site crawl is recommended.\n\n`;
 
     markdown += `════════════════════════════════════════════════════════════════════\nThis report is generated by MusePRO Senior Research Division.\n════════════════════════════════════════════════════════════════════`;
