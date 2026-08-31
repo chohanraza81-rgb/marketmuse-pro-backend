@@ -3,7 +3,6 @@ import { Request, Response, NextFunction } from 'express';
 import axios from 'axios';
 import { z, ZodError } from 'zod';
 import { Report } from '../models/Report';
-import { env } from '../config/env';
 
 const technicalSeoSchema = z.object({
   websiteUrl: z.string().url({ message: "Invalid URL" }),
