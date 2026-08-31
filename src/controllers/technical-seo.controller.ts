@@ -13,10 +13,18 @@ interface AuditCheck {
   name: string;
   passed: boolean;
   measured: boolean;
-  impactScore: number;
+  impactScore: number; // 1-10
   effort: 'Low' | 'Medium' | 'High';
   evidence: string;
   recommendation: string;
+}
+
+// Helper to get priority level from impact score
+function getPriority(impactScore: number): 'Critical' | 'High' | 'Medium' | 'Low' {
+  if (impactScore >= 9) return 'Critical';
+  if (impactScore >= 7) return 'High';
+  if (impactScore >= 4) return 'Medium';
+  return 'Low';
 }
 
 export const createTechnicalSEOReport = async (req: Request, res: Response, next: NextFunction) => {
@@ -339,9 +347,7 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
         impactScore: 6,
         effort: 'Low',
         evidence: securityHeaders['X-Frame-Options'] || 'Missing',
-        recommendation: securityHeaders['X-Frame-Options']
-          ? 'Header is properly set. Good.'
-          : 'Add X-Frame-Options header to prevent clickjacking.'
+        recommendation: securityHeaders['X-Frame-Options'] ? 'Header is properly set. Good.' : 'Add X-Frame-Options header to prevent clickjacking.'
       },
       {
         name: 'X-Content-Type-Options Header',
@@ -350,9 +356,7 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
         impactScore: 5,
         effort: 'Low',
         evidence: securityHeaders['X-Content-Type-Options'] || 'Missing',
-        recommendation: securityHeaders['X-Content-Type-Options']
-          ? 'Header is properly set. Good.'
-          : 'Add X-Content-Type-Options: nosniff.'
+        recommendation: securityHeaders['X-Content-Type-Options'] ? 'Header is properly set. Good.' : 'Add X-Content-Type-Options: nosniff.'
       },
       {
         name: 'HSTS Header',
@@ -361,9 +365,7 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
         impactScore: 7,
         effort: 'Low',
         evidence: securityHeaders['Strict-Transport-Security'] || 'Missing',
-        recommendation: securityHeaders['Strict-Transport-Security']
-          ? 'HSTS is enabled. Good.'
-          : 'Add Strict-Transport-Security header.'
+        recommendation: securityHeaders['Strict-Transport-Security'] ? 'HSTS is enabled. Good.' : 'Add Strict-Transport-Security header.'
       },
       {
         name: 'Content-Security-Policy',
@@ -372,9 +374,7 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
         impactScore: 6,
         effort: 'Medium',
         evidence: securityHeaders['Content-Security-Policy'] || 'Missing',
-        recommendation: securityHeaders['Content-Security-Policy']
-          ? 'CSP is implemented. Good.'
-          : 'Implement Content-Security-Policy to prevent XSS attacks.'
+        recommendation: securityHeaders['Content-Security-Policy'] ? 'CSP is implemented. Good.' : 'Implement Content-Security-Policy to prevent XSS attacks.'
       },
       {
         name: 'X-Robots-Tag Header',
@@ -383,9 +383,7 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
         impactScore: 4,
         effort: 'Low',
         evidence: securityHeaders['X-Robots-Tag'] || 'Missing',
-        recommendation: securityHeaders['X-Robots-Tag']
-          ? 'Header is set.'
-          : 'Add X-Robots-Tag if you need to control indexing.'
+        recommendation: securityHeaders['X-Robots-Tag'] ? 'Header is set.' : 'Add X-Robots-Tag if you need to control indexing.'
       },
       {
         name: 'Performance Score (Mobile)',
@@ -394,9 +392,7 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
         impactScore: 9,
         effort: 'High',
         evidence: mobileScore !== null ? `${mobileScore}/100` : 'Not measured',
-        recommendation: mobileScore === null
-          ? 'Performance data is not available in this audit cycle. We will provide complete speed analysis once the necessary data integration is in place.'
-          : mobileScore < 80 ? 'Optimize images, minify CSS/JS, improve server response.' : 'Maintain current performance.'
+        recommendation: mobileScore === null ? 'Performance data is not available in this audit cycle. We will provide complete speed analysis once the necessary data integration is in place.' : mobileScore < 80 ? 'Optimize images, minify CSS/JS, improve server response.' : 'Maintain current performance.'
       },
       {
         name: 'Performance Score (Desktop)',
@@ -405,9 +401,7 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
         impactScore: 7,
         effort: 'Medium',
         evidence: desktopScore !== null ? `${desktopScore}/100` : 'Not measured',
-        recommendation: desktopScore === null
-          ? 'Performance data is not available in this audit cycle. We will provide complete speed analysis once the necessary data integration is in place.'
-          : desktopScore < 80 ? 'Improve caching, reduce render-blocking resources.' : 'Good.'
+        recommendation: desktopScore === null ? 'Performance data is not available in this audit cycle. We will provide complete speed analysis once the necessary data integration is in place.' : desktopScore < 80 ? 'Improve caching, reduce render-blocking resources.' : 'Good.'
       },
       {
         name: 'Image Alt Text',
@@ -453,8 +447,8 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
       'Mobile & User Experience': [checks[3]], // viewport
       'Structured Data & Rich Results': [checks[4]],
       'Technical Foundation': [checks[5], checks[6], checks[7], checks[17]], // canonical, robots, sitemap, internal links
-      'Security & Trust': [checks[8], checks[9], checks[10], checks[11], checks[12], checks[13], checks[14]], // HTTPS, mixed content, X-Frame, X-Content, HSTS, CSP, X-Robots
-      'Performance & Core Web Vitals': [checks[15], checks[16]], // mobile, desktop
+      'Security & Trust': [checks[8], checks[9], checks[10], checks[11], checks[12], checks[13], checks[14]],
+      'Performance & Core Web Vitals': [checks[15], checks[16]],
     };
 
     // Compute category scores, only measured items
@@ -466,7 +460,7 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
     for (const [cat, catChecks] of Object.entries(finalCategoryMap)) {
       const measuredChecks = catChecks.filter(c => c.measured);
       if (measuredChecks.length === 0) {
-        categoryScores[cat] = null; // N/A
+        categoryScores[cat] = null;
         categoryMeasuredCount[cat] = 0;
         continue;
       }
@@ -496,17 +490,19 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
     if (categoryScores['Performance & Core Web Vitals'] === null) {
       markdown += `*This score is calculated from the 80% of measurable categories. Performance data was unavailable and has been excluded.*\n\n`;
     }
-    const criticalCount = checks.filter(c => c.measured && !c.passed && c.impactScore >= 7).length;
-    const warningCount = checks.filter(c => c.measured && !c.passed && c.impactScore >= 4 && c.impactScore < 7).length;
-    markdown += `**Critical Issues Found:** ${criticalCount} | **Warnings:** ${warningCount}\n\n`;
-    markdown += `**Top Priority Fixes:**\n`;
-    const topFixes = checks.filter(c => c.measured && !c.passed && c.impactScore >= 7);
+    const criticalCount = checks.filter(c => c.measured && !c.passed && getPriority(c.impactScore) === 'Critical').length;
+    const highCount = checks.filter(c => c.measured && !c.passed && getPriority(c.impactScore) === 'High').length;
+    const mediumCount = checks.filter(c => c.measured && !c.passed && getPriority(c.impactScore) === 'Medium').length;
+    const lowCount = checks.filter(c => c.measured && !c.passed && getPriority(c.impactScore) === 'Low').length;
+    markdown += `**Issues by Priority:** Critical: ${criticalCount} | High: ${highCount} | Medium: ${mediumCount} | Low: ${lowCount}\n\n`;
+    markdown += `**Top Priority Fixes (Critical/High):**\n`;
+    const topFixes = checks.filter(c => c.measured && !c.passed && ['Critical', 'High'].includes(getPriority(c.impactScore)));
     if (topFixes.length > 0) {
       topFixes.forEach((fix, i) => {
         markdown += ` ${i+1}. ${fix.name} — ${fix.recommendation} (Effort: ${fix.effort})\n`;
       });
     } else {
-      markdown += ` No critical issues.\n`;
+      markdown += ` No critical or high priority issues.\n`;
     }
     markdown += `\n`;
 
@@ -522,57 +518,79 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
     markdown += `\n**Overall Score:** ${overallScore}/100\n\n`;
 
     markdown += `3. DETAILED CHECKS & RECOMMENDATIONS\n────────────────────────────────────────────────────────────────────\n`;
-    markdown += `| Check | Status | Impact | Effort | Evidence | Recommendation |\n|---|---|---|---|---|---|\n`;
+    markdown += `| Check | Status | Priority | Effort | Evidence | Recommendation |\n|---|---|---|---|---|---|\n`;
     checks.forEach(check => {
-      let statusEmoji = check.measured ? (check.passed ? '✅ Pass' : check.impactScore >= 7 ? '🔴 Critical' : '⚠️ Warning') : '⚪ Not Measured';
-      markdown += `| ${check.name} | ${statusEmoji} | ${check.measured ? check.impactScore : '-'} | ${check.effort} | ${check.evidence} | ${check.recommendation} |\n`;
+      if (!check.measured) {
+        markdown += `| ${check.name} | ⚪ Not Measured | - | ${check.effort} | ${check.evidence} | ${check.recommendation} |\n`;
+      } else if (check.passed) {
+        markdown += `| ${check.name} | ✅ Pass | - | ${check.effort} | ${check.evidence} | ${check.recommendation} |\n`;
+      } else {
+        const priority = getPriority(check.impactScore);
+        const icon = priority === 'Critical' ? '🔴' : priority === 'High' ? '🟠' : priority === 'Medium' ? '🟡' : '⚪';
+        markdown += `| ${check.name} | ${icon} ${priority} | ${priority} | ${check.effort} | ${check.evidence} | ${check.recommendation} |\n`;
+      }
     });
     markdown += `\n`;
 
     markdown += `4. PRIORITY ACTION PLAN (30/60/90 DAYS)\n────────────────────────────────────────────────────────────────────\n`;
-    markdown += `**Week 1 (Critical Fixes – Immediate ROI):**\n`;
-    const criticalFixes = checks.filter(c => c.measured && !c.passed && c.impactScore >= 7);
-    if (criticalFixes.length > 0) {
-      criticalFixes.forEach(c => {
+    markdown += `**Week 1 (Critical & High Priority):**\n`;
+    const criticalAndHigh = checks.filter(c => c.measured && !c.passed && ['Critical', 'High'].includes(getPriority(c.impactScore)));
+    if (criticalAndHigh.length > 0) {
+      criticalAndHigh.forEach(c => {
         markdown += `- ${c.name}: ${c.recommendation} (Effort: ${c.effort})\n`;
       });
     } else {
-      markdown += `- No critical issues.\n`;
+      markdown += `- No critical or high priority issues.\n`;
     }
-    markdown += `\n**Weeks 2-4 (Technical Foundation):**\n`;
-    const mediumFixes = checks.filter(c => c.measured && !c.passed && c.impactScore >= 4 && c.impactScore < 7);
+    markdown += `\n**Weeks 2-4 (Medium Priority):**\n`;
+    const mediumFixes = checks.filter(c => c.measured && !c.passed && getPriority(c.impactScore) === 'Medium');
     if (mediumFixes.length > 0) {
       mediumFixes.forEach(c => {
         markdown += `- ${c.name}: ${c.recommendation} (Effort: ${c.effort})\n`;
       });
     } else {
-      markdown += `- No medium-impact issues.\n`;
+      markdown += `- No medium priority issues.\n`;
     }
-    markdown += `\n**Months 2-3 (Optimization & Scale):**\n`;
-    const lowFixes = checks.filter(c => c.measured && !c.passed && c.impactScore < 4);
+    markdown += `\n**Months 2-3 (Low Priority):**\n`;
+    const lowFixes = checks.filter(c => c.measured && !c.passed && getPriority(c.impactScore) === 'Low');
     if (lowFixes.length > 0) {
       lowFixes.forEach(c => {
         markdown += `- ${c.name}: ${c.recommendation} (Effort: ${c.effort})\n`;
       });
     } else {
-      markdown += `- No low-impact issues.\n`;
+      markdown += `- No low priority issues.\n`;
     }
     markdown += `\n`;
 
-    // Revenue impact with range
-    const measuredHighImpactMissing = checks.filter(c => c.measured && !c.passed && c.impactScore >= 7).length;
-    const measuredMediumImpactMissing = checks.filter(c => c.measured && !c.passed && c.impactScore >= 4 && c.impactScore < 7).length;
-    const trafficLossLow = measuredHighImpactMissing * 300 + measuredMediumImpactMissing * 100;
-    const trafficLossHigh = measuredHighImpactMissing * 800 + measuredMediumImpactMissing * 400;
-    const revenueLow = Math.round(trafficLossLow * 0.02 * 100);
-    const revenueHigh = Math.round(trafficLossHigh * 0.02 * 100);
-
-    markdown += `5. REVENUE IMPACT ANALYSIS (ESTIMATED RANGE)\n────────────────────────────────────────────────────────────────────\n`;
-    markdown += `We estimate the following potential monthly revenue impact if the identified technical issues are resolved:\n\n`;
-    markdown += `- High-impact issues: ${measuredHighImpactMissing}, estimated traffic impact: ${trafficLossLow}–${trafficLossHigh} visits/month.\n`;
-    markdown += `- Medium-impact issues: ${measuredMediumImpactMissing}, estimated additional traffic impact: ${measuredMediumImpactMissing * 100}–${measuredMediumImpactMissing * 300} visits/month.\n`;
-    markdown += `- Assuming a 2% conversion rate and average order value of $100, the potential monthly revenue impact ranges from **$${revenueLow.toLocaleString()} to $${revenueHigh.toLocaleString()}**.\n\n`;
-    markdown += `*This is a modeled estimate based on typical industry benchmarks and may vary depending on your actual traffic, conversion metrics, and product pricing.*\n\n`;
+    // ============ BUSINESS IMPACT SUMMARY (Replaces Revenue Section) ============
+    markdown += `5. BUSINESS IMPACT SUMMARY\n────────────────────────────────────────────────────────────────────\n`;
+    markdown += `The table below summarises the potential business impact of unresolved technical issues. These are qualitative assessments based on industry best practices and the nature of the issue.\n\n`;
+    markdown += `| Issue | Priority | Potential Business Impact |\n|---|---|---|\n`;
+    const impactfulChecks = checks.filter(c => c.measured && !c.passed);
+    if (impactfulChecks.length > 0) {
+      impactfulChecks.forEach(c => {
+        const priority = getPriority(c.impactScore);
+        let impactDescription = '';
+        if (c.name.includes('Title')) impactDescription = 'Reduced click-through rate and keyword rankings';
+        else if (c.name.includes('Meta Description')) impactDescription = 'Lower CTR, missed conversion opportunities';
+        else if (c.name.includes('H1')) impactDescription = 'Weakened content structure and relevance signals';
+        else if (c.name.includes('Structured Data')) impactDescription = 'Missed rich snippets, lower SERP visibility';
+        else if (c.name.includes('Canonical')) impactDescription = 'Potential duplicate content confusion';
+        else if (c.name.includes('sitemap')) impactDescription = 'Incomplete indexing of site pages';
+        else if (c.name.includes('robots')) impactDescription = 'Risk of crawl blocks or misconfigurations';
+        else if (c.name.includes('HTTPS') || c.name.includes('Mixed Content')) impactDescription = 'Security warnings, trust issues';
+        else if (c.name.includes('X-Frame') || c.name.includes('X-Content') || c.name.includes('HSTS') || c.name.includes('CSP') || c.name.includes('X-Robots')) impactDescription = 'Security vulnerabilities, potential attacks';
+        else if (c.name.includes('Performance')) impactDescription = 'Poor user experience, higher bounce rate';
+        else if (c.name.includes('Image Alt')) impactDescription = 'Reduced accessibility and image search traffic';
+        else if (c.name.includes('Internal Links')) impactDescription = 'Weak site architecture, crawl inefficiency';
+        else if (c.name.includes('Text-to-HTML')) impactDescription = 'Thin content, possible low-quality signals';
+        else impactDescription = 'General SEO improvement opportunity';
+        markdown += `| ${c.name} | ${priority} | ${impactDescription} |\n`;
+      });
+    } else {
+      markdown += `| No issues | - | No business impact |\n`;
+    }
+    markdown += `\n`;
 
     markdown += `6. EVIDENCE & METHODOLOGY\n────────────────────────────────────────────────────────────────────\n`;
     markdown += `**Methodology:** We performed a live crawl of ${websiteUrl} on ${auditTimestamp}, analyzing raw HTML, HTTP headers, auxiliary files, and performance data.\n`;
@@ -581,7 +599,6 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
     markdown += `- robots.txt: ${hasRobots ? 'Found' : 'Not Found'}\n`;
     markdown += `- sitemap.xml: ${hasSitemap ? 'Found' : 'Not Found'}\n`;
 
-    // Precise security headers wording
     const missingSecurityHeaders = Object.keys(securityHeaders).filter(key => !securityHeaders[key]);
     const securityHeaderStatus = missingSecurityHeaders.length === 0 
       ? 'All recommended headers present' 
@@ -618,7 +635,6 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
         desktopScore,
         coreWebVitals,
         checks,
-        estimatedRevenueLossMonthly: revenueLow,
         categoryScores,
       },
       markdown,
