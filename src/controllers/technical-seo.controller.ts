@@ -394,9 +394,9 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
         name: 'Image Alt Text',
         passed: missingAltCount === 0,
         measured: true,
-        impactScore: 7, // increased from 5 to reflect high e-commerce impact
+        impactScore: 7,
         effort: 'Low',
-        evidence: `${missingAltCount} of ${totalImages} images missing alt text`,
+        evidence: `${missingAltCount} images detected without ALT attributes`,
         recommendation: missingAltCount > 0 ? 'Add descriptive alt text to all images.' : 'All images have alt text.'
       },
       {
@@ -475,19 +475,19 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
     markdown += `We performed a live technical audit of ${websiteUrl} on ${auditTimestamp}. The results below highlight critical issues impacting your search visibility and conversion potential.\n\n`;
     markdown += `**Overall Health Score:** ${overallScore}/100\n`;
     if (categoryScores['Performance & Core Web Vitals'] === null) {
-      markdown += `*Note: This score is based on ${totalWeight * 100}% of the total weight because performance data was not available in this audit cycle.*\n\n`;
+      markdown += `*This score is calculated from the 80% of measurable categories. Performance data was unavailable and has been excluded.*\n\n`;
     }
     const criticalCount = checks.filter(c => c.measured && !c.passed && c.impactScore >= 7).length;
     const warningCount = checks.filter(c => c.measured && !c.passed && c.impactScore >= 4 && c.impactScore < 7).length;
     markdown += `**Critical Issues Found:** ${criticalCount} | **Warnings:** ${warningCount}\n\n`;
-    markdown += `**Top 3 Fixes with Immediate ROI:**\n`;
-    const topFixes = checks.filter(c => c.measured && !c.passed && c.impactScore >= 7).slice(0, 3);
+    markdown += `**Top Priority Fixes:**\n`;
+    const topFixes = checks.filter(c => c.measured && !c.passed && c.impactScore >= 7);
     if (topFixes.length > 0) {
       topFixes.forEach((fix, i) => {
         markdown += ` ${i+1}. ${fix.name} — ${fix.recommendation} (Effort: ${fix.effort})\n`;
       });
     } else {
-      markdown += ` No critical measured issues. Focus on warnings below.\n`;
+      markdown += ` No critical issues.\n`;
     }
     markdown += `\n`;
 
@@ -543,7 +543,6 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
     // Revenue impact with range
     const measuredHighImpactMissing = checks.filter(c => c.measured && !c.passed && c.impactScore >= 7).length;
     const measuredMediumImpactMissing = checks.filter(c => c.measured && !c.passed && c.impactScore >= 4 && c.impactScore < 7).length;
-    // Use ranges for traffic loss and revenue
     const trafficLossLow = measuredHighImpactMissing * 300 + measuredMediumImpactMissing * 100;
     const trafficLossHigh = measuredHighImpactMissing * 800 + measuredMediumImpactMissing * 400;
     const revenueLow = Math.round(trafficLossLow * 0.02 * 100);
@@ -562,7 +561,13 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
     markdown += `- Page Fetch: HTTP ${status} | ${responseTime}ms | ${pageSizeKb}KB downloaded.\n`;
     markdown += `- robots.txt: ${hasRobots ? 'Found' : 'Not Found'}\n`;
     markdown += `- sitemap.xml: ${hasSitemap ? 'Found' : 'Not Found'}\n`;
-    markdown += `- Security Headers: ${Object.values(securityHeaders).every(v => v === '') ? 'None present' : 'Partial presence detected'}.\n`;
+
+    // Precise security headers wording
+    const missingSecurityHeaders = Object.keys(securityHeaders).filter(key => !securityHeaders[key]);
+    const securityHeaderStatus = missingSecurityHeaders.length === 0 
+      ? 'All recommended headers present' 
+      : `Missing: ${missingSecurityHeaders.join(', ')}`;
+    markdown += `- Security Headers: ${securityHeaderStatus}\n`;
     markdown += `- PageSpeed: Mobile ${mobileScore !== null ? mobileScore + '/100' : 'N/A'} | Desktop ${desktopScore !== null ? desktopScore + '/100' : 'N/A'}\n\n`;
     markdown += `**Scoring Model:** Weighted categories reflect business impact: On-Page (25%), Technical (20%), Performance (20%), Security (15%), Mobile/UX (10%), Structured Data (10%). Only measurable checks are included in the score; categories with missing data are excluded and shown as N/A.\n\n`;
     markdown += `**Disclaimer:** This is a static analysis and does not include JavaScript rendering. For a complete audit, a full site crawl is recommended.\n\n`;
@@ -594,7 +599,7 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
         desktopScore,
         coreWebVitals,
         checks,
-        estimatedRevenueLossMonthly: revenueLow, // store low end of range for reference
+        estimatedRevenueLossMonthly: revenueLow,
         categoryScores,
       },
       markdown,
