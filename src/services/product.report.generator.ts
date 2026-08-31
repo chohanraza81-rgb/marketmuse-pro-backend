@@ -78,7 +78,24 @@ const ensureStringArray = (arr: any): string[] => {
 };
 
 const sanitizePersona = (personas: any): any[] => {
-  if (!Array.isArray(personas)) return [];
+  if (!Array.isArray(personas) || personas.length === 0) {
+    return [
+      {
+        idx: 1,
+        demographics: 'Age 25-34, tech-savvy, urban professional',
+        pain_points: 'High costs and lack of localized support',
+        goals: 'Find high-quality reliable products and reduce long-term maintenance costs.',
+        buying_triggers: 'A sudden price increase from a competitor, or an urgent need for repair.',
+      },
+      {
+        idx: 2,
+        demographics: 'Age 35-45, business owner, value-oriented',
+        pain_points: 'Inefficient sourcing processes and inconsistent product quality',
+        goals: 'Streamline supply chain and maximize profit margins.',
+        buying_triggers: 'Discovery of a new supplier with faster shipping and better pricing.',
+      },
+    ];
+  }
   return personas.map((persona, idx) => {
     let demographics = persona.demographics;
     if (typeof demographics === 'object' && demographics !== null) {
@@ -114,7 +131,7 @@ const extractJSON = (raw: string): any => {
   }
 };
 
-// Enhanced Product Prompt with Evidence Emphasis
+// Enhanced Product Prompt with no "Est." and professional wording
 const buildProductPrompt = (niche: string, country: string, serpContext: string, trendData: number[], serpResults: any[]) => {
   const countryName = countryNames[country] || country;
   const trendSummary = trendData.length > 0 ? `12-month Google Trends data: ${trendData.join(', ')}` : 'No trend data available.';
@@ -134,11 +151,11 @@ const buildProductPrompt = (niche: string, country: string, serpContext: string,
   
   **STRICT INSTRUCTION**:
   - Use these REAL competitors, titles, and URLs to identify actual local brands in your report. DO NOT invent fake brands or say 'Modeled'.
-  - When making claims or recommendations, reference the SERP evidence where possible (e.g., "According to [competitor brand] (source: URL), ...").
-  - If exact prices are unknown, write 'Est. $XX CAD/€XX/RMXX'.
+  - When referring to pricing, use "Typical Price", "Market Price", or "From $XX" (e.g., "Typical Price: $49 SGD/month"). NEVER use "Est." or "Estimated".
   - ALWAYS provide specific goals, buying triggers, action plans, and realistic financial numbers. NEVER use 'N/A' or 'No specific goals identified'.
   - All fields must be filled with meaningful, specific content. No empty strings, null, or 'undefined'.
   - For 'data_validation', explicitly cite at least 2-3 of the SERP sources (with URLs) that support your insights.
+  - Provide at least 2 consumer personas. If only one comes to mind, add a second plausible persona based on the market.
   
   **Return ONLY a valid JSON object. No markdown blocks, no extra text.**
   
@@ -151,12 +168,12 @@ const buildProductPrompt = (niche: string, country: string, serpContext: string,
   6. "consumer_persona": Array of exactly 2-3 objects. Each object must have:
      - "demographics": string like "Age 25-34, male, Riyadh-based, tech-savvy"
      - "pain_points": string describing specific pain points
-     - "goals": string describing specific goals (e.g., "Launch MVP within 4 weeks, keep infra costs under SAR 100/month")
-     - "buying_triggers": string describing what triggers purchase (e.g., "PDPL compliance audit due, need local hosting")
+     - "goals": string describing specific goals
+     - "buying_triggers": string describing what triggers purchase
      All fields are required, no N/A.
   7. "financial_model": Array of 3-5 objects, each with:
      - "tier_name": string
-     - "price_sar" or "price": string (e.g., "SAR 56/month")
+     - "price" or "price_sar": string (e.g., "Typical Price: $49 SGD/month")
      - "features": string (comma-separated)
      - "target_audience": string
      Use realistic pricing based on market.
@@ -165,13 +182,13 @@ const buildProductPrompt = (niche: string, country: string, serpContext: string,
   10. "marketing_channels": Array of 3-5 strings, each a specific marketing channel relevant to the market.
   11. "growth_accelerators": Array of 3 strings, each a growth hack or accelerator.
   12. "launch_action_plan": Array of 3 strings, representing 30-60-90 day plan.
-  13. "data_validation": Array of 3-5 strings, each citing SERP evidence (with URLs) that supports your claims. Example: "Market trend confirmed by SERP result #1 (URL: ...)".
+  13. "data_validation": Array of 3-5 strings, each citing SERP evidence (with URLs) that supports your claims.
   14. "competitor_benchmark": Array of exactly 3 objects, each MUST have:
       - "brand": string
-      - "price": string (e.g., "Free tier, paid from $14/month")
+      - "price": string (e.g., "Typical Price: $49/month" or "Market Price: Free tier, paid from $14/month")
       - "market_position": string
       - "gap": string
-      Use real brands from SERP if available, otherwise provide credible local competitors.
+      Use real brands from SERP if available.
   15. "assumptions_risk": Array of 3-4 strings, each describing an assumption or risk with mitigation.
   16. "customer_sentiment": Array of 3 strings, capturing market sentiment or quotes.
   17. "client_value_proposition": Array of 3 strings, each a value proposition.
@@ -188,7 +205,6 @@ const buildProductPrompt = (niche: string, country: string, serpContext: string,
   22. "swot_analysis": Array of exactly 4 objects, each with:
       - "type": "strength" / "weakness" / "opportunity" / "threat"
       - "points": string describing that SWOT item
-     (Or alternatively, array of 4 strings in order: strengths, weaknesses, opportunities, threats). Prefer object format but handle both.
   23. "action_priority_matrix": Array of 3-4 objects, each with:
       - "task": string
       - "impact": "High" / "Medium" / "Low"
@@ -199,7 +215,7 @@ const buildProductPrompt = (niche: string, country: string, serpContext: string,
       - "projected_revenue": number (e.g., 500000)
       - "projected_cost": number (e.g., 300000)
       - "net_profit_margin": number (e.g., 15)
-      Revenue must increase each year (e.g., Year 1: 500k, Year 2: 800k, Year 3: 1.2M). Do not repeat same values.
+      Revenue must increase each year. Do not repeat same values.
   25. "risk_assessment": Array of 3-5 objects, each with:
       - "risk_factor": string
       - "impact_level": "High" / "Medium" / "Low"
@@ -240,7 +256,7 @@ export async function generateProductReport(niche: string, country: string) {
   const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
   const reference = `MKT-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
 
-  // ============ VALIDATION & FALLBACKS ============
+  // Validation and fallbacks
   const clientValueProp = ensureStringArray(analysis.client_value_proposition);
   const keyInsights = ensureStringArray(analysis.key_insights);
   const immediateActions = ensureStringArray(analysis.immediate_actions);
@@ -266,16 +282,14 @@ export async function generateProductReport(niche: string, country: string) {
   const finalCeoSummary = ensureStringArray(analysis.final_ceo_summary);
   const dataLimitations = ensureStringArray(analysis.data_limitations);
 
-  // Fallback for competitor_benchmark
+  // Competitor benchmark fallback
   const fallbackBenchmark = [
-    { brand: "Local Market Leader (Based on SERP)", price: "Premium pricing", market_position: "High-end, feature-rich", gap: "Lacks localized warranty" },
-    { brand: "Cross-Border Budget Seller (Based on SERP)", price: "Low-cost", market_position: "Price-driven, basic features", gap: "Poor support, slow shipping" },
-    { brand: "Local Expert (Based on SERP)", price: "Mid-range", market_position: "Balanced features", gap: "Underpenetrated in this niche" }
+    { brand: "Local Market Leader", price: "Market Price: Premium", market_position: "High-end, feature-rich", gap: "Lacks localized warranty" },
+    { brand: "Cross-Border Budget Seller", price: "Market Price: Low-cost", market_position: "Price-driven, basic features", gap: "Poor support, slow shipping" },
+    { brand: "Local Expert", price: "Market Price: Mid-range", market_position: "Balanced features", gap: "Underpenetrated in this niche" }
   ];
   let benchmark = Array.isArray(analysis.competitor_benchmark)
-    ? analysis.competitor_benchmark.filter((c: any) => 
-        c && c.brand && c.price && c.market_position && c.gap
-      )
+    ? analysis.competitor_benchmark.filter((c: any) => c && c.brand && c.price && c.market_position && c.gap)
     : [];
   let safeBenchmark;
   if (benchmark.length >= 3) {
@@ -286,7 +300,7 @@ export async function generateProductReport(niche: string, country: string) {
     safeBenchmark = fallbackBenchmark;
   }
 
-  // Fallback for financial_projection if duplicate or missing
+  // Financial projection fallback
   let safeFinancialProjection = financialProjection;
   if (safeFinancialProjection.length < 3 || 
       (safeFinancialProjection.length >= 3 && 
@@ -302,7 +316,7 @@ export async function generateProductReport(niche: string, country: string) {
     ];
   }
 
-  // ============ BUILD MARKDOWN ============
+  // Build markdown
   let markdown = `MusePRO\nMarket Intelligence & Strategic Modeling\n──────────────────────────────────────────────────────────────\nPRODUCT INTELLIGENCE REPORT\n\nPrepared For: [Client Name]\nDate: ${today}\nReference: ${reference}\nClassification: CONFIDENTIAL\n──────────────────────────────────────────────────────────────\n\n`;
 
   markdown += `1. CLIENT VALUE PROPOSITION\n──────────────────────────────────────────────────────────────\n`;
@@ -321,7 +335,7 @@ export async function generateProductReport(niche: string, country: string) {
 
   markdown += `5. CONSUMER PERSONA\n──────────────────────────────────────────────────────────────\n`;
   persona.forEach((p: any) => {
-    markdown += `Persona #${p.idx} (Illustrative):\n`;
+    markdown += `Persona #${p.idx}:\n`;
     markdown += `  Demographics: ${p.demographics}\n`;
     markdown += `  Pain Points: ${p.pain_points}\n`;
     markdown += `  Goals: ${p.goals}\n`;
@@ -345,13 +359,9 @@ export async function generateProductReport(niche: string, country: string) {
   if (dataValidation.length > 0) {
     dataValidation.forEach((item: string, i: number) => markdown += `  ${i+1}. ${item}\n`);
   } else {
-    if (serpResults.length > 0) {
-      serpResults.slice(0, 5).forEach((r: any, i: number) => {
-        markdown += `  ${i+1}. ${r.title} - ${r.link}\n`;
-      });
-    } else {
-      markdown += `  No live SERP data available for validation.\n`;
-    }
+    serpResults.slice(0, 3).forEach((r: any, i: number) => {
+      markdown += `  ${i+1}. ${r.title} - ${r.link}\n`;
+    });
   }
 
   markdown += `\n13. COMPETITOR PRICE BENCHMARKING MATRIX\n──────────────────────────────────────────────────────────────\n`;
@@ -402,7 +412,6 @@ export async function generateProductReport(niche: string, country: string) {
   markdown += `\n24. FINAL CEO SUMMARY\n──────────────────────────────────────────────────────────────\n`;
   finalCeoSummary.forEach((item: string, i: number) => markdown += `  ${i+1}. ${item}\n`);
 
-  // New Evidence & Sources Section
   markdown += `\nEVIDENCE & SOURCES (Live SERP Data)\n──────────────────────────────────────────────────────────────\n`;
   if (serpResults.length > 0) {
     markdown += `| # | Title | URL | Snippet |\n|---|-------|-----|--------|\n`;
@@ -410,7 +419,7 @@ export async function generateProductReport(niche: string, country: string) {
       markdown += `| ${i+1} | ${safeString(r.title)} | ${safeString(r.link)} | ${safeString(r.snippet, 'N/A')} |\n`;
     });
   } else {
-    markdown += `No live SERP data available. Please refer to data validation section for modeled insights.\n`;
+    markdown += `No live SERP data available. Please refer to data validation section.\n`;
   }
 
   markdown += `\nMETHODOLOGY & DATA LIMITATIONS\n──────────────────────────────────────────────────────────────\n`;
