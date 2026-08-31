@@ -12,7 +12,8 @@ const technicalSeoSchema = z.object({
 interface AuditCheck {
   name: string;
   passed: boolean;
-  impactScore: number;
+  measured: boolean;       // false if check could not be performed
+  impactScore: number;     // only used if measured === true
   effort: 'Low' | 'Medium' | 'High';
   evidence: string;
   recommendation: string;
@@ -31,7 +32,7 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
     let html = '';
     let securityHeaders: Record<string, string> = {};
 
-    // ============ PRIMARY FETCH (Normal axios) ============
+    // ============ PRIMARY FETCH ============
     try {
       const response = await axios.get(websiteUrl, {
         timeout: 15000,
@@ -43,7 +44,6 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
       responseTime = Date.now() - startTime;
       html = response.data;
 
-      // Capture security headers from primary response
       const headers = response.headers;
       securityHeaders = {
         'X-Frame-Options': headers['x-frame-options'] || '',
@@ -65,15 +65,14 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
       }
     }
 
-    // ============ FALLBACK: ScraperAPI if blocked or not 200 ============
+    // ============ FALLBACK: ScraperAPI ============
     if (isBlocked || status !== 200) {
-      console.log('⚠️ Normal fetch failed or blocked. Attempting ScraperAPI fallback...');
       try {
         const scraperResponse = await axios.get('http://api.scraperapi.com/', {
           params: {
             api_key: process.env.SCRAPER_API_KEY,
             url: websiteUrl,
-            render: false, // set to true if JavaScript rendering is required
+            render: false,
             premium: false,
           },
           timeout: 30000,
@@ -83,7 +82,6 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
           status = 200;
           responseTime = Date.now() - startTime;
           isBlocked = false;
-          // Security headers from ScraperAPI are not available; set empty
           securityHeaders = {
             'X-Frame-Options': '',
             'X-Content-Type-Options': '',
@@ -93,23 +91,19 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
             'Permissions-Policy': '',
             'Referrer-Policy': ''
           };
-          console.log('✅ ScraperAPI fallback succeeded.');
         } else {
-          // ScraperAPI also failed
           isBlocked = true;
           status = scraperResponse.status || 0;
         }
       } catch (scraperError: any) {
-        console.warn('❌ ScraperAPI fallback failed:', scraperError.message);
-        // Keep isBlocked true
+        console.warn('ScraperAPI fallback failed:', scraperError.message);
       }
     }
 
-    // ============ IF STILL BLOCKED – INCOMPLETE REPORT ============
+    // ============ IF BLOCKED ============
     if (isBlocked) {
       const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
       const reference = `MKT-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
-
       const markdown = `MusePRO\nReal-Time Market Research\nIntelligence Division\n════════════════════════════════════════════════════════════════════\nTECHNICAL SEO AUDIT REPORT\n════════════════════════════════════════════════════════════════════\n\n**Prepared For:** [Client Name]\n**Date:** ${today}\n**Audit Timestamp (UTC):** ${auditTimestamp}\n**Prepared By:** MusePRO SEO Team\n**Reference:** ${reference}\n**Classification:** CONFIDENTIAL\n════════════════════════════════════════════════════════════════════\n\nAUDIT INCOMPLETE – SITE BOT PROTECTION DETECTED\n────────────────────────────────────────────────────────────────────\n\nWe attempted to crawl ${websiteUrl} on ${auditTimestamp}, but the server returned HTTP ${status}.\n\n**What this means:**\nYour website is protected by a bot management system or firewall that blocks automated audit tools. This prevents us from accessing the HTML and resources needed for a complete technical SEO analysis.\n\n**Why this matters for SEO:**\nSearch engine crawlers like Googlebot may also be blocked, which can severely impact indexing and rankings.\n\n**Recommended Next Steps:**\n1. Whitelist our audit bot's IP address or user agent in your firewall/CDN settings.\n2. Temporarily disable bot protection during the audit window.\n3. Verify Googlebot is not blocked using Google Search Console's "Fetch as Google".\n4. Contact us at support@musepro.com with whitelisting details to re-run the audit.\n\n**What we could not check due to the block:**\n- On-page elements (title, meta, H1, images alt)\n- Technical foundation (robots.txt, sitemap, canonical, structured data)\n- Performance metrics (page speed, Core Web Vitals)\n- Security headers and mixed content\n- Internal linking structure\n\n════════════════════════════════════════════════════════════════════\nThis report is generated by MusePRO Senior Research Division.\n════════════════════════════════════════════════════════════════════`;
 
       const report = await Report.create({
@@ -130,10 +124,10 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
         trend_summary: 'Audit incomplete – site blocked automated crawler.'
       });
 
-      return res.status(201).json({ id: report._id, markdown, blocked: true });
+      return res.status(201).json({ id: report._id, ...report.toObject() });
     }
 
-    // ============ FULL AUDIT (PAGE ACCESSIBLE) ============
+    // ============ FULL AUDIT ============
     let hasSSL = parsedUrl.protocol === 'https:';
     let hasRobots = false;
     let hasSitemap = false;
@@ -147,6 +141,11 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
     let hasLang = false;
     let hasMixedContent = false;
     let pageSizeKb = 0;
+    let missingAltCount = 0;
+    let totalImages = 0;
+    let internalLinks = 0;
+    let externalLinks = 0;
+    let textToHtmlRatio = 0;
 
     if (status === 200 && typeof html === 'string') {
       pageSizeKb = Math.round(Buffer.byteLength(html, 'utf8') / 1024);
@@ -164,6 +163,32 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
       hasCanonical = /rel=["']canonical["']/i.test(html);
       hasLang = /<html[^>]+lang=["'][^"']+["']/i.test(html);
       hasMixedContent = hasSSL && (/src=["']http:\/\//i.test(html) || /href=["']http:\/\//i.test(html));
+
+      // Images alt
+      const imgTags = html.match(/<img[^>]*>/gi) || [];
+      totalImages = imgTags.length;
+      for (const img of imgTags) {
+        if (!/alt=["']/i.test(img) || /alt=["'']/i.test(img)) missingAltCount++;
+      }
+
+      // Links
+      const linkTags = html.match(/<a[^>]+href=["']([^"']*)["']/gi) || [];
+      for (const link of linkTags) {
+        const hrefMatch = link.match(/href=["']([^"']*)["']/i);
+        if (hrefMatch) {
+          const href = hrefMatch[1];
+          if (href.startsWith('http')) {
+            if (new URL(href).hostname === parsedUrl.hostname) internalLinks++;
+            else externalLinks++;
+          } else {
+            internalLinks++;
+          }
+        }
+      }
+
+      // Text-to-HTML ratio
+      const textContent = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+      textToHtmlRatio = Math.round((textContent.length / html.length) * 100);
     }
 
     // robots.txt and sitemap.xml
@@ -176,10 +201,11 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
       if (sitemapRes.status === 200) hasSitemap = true;
     } catch {}
 
-    // PageSpeed Insights (optional)
+    // PageSpeed Insights
     let mobileScore: number | null = null;
     let desktopScore: number | null = null;
     let coreWebVitals: any = { mobile: {}, desktop: {} };
+    let performanceMeasured = false;
 
     if (process.env.GOOGLE_API_KEY) {
       try {
@@ -211,6 +237,7 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
           fcp: desktopAudits['first-contentful-paint']?.displayValue || 'N/A',
           tbt: desktopAudits['total-blocking-time']?.displayValue || 'N/A'
         };
+        performanceMeasured = true;
       } catch (psError) {
         console.warn('PageSpeed API error:', psError instanceof Error ? psError.message : 'Unknown');
       }
@@ -221,6 +248,7 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
       {
         name: 'Title Tag Present',
         passed: titleTag !== 'MISSING',
+        measured: true,
         impactScore: 9,
         effort: 'Low',
         evidence: titleTag !== 'MISSING' ? `Current: "${titleTag}"` : 'Missing',
@@ -229,6 +257,7 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
       {
         name: 'Meta Description Present',
         passed: metaDescription !== 'MISSING',
+        measured: true,
         impactScore: 7,
         effort: 'Low',
         evidence: metaDescription !== 'MISSING' ? `Current: "${metaDescription.substring(0, 80)}..."` : 'Missing',
@@ -237,6 +266,7 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
       {
         name: 'Single H1 Tag',
         passed: h1Count === 1,
+        measured: true,
         impactScore: 6,
         effort: 'Low',
         evidence: `Found ${h1Count} H1 tags`,
@@ -245,6 +275,7 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
       {
         name: 'Viewport Meta Tag',
         passed: hasViewport,
+        measured: true,
         impactScore: 8,
         effort: 'Low',
         evidence: hasViewport ? 'Present' : 'Missing',
@@ -253,6 +284,7 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
       {
         name: 'Structured Data (JSON-LD)',
         passed: hasJSONLD,
+        measured: true,
         impactScore: 8,
         effort: 'Medium',
         evidence: hasJSONLD ? 'Found' : 'Not found',
@@ -261,6 +293,7 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
       {
         name: 'Canonical Tag',
         passed: hasCanonical,
+        measured: true,
         impactScore: 5,
         effort: 'Low',
         evidence: hasCanonical ? 'Present' : 'Missing',
@@ -269,6 +302,7 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
       {
         name: 'robots.txt Exists',
         passed: hasRobots,
+        measured: true,
         impactScore: 4,
         effort: 'Low',
         evidence: hasRobots ? 'Found' : 'Missing',
@@ -277,6 +311,7 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
       {
         name: 'sitemap.xml Exists',
         passed: hasSitemap,
+        measured: true,
         impactScore: 5,
         effort: 'Low',
         evidence: hasSitemap ? 'Found' : 'Missing',
@@ -285,6 +320,7 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
       {
         name: 'HTTPS Enabled',
         passed: hasSSL,
+        measured: true,
         impactScore: 10,
         effort: 'Low',
         evidence: hasSSL ? 'Yes' : 'No',
@@ -293,6 +329,7 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
       {
         name: 'Mixed Content',
         passed: !hasMixedContent,
+        measured: true,
         impactScore: 9,
         effort: 'Medium',
         evidence: hasMixedContent ? 'Detected' : 'None',
@@ -301,6 +338,7 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
       {
         name: 'X-Frame-Options Header',
         passed: !!securityHeaders['X-Frame-Options'],
+        measured: true,
         impactScore: 6,
         effort: 'Low',
         evidence: securityHeaders['X-Frame-Options'] || 'Missing',
@@ -309,6 +347,7 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
       {
         name: 'X-Content-Type-Options Header',
         passed: !!securityHeaders['X-Content-Type-Options'],
+        measured: true,
         impactScore: 5,
         effort: 'Low',
         evidence: securityHeaders['X-Content-Type-Options'] || 'Missing',
@@ -317,6 +356,7 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
       {
         name: 'HSTS Header',
         passed: !!securityHeaders['Strict-Transport-Security'],
+        measured: true,
         impactScore: 7,
         effort: 'Low',
         evidence: securityHeaders['Strict-Transport-Security'] || 'Missing',
@@ -325,6 +365,7 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
       {
         name: 'Content-Security-Policy',
         passed: !!securityHeaders['Content-Security-Policy'],
+        measured: true,
         impactScore: 6,
         effort: 'Medium',
         evidence: securityHeaders['Content-Security-Policy'] || 'Missing',
@@ -333,30 +374,55 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
       {
         name: 'Performance Score (Mobile)',
         passed: mobileScore !== null && mobileScore >= 80,
+        measured: mobileScore !== null,
         impactScore: 9,
         effort: 'High',
         evidence: mobileScore !== null ? `${mobileScore}/100` : 'Not measured',
-        recommendation: mobileScore !== null && mobileScore < 80 ? 'Optimize images, minify CSS/JS, improve server response.' : 'Maintain current performance.'
+        recommendation: mobileScore === null
+          ? 'Performance measurement requires Google API key. Please configure to enable speed checks.'
+          : mobileScore < 80 ? 'Optimize images, minify CSS/JS, improve server response.' : 'Maintain current performance.'
       },
       {
         name: 'Performance Score (Desktop)',
         passed: desktopScore !== null && desktopScore >= 80,
+        measured: desktopScore !== null,
         impactScore: 7,
         effort: 'Medium',
         evidence: desktopScore !== null ? `${desktopScore}/100` : 'Not measured',
-        recommendation: desktopScore !== null && desktopScore < 80 ? 'Improve caching, reduce render-blocking resources.' : 'Good.'
+        recommendation: desktopScore === null
+          ? 'Performance measurement requires Google API key. Please configure to enable speed checks.'
+          : desktopScore < 80 ? 'Improve caching, reduce render-blocking resources.' : 'Good.'
+      },
+      {
+        name: 'Image Alt Text',
+        passed: missingAltCount === 0,
+        measured: true,
+        impactScore: 5,
+        effort: 'Low',
+        evidence: `${missingAltCount}/${totalImages} images missing alt text`,
+        recommendation: missingAltCount > 0 ? 'Add descriptive alt text to all images.' : 'All images have alt text.'
+      },
+      {
+        name: 'Internal Links Present',
+        passed: internalLinks > 0,
+        measured: true,
+        impactScore: 3,
+        effort: 'Low',
+        evidence: `${internalLinks} internal links found`,
+        recommendation: internalLinks === 0 ? 'Add internal links to improve navigation and distribute link equity.' : 'Internal linking present.'
+      },
+      {
+        name: 'Text-to-HTML Ratio',
+        passed: textToHtmlRatio >= 10,
+        measured: true,
+        impactScore: 4,
+        effort: 'Low',
+        evidence: `${textToHtmlRatio}%`,
+        recommendation: textToHtmlRatio < 10 ? 'Increase text content relative to HTML markup for better crawlability.' : 'Text-to-HTML ratio is healthy.'
       }
     ];
 
-    // ============ CATEGORY WEIGHTS & SCORING ============
-    const categoryMap: Record<string, AuditCheck[]> = {
-      'On-Page SEO': [checks[0], checks[1], checks[2]],
-      'Mobile & User Experience': [checks[3]],
-      'Structured Data & Rich Results': [checks[4]],
-      'Technical Foundation': [checks[5], checks[6], checks[7]],
-      'Security & Trust': [checks[8], checks[9], checks[10], checks[11], checks[12], checks[13]],
-      'Performance & Core Web Vitals': [checks[14], checks[15]]
-    };
+    // ============ CATEGORY SCORING (only measured checks) ============
     const categoryWeights: Record<string, number> = {
       'On-Page SEO': 0.25,
       'Technical Foundation': 0.20,
@@ -366,16 +432,61 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
       'Structured Data & Rich Results': 0.10,
     };
 
-    let overallScore = 0;
+    const categoryMap: Record<string, AuditCheck[]> = {
+      'On-Page SEO': [checks[0], checks[1], checks[2], checks[16]], // title, meta, H1, image alt
+      'Mobile & User Experience': [checks[3], checks[17]], // viewport, lang? we removed lang, use viewport and maybe internal links? Actually we'll add viewport and text ratio? Let's adjust.
+      'Structured Data & Rich Results': [checks[4]],
+      'Technical Foundation': [checks[5], checks[6], checks[7], checks[18]], // canonical, robots, sitemap, internal links
+      'Security & Trust': [checks[8], checks[9], checks[10], checks[11], checks[12], checks[13], checks[14], checks[15]],
+      'Performance & Core Web Vitals': [checks[14], checks[15]] // these are the performance checks
+    };
+
+    // Reassign categories properly:
+    // We'll map:
+    // On-Page SEO: title, meta, H1, image alt
+    // Mobile & UX: viewport, text-to-HTML ratio? Actually text-to-HTML is more content structure. We'll put viewport here.
+    // Technical Foundation: canonical, robots, sitemap, internal links
+    // Security & Trust: HTTPS, mixed content, X-Frame, X-Content, HSTS, CSP
+    // Performance: mobile, desktop
+    // Structured Data: JSON-LD
+
+    // We'll recalc:
+
+    const finalCategoryMap: Record<string, AuditCheck[]> = {
+      'On-Page SEO': [checks[0], checks[1], checks[2], checks[16]], // title, meta, H1, image alt
+      'Mobile & User Experience': [checks[3]], // viewport
+      'Structured Data & Rich Results': [checks[4]],
+      'Technical Foundation': [checks[5], checks[6], checks[7], checks[17]], // canonical, robots, sitemap, internal links
+      'Security & Trust': [checks[8], checks[9], checks[10], checks[11], checks[12], checks[13]],
+      'Performance & Core Web Vitals': [checks[14], checks[15]],
+    };
+
+    // Compute category scores only from measured checks
     const categoryScores: Record<string, number> = {};
-    for (const [cat, catChecks] of Object.entries(categoryMap)) {
-      const totalImpact = catChecks.reduce((sum, c) => sum + c.impactScore, 0);
-      const achievedImpact = catChecks.filter(c => c.passed).reduce((sum, c) => sum + c.impactScore, 0);
+    const categoryMeasuredCount: Record<string, number> = {};
+    let totalWeight = 0;
+    let weightedScoreSum = 0;
+
+    for (const [cat, catChecks] of Object.entries(finalCategoryMap)) {
+      const measuredChecks = catChecks.filter(c => c.measured);
+      if (measuredChecks.length === 0) {
+        categoryScores[cat] = 0;
+        categoryMeasuredCount[cat] = 0;
+        continue;
+      }
+      const totalImpact = measuredChecks.reduce((sum, c) => sum + c.impactScore, 0);
+      const achievedImpact = measuredChecks.filter(c => c.passed).reduce((sum, c) => sum + c.impactScore, 0);
       const catScore = totalImpact > 0 ? Math.round((achievedImpact / totalImpact) * 100) : 0;
       categoryScores[cat] = catScore;
-      overallScore += catScore * categoryWeights[cat];
+      categoryMeasuredCount[cat] = measuredChecks.length;
+
+      if (categoryWeights[cat]) {
+        totalWeight += categoryWeights[cat];
+        weightedScoreSum += catScore * categoryWeights[cat];
+      }
     }
-    overallScore = Math.round(overallScore);
+
+    const overallScore = totalWeight > 0 ? Math.round(weightedScoreSum / totalWeight) : 0;
 
     // ============ BUILD MARKDOWN ============
     const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
@@ -386,53 +497,71 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
     markdown += `1. EXECUTIVE SUMMARY (BUSINESS IMPACT)\n────────────────────────────────────────────────────────────────────\n`;
     markdown += `We performed a live technical audit of ${websiteUrl} on ${auditTimestamp}. The results below highlight critical issues impacting your search visibility and conversion potential.\n\n`;
     markdown += `**Overall Health Score:** ${overallScore}/100\n`;
-    const criticalCount = checks.filter(c => !c.passed && c.impactScore >= 7).length;
-    const warningCount = checks.filter(c => !c.passed && c.impactScore >= 4 && c.impactScore < 7).length;
+    const criticalCount = checks.filter(c => c.measured && !c.passed && c.impactScore >= 7).length;
+    const warningCount = checks.filter(c => c.measured && !c.passed && c.impactScore >= 4 && c.impactScore < 7).length;
     markdown += `**Critical Issues Found:** ${criticalCount} | **Warnings:** ${warningCount}\n\n`;
     markdown += `**Top 3 Fixes with Immediate ROI:**\n`;
-    checks.filter(c => !c.passed && c.impactScore >= 7).slice(0, 3).forEach((fix, i) => {
-      markdown += ` ${i+1}. ${fix.name} — ${fix.recommendation} (Effort: ${fix.effort})\n`;
-    });
+    const topFixes = checks.filter(c => c.measured && !c.passed && c.impactScore >= 7).slice(0, 3);
+    if (topFixes.length > 0) {
+      topFixes.forEach((fix, i) => {
+        markdown += ` ${i+1}. ${fix.name} — ${fix.recommendation} (Effort: ${fix.effort})\n`;
+      });
+    } else {
+      markdown += ` No critical measured issues. Focus on warnings below.\n`;
+    }
     markdown += `\n`;
 
     markdown += `2. SCORE BREAKDOWN (IMPACT MATRIX)\n────────────────────────────────────────────────────────────────────\n`;
-    markdown += `| Category | Weight | Score |\n|---|---|---|\n`;
-    for (const cat in categoryScores) {
-      markdown += `| ${cat} | ${Math.round(categoryWeights[cat] * 100)}% | ${categoryScores[cat]}/100 |\n`;
+    markdown += `| Category | Weight | Score | Measured Items |\n|---|---|---|---|\n`;
+    for (const cat in finalCategoryMap) {
+      const weight = categoryWeights[cat] ? Math.round(categoryWeights[cat] * 100) : 0;
+      const measuredCount = categoryMeasuredCount[cat] || 0;
+      const score = categoryScores[cat] || 0;
+      markdown += `| ${cat} | ${weight}% | ${score}/100 | ${measuredCount} |\n`;
     }
     markdown += `\n**Overall Score:** ${overallScore}/100\n\n`;
 
     markdown += `3. DETAILED CHECKS & RECOMMENDATIONS\n────────────────────────────────────────────────────────────────────\n`;
     markdown += `| Check | Status | Impact | Effort | Evidence | Recommendation |\n|---|---|---|---|---|---|\n`;
     checks.forEach(check => {
-      const statusEmoji = check.passed ? '✅ Pass' : check.impactScore >= 7 ? '🔴 Critical' : '⚠️ Warning';
-      markdown += `| ${check.name} | ${statusEmoji} | ${check.impactScore} | ${check.effort} | ${check.evidence} | ${check.recommendation} |\n`;
+      let statusEmoji = check.measured ? (check.passed ? '✅ Pass' : check.impactScore >= 7 ? '🔴 Critical' : '⚠️ Warning') : '⚪ Not Measured';
+      markdown += `| ${check.name} | ${statusEmoji} | ${check.measured ? check.impactScore : '-'} | ${check.effort} | ${check.evidence} | ${check.recommendation} |\n`;
     });
     markdown += `\n`;
 
     markdown += `4. PRIORITY ACTION PLAN (30/60/90 DAYS)\n────────────────────────────────────────────────────────────────────\n`;
     markdown += `**Week 1 (Critical Fixes – Immediate ROI):**\n`;
-    checks.filter(c => !c.passed && c.impactScore >= 7).forEach(c => {
+    checks.filter(c => c.measured && !c.passed && c.impactScore >= 7).forEach(c => {
       markdown += `- ${c.name}: ${c.recommendation} (Effort: ${c.effort})\n`;
     });
+    if (checks.filter(c => c.measured && !c.passed && c.impactScore >= 7).length === 0) {
+      markdown += `- No critical issues.\n`;
+    }
     markdown += `\n**Weeks 2-4 (Technical Foundation):**\n`;
-    checks.filter(c => !c.passed && c.impactScore >= 4 && c.impactScore < 7).forEach(c => {
+    checks.filter(c => c.measured && !c.passed && c.impactScore >= 4 && c.impactScore < 7).forEach(c => {
       markdown += `- ${c.name}: ${c.recommendation} (Effort: ${c.effort})\n`;
     });
+    if (checks.filter(c => c.measured && !c.passed && c.impactScore >= 4 && c.impactScore < 7).length === 0) {
+      markdown += `- No medium-impact issues.\n`;
+    }
     markdown += `\n**Months 2-3 (Optimization & Scale):**\n`;
-    checks.filter(c => !c.passed && c.impactScore < 4).forEach(c => {
+    checks.filter(c => c.measured && !c.passed && c.impactScore < 4).forEach(c => {
       markdown += `- ${c.name}: ${c.recommendation} (Effort: ${c.effort})\n`;
     });
+    if (checks.filter(c => c.measured && !c.passed && c.impactScore < 4).length === 0) {
+      markdown += `- No low-impact issues.\n`;
+    }
     markdown += `\n`;
 
-    const highImpactMissing = checks.filter(c => !c.passed && c.impactScore >= 7).length;
-    const mediumImpactMissing = checks.filter(c => !c.passed && c.impactScore >= 4 && c.impactScore < 7).length;
-    const estimatedMonthlyTrafficLoss = highImpactMissing * 500 + mediumImpactMissing * 200;
+    // Revenue impact based only on measured missed checks
+    const measuredHighImpactMissing = checks.filter(c => c.measured && !c.passed && c.impactScore >= 7).length;
+    const measuredMediumImpactMissing = checks.filter(c => c.measured && !c.passed && c.impactScore >= 4 && c.impactScore < 7).length;
+    const estimatedMonthlyTrafficLoss = measuredHighImpactMissing * 500 + measuredMediumImpactMissing * 200;
     const estimatedRevenueLossMonthly = Math.round(estimatedMonthlyTrafficLoss * 0.02 * 100);
     markdown += `5. REVENUE IMPACT ESTIMATE (MODELED)\n────────────────────────────────────────────────────────────────────\n`;
     markdown += `Based on typical industry benchmarks, we estimate the following monthly revenue loss due to unfixed technical issues:\n\n`;
-    markdown += `- High-impact missing items: ${highImpactMissing} → est. ${highImpactMissing * 500} visits/month lost.\n`;
-    markdown += `- Medium-impact missing items: ${mediumImpactMissing} → est. ${mediumImpactMissing * 200} visits/month lost.\n`;
+    markdown += `- High-impact missing items (measurable): ${measuredHighImpactMissing} → est. ${measuredHighImpactMissing * 500} visits/month lost.\n`;
+    markdown += `- Medium-impact missing items (measurable): ${measuredMediumImpactMissing} → est. ${measuredMediumImpactMissing * 200} visits/month lost.\n`;
     markdown += `- Assuming a 2% conversion rate and $100 average order value, **estimated monthly revenue loss: $${estimatedRevenueLossMonthly.toLocaleString()}**.\n\n`;
     markdown += `*This is a modeled estimate and may vary based on your actual traffic, conversion rates, and product pricing.*\n\n`;
 
@@ -444,7 +573,7 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
     markdown += `- sitemap.xml: ${hasSitemap ? 'Found' : 'Not Found'}\n`;
     markdown += `- Security Headers: ${Object.values(securityHeaders).every(v => v === '') ? 'None present' : 'Partial presence detected'}.\n`;
     markdown += `- PageSpeed: Mobile ${mobileScore !== null ? mobileScore + '/100' : 'N/A'} | Desktop ${desktopScore !== null ? desktopScore + '/100' : 'N/A'}\n\n`;
-    markdown += `**Scoring Model:** Weighted categories reflect business impact: On-Page (25%), Technical (20%), Performance (20%), Security (15%), Mobile/UX (10%), Structured Data (10%). Each check has an impact score (1-10) and effort level. Overall score indicates the percentage of critical impact items that are compliant.\n\n`;
+    markdown += `**Scoring Model:** Weighted categories reflect business impact: On-Page (25%), Technical (20%), Performance (20%), Security (15%), Mobile/UX (10%), Structured Data (10%). Only measurable checks are included in the score; categories with missing data are excluded.\n\n`;
     markdown += `**Disclaimer:** This is a static analysis and does not include JavaScript rendering. For a complete audit, a full site crawl is recommended.\n\n`;
 
     markdown += `════════════════════════════════════════════════════════════════════\nThis report is generated by MusePRO Senior Research Division.\n════════════════════════════════════════════════════════════════════`;
@@ -483,7 +612,7 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
       trend_summary: `Business impact score: ${overallScore}/100`,
     });
 
-    return res.status(201).json({ id: report._id, markdown, score: overallScore });
+    return res.status(201).json({ id: report._id, ...report.toObject() });
   } catch (err) {
     console.error('Technical SEO Audit Error:', err);
     if (err instanceof ZodError) return res.status(400).json({ error: err.errors });
