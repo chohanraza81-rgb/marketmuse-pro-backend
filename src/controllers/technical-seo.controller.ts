@@ -306,7 +306,7 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
       'Mobile & User Experience': [checks[3]], // viewport
       'Structured Data & Rich Results': [checks[4]],
       'Technical Foundation': [checks[5], checks[6], checks[7], checks[19]], // canonical, robots, sitemap, internal links
-      'Security & Trust': [checks[8], checks[9], checks[10], checks[11], checks[12], checks[13], checks[14], checks[15], checks[16]], // all security headers
+      'Security & Trust': [checks[8], checks[9], checks[10], checks[11], checks[12], checks[13], checks[15], checks[16]], // all security headers excluding X-Robots-Tag
       'Performance & Core Web Vitals': [checks[17], checks[18]], // mobile, desktop
     };
 
@@ -467,11 +467,14 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
     markdown += `- robots.txt: ${hasRobots ? 'Found' : 'Not Found'}\n`;
     markdown += `- sitemap.xml: ${hasSitemap ? 'Found' : 'Not Found'}\n`;
 
-    const missingSecurityHeaders = Object.keys(securityHeaders).filter(key => !securityHeaders[key]);
+    // Security headers status (exclude X-Robots-Tag)
+    const securityHeaderKeys = ['X-Frame-Options', 'X-Content-Type-Options', 'Strict-Transport-Security', 'Content-Security-Policy', 'Permissions-Policy', 'Referrer-Policy'];
+    const missingSecurityHeaders = securityHeaderKeys.filter(key => !securityHeaders[key]);
     const securityHeaderStatus = missingSecurityHeaders.length === 0 
-      ? 'All recommended headers present' 
+      ? 'All recommended security headers present' 
       : `Missing: ${missingSecurityHeaders.join(', ')}`;
     markdown += `- Security Headers: ${securityHeaderStatus}\n`;
+    markdown += `- Indexing Header: ${securityHeaders['X-Robots-Tag'] ? securityHeaders['X-Robots-Tag'] : 'Not present (not required)'}\n`;
     markdown += `- PageSpeed: Mobile ${mobileScore !== null ? mobileScore + '/100' : 'N/A'} | Desktop ${desktopScore !== null ? desktopScore + '/100' : 'N/A'}\n\n`;
     markdown += `**Scoring Model:** Weighted categories reflect business impact: On-Page (25%), Technical (20%), Performance (20%), Security (15%), Mobile/UX (10%), Structured Data (10%). Only measurable checks are included in the score; categories with missing data are excluded and shown as N/A.\n\n`;
     markdown += `**Disclaimer:** This is a static analysis and does not include JavaScript rendering. For a complete audit, a full site crawl is recommended.\n\n`;
