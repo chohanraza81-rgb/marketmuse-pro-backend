@@ -13,13 +13,13 @@ interface AuditCheck {
   name: string;
   passed: boolean;
   measured: boolean;
-  impactScore: number; // 1-10
+  impactScore: number;
   effort: 'Low' | 'Medium' | 'High';
   evidence: string;
   recommendation: string;
 }
 
-// Helper to get priority level from impact score
+// Priority classification based on impact score
 function getPriority(impactScore: number): 'Critical' | 'High' | 'Medium' | 'Low' {
   if (impactScore >= 9) return 'Critical';
   if (impactScore >= 7) return 'High';
@@ -52,29 +52,35 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
       responseTime = Date.now() - startTime;
       html = response.data;
 
-      const headers = response.headers;
-      securityHeaders = {
-        'X-Frame-Options': headers['x-frame-options'] || '',
-        'X-Content-Type-Options': headers['x-content-type-options'] || '',
-        'Strict-Transport-Security': headers['strict-transport-security'] || '',
-        'Content-Security-Policy': headers['content-security-policy'] || '',
-        'X-Robots-Tag': headers['x-robots-tag'] || '',
-        'Permissions-Policy': headers['permissions-policy'] || '',
-        'Referrer-Policy': headers['referrer-policy'] || ''
-      };
+      // Only capture security headers if page loaded successfully
+      if (status === 200) {
+        const headers = response.headers;
+        securityHeaders = {
+          'X-Frame-Options': headers['x-frame-options'] || '',
+          'X-Content-Type-Options': headers['x-content-type-options'] || '',
+          'Strict-Transport-Security': headers['strict-transport-security'] || '',
+          'Content-Security-Policy': headers['content-security-policy'] || '',
+          'X-Robots-Tag': headers['x-robots-tag'] || '',
+          'Permissions-Policy': headers['permissions-policy'] || '',
+          'Referrer-Policy': headers['referrer-policy'] || ''
+        };
+      }
     } catch (error: any) {
       if (error.response) {
         status = error.response.status;
         responseTime = Date.now() - startTime;
-        if ([403, 429, 503].includes(status)) isBlocked = true;
+        if ([403, 429, 503].includes(status)) {
+          isBlocked = true;
+        }
       } else {
         isBlocked = true;
         status = 0;
       }
     }
 
-    // ============ FALLBACK: ScraperAPI ============
-    if (isBlocked || status !== 200) {
+    // ============ FALLBACK: ScraperAPI only for bot blocks (403, 429, 503) ============
+    if (isBlocked && [403, 429, 503].includes(status)) {
+      console.log('⚠️ Bot protection detected. Attempting ScraperAPI fallback...');
       try {
         const scraperResponse = await axios.get('http://api.scraperapi.com/', {
           params: {
@@ -99,20 +105,33 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
             'Permissions-Policy': '',
             'Referrer-Policy': ''
           };
+          console.log('✅ ScraperAPI fallback succeeded.');
         } else {
           isBlocked = true;
-          status = scraperResponse.status || 0;
+          status = scraperResponse.status || status;
         }
       } catch (scraperError: any) {
-        console.warn('ScraperAPI fallback failed:', scraperError.message);
+        console.warn('❌ ScraperAPI fallback failed:', scraperError.message);
       }
     }
 
-    // ============ IF BLOCKED ============
-    if (isBlocked) {
+    // ============ HANDLE NON-200 STATUS (Including 404) ============
+    if (status !== 200) {
       const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
       const reference = `MKT-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
-      const markdown = `MusePRO\nReal-Time Market Research\nIntelligence Division\n════════════════════════════════════════════════════════════════════\nTECHNICAL SEO AUDIT REPORT\n════════════════════════════════════════════════════════════════════\n\n**Prepared For:** [Client Name]\n**Date:** ${today}\n**Audit Timestamp (UTC):** ${auditTimestamp}\n**Prepared By:** MusePRO SEO Team\n**Reference:** ${reference}\n**Classification:** CONFIDENTIAL\n════════════════════════════════════════════════════════════════════\n\nAUDIT INCOMPLETE – SITE BOT PROTECTION DETECTED\n────────────────────────────────────────────────────────────────────\n\nWe attempted to crawl ${websiteUrl} on ${auditTimestamp}, but the server returned HTTP ${status}.\n\n**What this means:**\nYour website is protected by a bot management system or firewall that blocks automated audit tools. This prevents us from accessing the HTML and resources needed for a complete technical SEO analysis.\n\n**Why this matters for SEO:**\nSearch engine crawlers like Googlebot may also be blocked, which can severely impact indexing and rankings.\n\n**Recommended Next Steps:**\n1. Whitelist our audit bot's IP address or user agent in your firewall/CDN settings.\n2. Temporarily disable bot protection during the audit window.\n3. Verify Googlebot is not blocked using Google Search Console's "Fetch as Google".\n4. Contact us at support@musepro.com with whitelisting details to re-run the audit.\n\n**What we could not check due to the block:**\n- On-page elements (title, meta, H1, images alt)\n- Technical foundation (robots.txt, sitemap, canonical, structured data)\n- Performance metrics (page speed, Core Web Vitals)\n- Security headers and mixed content\n- Internal linking structure\n\n════════════════════════════════════════════════════════════════════\nThis report is generated by MusePRO Senior Research Division.\n════════════════════════════════════════════════════════════════════`;
+
+      let statusMessage = '';
+      if (status === 0) {
+        statusMessage = 'The site could not be reached. This may be due to DNS issues, server downtime, or network restrictions.';
+      } else if (status === 404) {
+        statusMessage = 'The URL returned a 404 Not Found error. This likely means the page does not exist or the URL is incorrect.';
+      } else if ([403, 429, 503].includes(status)) {
+        statusMessage = `The server returned HTTP ${status}. The website is protected by a bot management system or firewall that blocks automated audit tools.`;
+      } else {
+        statusMessage = `The server returned HTTP ${status}. This indicates a server-side issue that prevented us from accessing the content.`;
+      }
+
+      const markdown = `MusePRO\nReal-Time Market Research\nIntelligence Division\n════════════════════════════════════════════════════════════════════\nTECHNICAL SEO AUDIT REPORT\n════════════════════════════════════════════════════════════════════\n\n**Prepared For:** [Client Name]\n**Date:** ${today}\n**Audit Timestamp (UTC):** ${auditTimestamp}\n**Prepared By:** MusePRO SEO Team\n**Reference:** ${reference}\n**Classification:** CONFIDENTIAL\n════════════════════════════════════════════════════════════════════\n\nAUDIT INCOMPLETE – UNABLE TO ACCESS PAGE\n────────────────────────────────────────────────────────────────────\n\nWe attempted to crawl ${websiteUrl} on ${auditTimestamp}, but the server returned HTTP ${status}.\n\n**What this means:**\n${statusMessage}\n\n**Why this matters for SEO:**\nIf search engines encounter the same error, they cannot access or index your page, which can severely impact your search visibility.\n\n**Recommended Next Steps:**\n1. Verify the URL is correct and reachable in a browser.\n2. If the site is behind bot protection, whitelist our audit bot's IP address or user agent in your firewall/CDN settings.\n3. Check server logs to identify the cause of the error.\n4. Contact us at support@musepro.com once the issue is resolved so we can re-run the audit.\n\n**What we could not check due to the error:**\n- On-page elements (title, meta, H1, images alt)\n- Technical foundation (robots.txt, sitemap, canonical, structured data)\n- Performance metrics (page speed, Core Web Vitals)\n- Security headers and mixed content\n- Internal linking structure\n\n════════════════════════════════════════════════════════════════════\nThis report is generated by MusePRO Senior Research Division.\n════════════════════════════════════════════════════════════════════`;
 
       const report = await Report.create({
         type: 'seo',
@@ -124,18 +143,18 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
           status,
           isBlocked: true,
           auditTimestamp,
-          note: 'Audit incomplete due to bot protection.'
+          note: `Audit incomplete due to HTTP ${status}.`
         },
         markdown,
         charts: {},
         traffic_estimate: 0,
-        trend_summary: 'Audit incomplete – site blocked automated crawler.'
+        trend_summary: `Audit incomplete – HTTP ${status}.`
       });
 
       return res.status(201).json({ id: report._id, ...report.toObject() });
     }
 
-    // ============ FULL AUDIT ============
+    // ============ FULL AUDIT (Only runs when status === 200) ============
     let hasSSL = parsedUrl.protocol === 'https:';
     let hasRobots = false;
     let hasSitemap = false;
@@ -155,7 +174,7 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
     let externalLinks = 0;
     let textToHtmlRatio = 0;
 
-    if (status === 200 && typeof html === 'string') {
+    if (typeof html === 'string' && html.length > 0) {
       pageSizeKb = Math.round(Buffer.byteLength(html, 'utf8') / 1024);
 
       const titleMatch = html.match(/<title[^>]*>([^<]*)<\/title>/i);
@@ -193,10 +212,12 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
       }
 
       const textContent = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-      textToHtmlRatio = Math.round((textContent.length / html.length) * 100);
+      if (textContent.length > 0) {
+        textToHtmlRatio = Math.round((textContent.length / html.length) * 100);
+      }
     }
 
-    // robots.txt and sitemap.xml
+    // robots.txt and sitemap.xml (can be checked even if page HTML is empty, but need valid host)
     try {
       const robotsRes = await axios.get(new URL('/robots.txt', websiteUrl).toString(), { timeout: 5000 });
       if (robotsRes.status === 200) hasRobots = true;
@@ -206,7 +227,7 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
       if (sitemapRes.status === 200) hasSitemap = true;
     } catch {}
 
-    // PageSpeed Insights
+    // PageSpeed Insights (optional)
     let mobileScore: number | null = null;
     let desktopScore: number | null = null;
     let coreWebVitals: any = { mobile: {}, desktop: {} };
@@ -562,9 +583,9 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
     }
     markdown += `\n`;
 
-    // ============ BUSINESS IMPACT SUMMARY (Replaces Revenue Section) ============
+    // ============ BUSINESS IMPACT SUMMARY ============
     markdown += `5. BUSINESS IMPACT SUMMARY\n────────────────────────────────────────────────────────────────────\n`;
-    markdown += `The table below summarises the potential business impact of unresolved technical issues. These are qualitative assessments based on industry best practices and the nature of the issue.\n\n`;
+    markdown += `The table below summarises the potential business impact of unresolved technical issues.\n\n`;
     markdown += `| Issue | Priority | Potential Business Impact |\n|---|---|---|\n`;
     const impactfulChecks = checks.filter(c => c.measured && !c.passed);
     if (impactfulChecks.length > 0) {
