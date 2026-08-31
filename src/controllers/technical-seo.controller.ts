@@ -3,16 +3,52 @@ import { Request, Response, NextFunction } from 'express';
 import axios from 'axios';
 import { z, ZodError } from 'zod';
 import { Report } from '../models/Report';
+import { getSearchResults } from '../services/serpapi'; // or wherever you import SERP
+import { getSerperResults } from '../services/serper';
+import { getScraperAPISearch } from '../services/scraperapi';
+import { cacheService } from '../services/cache';
+import { convertCurrency } from '../services/exchange';
+import { runGroqWithRetry } from '../services/groq';
 
 const technicalSeoSchema = z.object({
   websiteUrl: z.string().url({ message: "Invalid URL" }),
   country: z.string().length(2),
 });
 
+// Types
+interface AuditCheck {
+  name: string;
+  passed: boolean;
+  impactScore: number; // 0-10 (business impact)
+  effort: 'Low' | 'Medium' | 'High';
+  evidence: string;
+  recommendation: string;
+  revenueRiskMonthly?: number; // estimated monthly revenue loss/gain
+}
+
+interface CompetitorScore {
+  domain: string;
+  score: number;
+  title: string;
+  link: string;
+  missingChecks: string[];
+}
+
+// We'll compute overall score from weighted categories
+const CATEGORY_WEIGHTS = {
+  'On-Page SEO': 0.25,
+  'Technical Foundation': 0.20,
+  'Performance & Core Web Vitals': 0.20,
+  'Security & Trust': 0.15,
+  'Mobile & User Experience': 0.10,
+  'Structured Data & Rich Results': 0.10,
+};
+
 export const createTechnicalSEOReport = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { websiteUrl, country } = technicalSeoSchema.parse(req.body);
 
+    // Parse URL
     let parsedUrl: URL;
     try {
       parsedUrl = new URL(websiteUrl);
@@ -27,6 +63,7 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
     let isBlocked = false;
     let html = '';
 
+    // Infrastructure flags
     let hasSSL = parsedUrl.protocol === 'https:';
     let hasRobots = false;
     let hasSitemap = false;
@@ -34,11 +71,10 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
     let sitemapContent = '';
     let securityHeaders: Record<string, string> = {};
 
+    // On-page flags
     let titleTag = 'MISSING';
     let metaDescription = 'MISSING';
     let h1Count = 0;
-    let h2Count = 0;
-    let h3Count = 0;
     let hasViewport = false;
     let hasJSONLD = false;
     let hasCanonical = false;
@@ -52,6 +88,10 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
     let externalLinks = 0;
     let pageSizeKb = 0;
     let textToHtmlRatio = 0;
+    let hasNoindexMeta = false;
+    let hasMixedContent = false;
+    let hasPermissionsPolicy = false;
+    let hasReferrerPolicy = false;
 
     // Fetch page
     try {
@@ -71,8 +111,12 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
         'X-Content-Type-Options': headers['x-content-type-options'] || '',
         'Strict-Transport-Security': headers['strict-transport-security'] || '',
         'Content-Security-Policy': headers['content-security-policy'] || '',
-        'X-Robots-Tag': headers['x-robots-tag'] || ''
+        'X-Robots-Tag': headers['x-robots-tag'] || '',
+        'Permissions-Policy': headers['permissions-policy'] || '',
+        'Referrer-Policy': headers['referrer-policy'] || ''
       };
+      hasPermissionsPolicy = !!securityHeaders['Permissions-Policy'];
+      hasReferrerPolicy = !!securityHeaders['Referrer-Policy'];
 
       if (status === 200 && typeof html === 'string') {
         pageSizeKb = Math.round(Buffer.byteLength(html, 'utf8') / 1024);
@@ -85,9 +129,6 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
         if (metaMatch && metaMatch[1].trim()) metaDescription = metaMatch[1].trim();
 
         h1Count = (html.match(/<h1[^>]*>/gi) || []).length;
-        h2Count = (html.match(/<h2[^>]*>/gi) || []).length;
-        h3Count = (html.match(/<h3[^>]*>/gi) || []).length;
-
         hasViewport = /<meta[^>]+name=["']viewport["']/i.test(html);
         hasJSONLD = /application\/ld\+json/i.test(html);
         hasCanonical = /rel=["']canonical["']/i.test(html);
@@ -95,6 +136,14 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
         hasTwitterCard = /name=["']twitter:card["']/i.test(html);
         hasLang = /<html[^>]+lang=["'][^"']+["']/i.test(html);
         hasFavicon = /<link[^>]+rel=["'](icon|shortcut icon)["']/i.test(html);
+
+        // Mixed content detection (http resources on https page)
+        if (hasSSL && /src=["']http:\/\//i.test(html) || /href=["']http:\/\//i.test(html)) {
+          hasMixedContent = true;
+        }
+
+        // Noindex meta check
+        hasNoindexMeta = /<meta[^>]+name=["']robots["'][^>]+content=["'][^"']*noindex/i.test(html);
 
         const imgTags = html.match(/<img[^>]*>/gi) || [];
         totalImages = imgTags.length;
@@ -132,7 +181,7 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
       }
     }
 
-    // Check robots.txt and sitemap.xml with content capture
+    // Check robots.txt and sitemap.xml
     try {
       const robotsRes = await axios.get(new URL('/robots.txt', websiteUrl).toString(), { timeout: 5000 });
       if (robotsRes.status === 200) {
@@ -149,7 +198,7 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
       }
     } catch {}
 
-    // ============ PAGE SPEED / CORE WEB VITALS ============
+    // PageSpeed API (if configured)
     let mobileScore: number | null = null;
     let desktopScore: number | null = null;
     let coreWebVitals: any = {
@@ -167,7 +216,6 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
           category: 'performance',
           locale: 'en_US'
         };
-        // Mobile
         const mobileResponse = await axios.get(apiUrl, { params, timeout: 20000 });
         const mobileData = mobileResponse.data;
         mobileScore = Math.round((mobileData.lighthouseResult?.categories?.performance?.score || 0) * 100);
@@ -180,8 +228,8 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
           tbt: mobileAudits['total-blocking-time']?.displayValue || 'N/A'
         };
 
-        // Desktop
-        const desktopResponse = await axios.get(apiUrl, { params: { ...params, strategy: 'desktop' }, timeout: 20000 });
+        const desktopParams = { ...params, strategy: 'desktop' };
+        const desktopResponse = await axios.get(apiUrl, { params: desktopParams, timeout: 20000 });
         const desktopData = desktopResponse.data;
         desktopScore = Math.round((desktopData.lighthouseResult?.categories?.performance?.score || 0) * 100);
         const desktopAudits = desktopData.lighthouseResult?.audits || {};
@@ -197,281 +245,330 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
       }
     }
 
-    // ============ SCORING ============
-    let infrastructureScore = 30;
-    let onPageScore = 30;
-    let technicalScore = 20;
-    let securityScore = 20;
+    // ============ BUSINESS IMPACT CHECKS ============
+    const checks: AuditCheck[] = [];
 
-    let criticalIssues: string[] = [];
-    let warnings: string[] = [];
+    // On-Page SEO
+    checks.push({
+      name: 'Title Tag Present & Optimized',
+      passed: titleTag !== 'MISSING',
+      impactScore: 9,
+      effort: 'Low',
+      evidence: titleTag !== 'MISSING' ? `Current Title: "${titleTag}"` : 'Title tag missing',
+      recommendation: titleTag !== 'MISSING' ? 'Ensure title includes primary keyword and is under 60 characters.' : 'Add a compelling title tag under 60 characters.'
+    });
+    checks.push({
+      name: 'Meta Description Present',
+      passed: metaDescription !== 'MISSING',
+      impactScore: 7,
+      effort: 'Low',
+      evidence: metaDescription !== 'MISSING' ? `Current Meta: "${metaDescription.substring(0, 80)}..."` : 'Meta description missing',
+      recommendation: metaDescription !== 'MISSING' ? 'Optimize meta description with keyword and clear CTA.' : 'Add meta description under 155 characters.'
+    });
+    checks.push({
+      name: 'Single H1 Tag',
+      passed: h1Count === 1,
+      impactScore: 6,
+      effort: 'Low',
+      evidence: `Found ${h1Count} H1 tags`,
+      recommendation: h1Count === 0 ? 'Add one H1 tag containing the primary keyword.' : h1Count > 1 ? 'Reduce to a single H1 tag for proper content hierarchy.' : 'H1 is present.'
+    });
 
-    // Infrastructure (30)
-    if (!hasSSL) { infrastructureScore -= 10; criticalIssues.push("Missing SSL (HTTPS)."); }
-    if (responseTime > 2000) { infrastructureScore -= 5; warnings.push(`Slow response time (${responseTime}ms).`); }
-    if (pageSizeKb > 2000) { infrastructureScore -= 5; warnings.push(`Heavy page size (${pageSizeKb}KB).`); }
-    if (!hasViewport && !isBlocked) { infrastructureScore -= 5; criticalIssues.push("Missing Viewport meta tag."); }
-    if (responseTime === 0 && isBlocked) { infrastructureScore -= 10; criticalIssues.push("Site unreachable or blocked."); }
+    // Technical Foundation
+    checks.push({
+      name: 'robots.txt Exists',
+      passed: hasRobots,
+      impactScore: 4,
+      effort: 'Low',
+      evidence: hasRobots ? 'robots.txt found' : 'robots.txt missing',
+      recommendation: hasRobots ? 'Review robots.txt for any accidental blocks.' : 'Create robots.txt and submit to Google Search Console.'
+    });
+    checks.push({
+      name: 'sitemap.xml Exists',
+      passed: hasSitemap,
+      impactScore: 5,
+      effort: 'Low',
+      evidence: hasSitemap ? 'sitemap.xml found' : 'sitemap.xml missing',
+      recommendation: hasSitemap ? 'Ensure sitemap is up-to-date and submitted.' : 'Create XML sitemap and submit to Google Search Console.'
+    });
+    checks.push({
+      name: 'Canonical Tag',
+      passed: hasCanonical,
+      impactScore: 5,
+      effort: 'Low',
+      evidence: hasCanonical ? 'Canonical present' : 'Canonical missing',
+      recommendation: hasCanonical ? 'Verify canonical URLs point to correct pages.' : 'Add canonical tags to prevent duplicate content issues.'
+    });
 
-    // Add performance penalty if mobile/desktop score available and low
-    if (mobileScore !== null && mobileScore < 80) {
-      infrastructureScore -= 5;
-      criticalIssues.push(`Low mobile performance score (${mobileScore}/100).`);
+    // Performance & Core Web Vitals
+    checks.push({
+      name: 'Mobile Performance Score',
+      passed: mobileScore !== null && mobileScore >= 80,
+      impactScore: 8,
+      effort: 'High',
+      evidence: mobileScore !== null ? `Mobile score: ${mobileScore}/100` : 'Mobile performance not measured',
+      recommendation: mobileScore !== null && mobileScore < 80 ? 'Optimize images, reduce JS execution, and improve server response.' : 'Maintain current performance level.'
+    });
+    checks.push({
+      name: 'Desktop Performance Score',
+      passed: desktopScore !== null && desktopScore >= 80,
+      impactScore: 6,
+      effort: 'Medium',
+      evidence: desktopScore !== null ? `Desktop score: ${desktopScore}/100` : 'Desktop performance not measured',
+      recommendation: desktopScore !== null && desktopScore < 80 ? 'Improve caching and minify resources.' : 'Good.'
+    });
+
+    // Security & Trust
+    checks.push({
+      name: 'HTTPS Enabled',
+      passed: hasSSL,
+      impactScore: 9,
+      effort: 'Low',
+      evidence: hasSSL ? 'HTTPS active' : 'HTTPS missing',
+      recommendation: hasSSL ? 'Ensure all pages redirect to HTTPS.' : 'Install SSL certificate and force HTTPS.'
+    });
+    checks.push({
+      name: 'Mixed Content Detected',
+      passed: !hasMixedContent,
+      impactScore: 8,
+      effort: 'Medium',
+      evidence: hasMixedContent ? 'HTTP resources found on HTTPS page' : 'No mixed content',
+      recommendation: hasMixedContent ? 'Replace all HTTP resources with HTTPS.' : 'No action needed.'
+    });
+    checks.push({
+      name: 'Security Headers Present',
+      passed: hasPermissionsPolicy && hasReferrerPolicy && !!securityHeaders['X-Frame-Options'] && !!securityHeaders['X-Content-Type-Options'] && !!securityHeaders['Strict-Transport-Security'],
+      impactScore: 7,
+      effort: 'Low',
+      evidence: 'Header check results',
+      recommendation: 'Add missing security headers: X-Frame-Options, X-Content-Type-Options, HSTS, Permissions-Policy, Referrer-Policy.'
+    });
+
+    // Mobile & User Experience
+    checks.push({
+      name: 'Viewport Meta Tag',
+      passed: hasViewport,
+      impactScore: 6,
+      effort: 'Low',
+      evidence: hasViewport ? 'Viewport present' : 'Viewport missing',
+      recommendation: hasViewport ? 'Good' : 'Add viewport meta tag for mobile responsiveness.'
+    });
+    checks.push({
+      name: 'Language Attribute',
+      passed: hasLang,
+      impactScore: 3,
+      effort: 'Low',
+      evidence: hasLang ? 'Lang attribute present' : 'Lang attribute missing',
+      recommendation: hasLang ? 'Good' : 'Add lang attribute to <html> tag.'
+    });
+
+    // Structured Data & Rich Results
+    checks.push({
+      name: 'Structured Data (JSON-LD)',
+      passed: hasJSONLD,
+      impactScore: 8,
+      effort: 'Medium',
+      evidence: hasJSONLD ? 'JSON-LD found' : 'No structured data',
+      recommendation: hasJSONLD ? 'Ensure schema type is relevant to content.' : 'Add appropriate JSON-LD schema (Organization, Product, Article, etc.) for rich snippets.'
+    });
+
+    // ============ COMPETITOR BENCHMARKING ============
+    let competitors: CompetitorScore[] = [];
+    try {
+      // Use SerpAPI to get top organic results for the domain as a query
+      const query = parsedUrl.hostname.replace('www.', '');
+      let serpData = await getSearchResults(query, country).catch(() => null);
+      if (!serpData?.organic_results) serpData = await getSerperResults(query, country).catch(() => null);
+      if (!serpData?.organic_results) serpData = await getScraperAPISearch(query, country).catch(() => null);
+
+      if (serpData?.organic_results) {
+        const topResults = serpData.organic_results.slice(0, 5);
+        for (const result of topResults) {
+          if (result.link && !result.link.includes(parsedUrl.hostname)) {
+            // We'll do a simplified check for competitors
+            let compScore = 50; // base
+            const missingChecks: string[] = [];
+            try {
+              const compRes = await axios.get(result.link, { timeout: 8000 });
+              const compHtml = compRes.data;
+              if (compHtml) {
+                const compHasTitle = /<title[^>]*>/i.test(compHtml);
+                const compHasH1 = /<h1[^>]*>/i.test(compHtml);
+                const compHasSchema = /application\/ld\+json/i.test(compHtml);
+                const compHasViewport = /<meta[^>]+name=["']viewport["']/i.test(compHtml);
+                const compHasSSL = result.link.startsWith('https');
+                if (!compHasTitle) { compScore -= 10; missingChecks.push('Missing title'); }
+                if (!compHasH1) { compScore -= 10; missingChecks.push('Missing H1'); }
+                if (!compHasSchema) { compScore -= 15; missingChecks.push('No structured data'); }
+                if (!compHasViewport) { compScore -= 10; missingChecks.push('No viewport'); }
+                if (!compHasSSL) { compScore -= 15; missingChecks.push('No HTTPS'); }
+              }
+            } catch (e) {
+              // ignore, score stays base
+            }
+            competitors.push({
+              domain: new URL(result.link).hostname,
+              score: Math.max(0, Math.min(100, compScore)),
+              title: result.title || 'Untitled',
+              link: result.link,
+              missingChecks: missingChecks.length > 0 ? missingChecks : ['N/A']
+            });
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('Competitor benchmarking failed:', e);
     }
-    if (desktopScore !== null && desktopScore < 80) {
-      infrastructureScore -= 5;
-      warnings.push(`Low desktop performance score (${desktopScore}/100).`);
+
+    // ============ OVERALL SCORE WITH IMPACT ============
+    // Calculate category scores based on weighted impact of passed checks
+    const categoryScores: Record<string, number> = {};
+    const categoryWeights: Record<string, number> = {
+      'On-Page SEO': 0.25,
+      'Technical Foundation': 0.20,
+      'Performance & Core Web Vitals': 0.20,
+      'Security & Trust': 0.15,
+      'Mobile & User Experience': 0.10,
+      'Structured Data & Rich Results': 0.10,
+    };
+
+    // Group checks by category (we'll map manually)
+    const onPageChecks = checks.filter(c => ['Title Tag Present & Optimized', 'Meta Description Present', 'Single H1 Tag'].includes(c.name));
+    const technicalChecks = checks.filter(c => ['robots.txt Exists', 'sitemap.xml Exists', 'Canonical Tag'].includes(c.name));
+    const performanceChecks = checks.filter(c => ['Mobile Performance Score', 'Desktop Performance Score'].includes(c.name));
+    const securityChecks = checks.filter(c => ['HTTPS Enabled', 'Mixed Content Detected', 'Security Headers Present'].includes(c.name));
+    const mobileChecks = checks.filter(c => ['Viewport Meta Tag', 'Language Attribute'].includes(c.name));
+    const structuredChecks = checks.filter(c => ['Structured Data (JSON-LD)'].includes(c.name));
+
+    function categoryScore(catChecks: AuditCheck[]): number {
+      if (catChecks.length === 0) return 0;
+      const totalImpact = catChecks.reduce((sum, c) => sum + c.impactScore, 0);
+      const achievedImpact = catChecks.filter(c => c.passed).reduce((sum, c) => sum + c.impactScore, 0);
+      return totalImpact > 0 ? Math.round((achievedImpact / totalImpact) * 100) : 0;
     }
 
-    // On-Page (30)
-    if (!isBlocked && status !== 0) {
-      if (titleTag === 'MISSING') { onPageScore -= 10; criticalIssues.push("No Title Tag found."); }
-      if (metaDescription === 'MISSING') { onPageScore -= 5; warnings.push("Missing Meta Description."); }
-      if (h1Count === 0) { onPageScore -= 10; criticalIssues.push("No H1 tags found."); }
-      else if (h1Count > 1) { onPageScore -= 5; warnings.push(`Found ${h1Count} H1 tags (should be one).`); }
-      if (!hasCanonical) { onPageScore -= 5; warnings.push("No Canonical Tag found."); }
-      if (!hasJSONLD) { onPageScore -= 5; warnings.push("No Schema.org (JSON-LD) markup."); }
-      if (missingAltCount > 0) { onPageScore -= 5; warnings.push(`${missingAltCount} images missing Alt Text.`); }
+    categoryScores['On-Page SEO'] = categoryScore(onPageChecks);
+    categoryScores['Technical Foundation'] = categoryScore(technicalChecks);
+    categoryScores['Performance & Core Web Vitals'] = categoryScore(performanceChecks);
+    categoryScores['Security & Trust'] = categoryScore(securityChecks);
+    categoryScores['Mobile & User Experience'] = categoryScore(mobileChecks);
+    categoryScores['Structured Data & Rich Results'] = categoryScore(structuredChecks);
+
+    let overallScore = 0;
+    for (const cat in categoryScores) {
+      overallScore += categoryScores[cat] * (categoryWeights[cat] || 0);
     }
+    overallScore = Math.round(overallScore);
 
-    // Technical (20)
-    if (!hasRobots) { technicalScore -= 5; warnings.push("No robots.txt found."); }
-    if (!hasSitemap) { technicalScore -= 5; warnings.push("No sitemap.xml found."); }
-    if (!isBlocked && status !== 0 && !hasLang) { technicalScore -= 3; warnings.push("Missing lang attribute on <html> tag."); }
-    if (!isBlocked && status !== 0 && internalLinks === 0) { technicalScore -= 3; warnings.push("No internal links found."); }
-    if (!isBlocked && status !== 0 && textToHtmlRatio < 10) { technicalScore -= 4; warnings.push(`Low text-to-HTML ratio (${textToHtmlRatio}%).`); }
+    // ============ REVENUE IMPACT ESTIMATES ============
+    // Simple heuristic: assume average business loses $X per missing high-impact element per month.
+    // We'll use a fixed base revenue impact per missed impact point, but better to use actual SERP traffic data from competitors.
+    // Since we may not have client traffic, we'll estimate based on competitor traffic average and missing checks.
+    const highImpactMissing = checks.filter(c => !c.passed && c.impactScore >= 7).length;
+    const mediumImpactMissing = checks.filter(c => !c.passed && c.impactScore >= 4 && c.impactScore < 7).length;
+    const estimatedMonthlyTrafficLoss = highImpactMissing * 500 + mediumImpactMissing * 200; // rough visits
+    const avgOrderValue = 100; // assumption
+    const conversionRate = 0.02; // 2% assumption
+    const estimatedRevenueLossMonthly = Math.round(estimatedMonthlyTrafficLoss * conversionRate * avgOrderValue);
 
-    // Security (20)
-    if (!securityHeaders['X-Frame-Options']) { securityScore -= 4; warnings.push("Missing X-Frame-Options header."); }
-    if (!securityHeaders['X-Content-Type-Options']) { securityScore -= 4; warnings.push("Missing X-Content-Type-Options header."); }
-    if (!securityHeaders['Strict-Transport-Security']) { securityScore -= 4; warnings.push("Missing HSTS header."); }
-    if (!securityHeaders['Content-Security-Policy']) { securityScore -= 4; warnings.push("Missing Content-Security-Policy header."); }
-    if (securityHeaders['X-Robots-Tag'] && /noindex/i.test(securityHeaders['X-Robots-Tag'])) {
-      securityScore -= 4;
-      criticalIssues.push("X-Robots-Tag header contains 'noindex', blocking search indexing.");
-    }
-
-    infrastructureScore = Math.max(0, infrastructureScore);
-    onPageScore = Math.max(0, onPageScore);
-    technicalScore = Math.max(0, technicalScore);
-    securityScore = Math.max(0, securityScore);
-
-    const totalScore = Math.max(0, Math.min(100, infrastructureScore + onPageScore + technicalScore + securityScore));
-
+    // Build markdown report
     const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
     const reference = `MKT-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
 
-    // ============ MARKDOWN GENERATION ============
-    let markdown = `MusePRO
-Real-Time Market Research
-Intelligence Division
-════════════════════════════════════════════════════════════════════
-TECHNICAL SEO AUDIT REPORT
-════════════════════════════════════════════════════════════════════
+    let markdown = `MusePRO\nReal-Time Market Research\nIntelligence Division\n════════════════════════════════════════════════════════════════════\nTECHNICAL SEO AUDIT REPORT\nBusiness Impact Edition\n════════════════════════════════════════════════════════════════════\n\n**Prepared For:** [Client Name]\n**Date:** ${today}\n**Audit Timestamp (UTC):** ${auditTimestamp}\n**Prepared By:** MusePRO SEO Team\n**Reference:** ${reference}\n**Classification:** CONFIDENTIAL\n════════════════════════════════════════════════════════════════════\n\n`;
 
-**Prepared For:** [Client Name]
-**Date:** ${today}
-**Audit Timestamp (UTC):** ${auditTimestamp}
-**Prepared By:** MusePRO SEO Team
-**Reference:** ${reference}
-**Classification:** CONFIDENTIAL
-════════════════════════════════════════════════════════════════════
+    // Executive Summary
+    markdown += `1. EXECUTIVE SUMMARY (BUSINESS IMPACT)\n────────────────────────────────────────────────────────────────────\n`;
+    markdown += `This audit goes beyond raw scores. We assess the financial impact of technical SEO issues and prioritize fixes that generate the highest return on investment.\n\n`;
+    markdown += `**Current Health Score:** ${overallScore}/100\n`;
+    markdown += `**Estimated Monthly Revenue Loss due to technical issues:** $${estimatedRevenueLossMonthly.toLocaleString()}\n`;
+    markdown += `**High-Impact Issues Found:** ${highImpactMissing}\n`;
+    markdown += `**Competitors in Better Technical Shape:** ${competitors.filter(c => c.score > overallScore).length} of ${competitors.length}\n\n`;
+    markdown += `**Top 3 Fixes with Immediate ROI:**\n`;
+    const criticalFixes = checks.filter(c => !c.passed && c.impactScore >= 7).slice(0, 3);
+    criticalFixes.forEach((fix, i) => {
+      markdown += ` ${i+1}. ${fix.name} — ${fix.recommendation} (Effort: ${fix.effort})\n`;
+    });
+    markdown += `\n`;
 
-1. EXECUTIVE BRIEF
-────────────────────────────────────────────────────────────────────
-`;
-
-    if (isBlocked) {
-      markdown += ` 1. The site ${websiteUrl} is behind a strong firewall or bot protection (HTTP ${status || 'unreachable'}). We could not extract full HTML, but we verified key infrastructure signals like HTTPS, robots.txt, and server speed.
- 2. The score of **${totalScore}/100** is based on accessible signals only. A deeper crawl-based audit is recommended for exact HTML details.
- 3. By addressing the identified issues, you can improve the score to **${Math.min(100, totalScore + 45)}+**.`;
-    } else {
-      markdown += ` 1. The reality is that ${websiteUrl} has a response time of ${responseTime}ms. We pulled the raw HTML and found ${h1Count} H1 tags, ${totalImages} images, and a page size of ${pageSizeKb}KB. This provides clear, undeniable evidence of missing on-page elements that are hurting Google rankings.
- 2. The site has ${hasSSL ? 'HTTPS enabled' : 'missing HTTPS'}, and ${hasJSONLD ? 'has schema markup' : 'is missing schema markup'}. Based on our comprehensive checks, the site scores **${totalScore}/100**.
- 3. By fixing the ${criticalIssues.length} critical issues and ${warnings.length} warnings identified, you can boost this score to **${Math.min(100, totalScore + 45)}+ within 7 days**.`;
+    // Score Breakdown with Impact
+    markdown += `2. SCORE BREAKDOWN (IMPACT MATRIX)\n────────────────────────────────────────────────────────────────────\n`;
+    markdown += `| Category | Weight | Score | Impact of Issues |\n|---|---|---|---|\n`;
+    for (const cat in categoryScores) {
+      const weight = Math.round(categoryWeights[cat] * 100);
+      markdown += `| ${cat} | ${weight}% | ${categoryScores[cat]}/100 | ${cat === 'On-Page SEO' ? 'Title, meta, H1 directly affect CTR' : cat === 'Technical Foundation' ? 'robots, sitemap, canonical affect indexing' : cat === 'Performance & Core Web Vitals' ? 'Speed affects UX and rankings' : cat === 'Security & Trust' ? 'SSL, mixed content affect trust' : cat === 'Mobile & User Experience' ? 'Mobile-friendliness essential' : 'Structured data for rich results'} |\n`;
     }
+    markdown += `\n**Overall Score:** ${overallScore}/100\n\n`;
 
-    markdown += `
+    // Detailed Checks with Business Impact
+    markdown += `3. DETAILED AUDIT CHECKS WITH BUSINESS IMPACT\n────────────────────────────────────────────────────────────────────\n`;
+    markdown += `| Check | Status | Impact (1-10) | Effort | Evidence | Recommendation |\n|---|---|---|---|---|---|\n`;
+    checks.forEach(check => {
+      const statusEmoji = check.passed ? '✅ Pass' : check.impactScore >= 7 ? '🔴 Critical' : '⚠️ Warning';
+      markdown += `| ${check.name} | ${statusEmoji} | ${check.impactScore} | ${check.effort} | ${check.evidence} | ${check.recommendation} |\n`;
+    });
+    markdown += `\n`;
 
-════════════════════════════════════════════════════════════════════
-**SCORE BREAKDOWN: ${totalScore}/100**
-────────────────────────────────────────────────────────────────────
-✅ **Infrastructure:** ${infrastructureScore}/30  - HTTPS, Mobile, Speed
-✅ **On-Page SEO:**   ${onPageScore}/30   - Title, H1, Meta, Schema
-✅ **Technical SEO:** ${technicalScore}/20   - robots.txt, Sitemap, Internal Links
-✅ **Security:**      ${securityScore}/20   - Security Headers, Indexing
-
-> **NOTE:** Score can reach **${Math.min(100, totalScore + 45)}+** within 7 days by fixing the items below.
-════════════════════════════════════════════════════════════════════
-
-2. TREND ASSESSMENT
-────────────────────────────────────────────────────────────────────
-In 2026, Google's core algorithms are heavily leaning on Core Web Vitals, technical cleanliness, and site security. Based on the current signals, the site's score of **${totalScore}/100** indicates it is not yet ready for organic competition. Competitors with complete Title, H1, Schema, and security headers are outranking similar sites by **3x**.
-
-3. TECHNICAL EVIDENCE & HEALTH CHECKS
-────────────────────────────────────────────────────────────────────
-| Metric                | Status     | Evidence                      |
-|-----------------------|------------|-------------------------------|
-| **Overall Score**     | **${totalScore}/100** | Dynamic based on full scan    |
-| HTTP Status           | ${status === 200 ? '✅ Pass' : status === 0 ? '❌ Failed' : '⚠️ ' + status} | Server returned ${status || 'no response'} |
-| Response Time         | ${responseTime < 2000 ? '✅ Pass' : '⚠️ Warning'} | ${responseTime}ms - Target: <1500ms |
-| Page Size             | ${isBlocked ? '🚫 Blocked' : pageSizeKb < 2000 ? '✅ Pass' : '⚠️ Warning'} | ${isBlocked ? 'Cannot Extract' : pageSizeKb + 'KB'} |
-| HTTPS / SSL           | ${hasSSL ? '✅ Pass' : '❌ Failed'} | Encryption detected: ${hasSSL ? 'Yes' : 'No'} |
-| Title Tag             | ${isBlocked ? '🚫 Blocked' : titleTag !== 'MISSING' ? '✅ Pass' : '❌ Failed'} | ${isBlocked ? 'Cannot Extract' : titleTag} |
-| Meta Description      | ${isBlocked ? '🚫 Blocked' : metaDescription !== 'MISSING' ? '✅ Pass' : '❌ Failed'} | ${isBlocked ? 'Cannot Extract' : metaDescription.substring(0, 50)}... |
-| H1 Tags               | ${isBlocked ? '🚫 Blocked' : h1Count === 1 ? '✅ Pass' : h1Count === 0 ? '❌ Failed' : '⚠️ Warning'} | ${isBlocked ? 'Cannot Extract' : 'Found ' + h1Count + ' H1 tags'} |
-| Viewport (Mobile)     | ${isBlocked ? '🚫 Blocked' : hasViewport ? '✅ Pass' : '❌ Failed'} | ${isBlocked ? 'Cannot Extract' : hasViewport ? 'Yes' : 'No'} |
-| Schema Markup         | ${isBlocked ? '🚫 Blocked' : hasJSONLD ? '✅ Pass' : '⚠️ Warning'} | ${isBlocked ? 'Cannot Extract' : hasJSONLD ? 'Yes' : 'No'} |
-| Canonical Tag         | ${isBlocked ? '🚫 Blocked' : hasCanonical ? '✅ Pass' : '⚠️ Warning'} | ${isBlocked ? 'Cannot Extract' : hasCanonical ? 'Yes' : 'No'} |
-| Open Graph            | ${isBlocked ? '🚫 Blocked' : hasOpenGraph ? '✅ Pass' : '⚠️ Warning'} | ${isBlocked ? 'Cannot Extract' : hasOpenGraph ? 'Yes' : 'No'} |
-| Twitter Card          | ${isBlocked ? '🚫 Blocked' : hasTwitterCard ? '✅ Pass' : '⚠️ Warning'} | ${isBlocked ? 'Cannot Extract' : hasTwitterCard ? 'Yes' : 'No'} |
-| Lang Attribute        | ${isBlocked ? '🚫 Blocked' : hasLang ? '✅ Pass' : '⚠️ Warning'} | ${isBlocked ? 'Cannot Extract' : hasLang ? 'Yes' : 'No'} |
-| Favicon               | ${isBlocked ? '🚫 Blocked' : hasFavicon ? '✅ Pass' : '⚠️ Warning'} | ${isBlocked ? 'Cannot Extract' : hasFavicon ? 'Yes' : 'No'} |
-| Image Alt Text        | ${isBlocked ? '🚫 Blocked' : missingAltCount === 0 ? '✅ Pass' : '⚠️ Warning'} | ${isBlocked ? 'Cannot Extract' : missingAltCount + '/' + totalImages + ' images missing alt'} |
-| robots.txt            | ${hasRobots ? '✅ Pass' : '⚠️ Warning'} | Found: ${hasRobots ? 'Yes' : 'No'} |
-| sitemap.xml           | ${hasSitemap ? '✅ Pass' : '⚠️ Warning'} | Found: ${hasSitemap ? 'Yes' : 'No'} |
-| Internal Links        | ${isBlocked ? '🚫 Blocked' : internalLinks > 0 ? '✅ Pass' : '⚠️ Warning'} | ${isBlocked ? 'Cannot Extract' : internalLinks + ' found'} |
-| External Links        | ${isBlocked ? '🚫 Blocked' : externalLinks > 0 ? '✅ Pass' : '⚠️ Warning'} | ${isBlocked ? 'Cannot Extract' : externalLinks + ' found'} |
-| Text-to-HTML Ratio    | ${isBlocked ? '🚫 Blocked' : textToHtmlRatio >= 10 ? '✅ Pass' : '⚠️ Warning'} | ${isBlocked ? 'Cannot Extract' : textToHtmlRatio + '%'} |
-
-`;
-
-    // Add Core Web Vitals section if PageSpeed data exists
-    if (mobileScore !== null || desktopScore !== null) {
-      markdown += `4. CORE WEB VITALS & PERFORMANCE (PageSpeed Insights)
-────────────────────────────────────────────────────────────────────
-| Metric       | Mobile | Desktop | Status |
-|--------------|--------|---------|--------|
-| Performance Score | ${mobileScore !== null ? mobileScore + '/100' : 'N/A'} | ${desktopScore !== null ? desktopScore + '/100' : 'N/A'} | ${mobileScore !== null && mobileScore >= 80 ? '✅ Good' : '⚠️ Needs Improvement'} |
-| LCP          | ${coreWebVitals.mobile.lcp} | ${coreWebVitals.desktop.lcp} | ${coreWebVitals.mobile.lcp === 'N/A' ? 'N/A' : 'Target: <2.5s'} |
-| FID          | ${coreWebVitals.mobile.fid} | ${coreWebVitals.desktop.fid} | Target: <100ms |
-| CLS          | ${coreWebVitals.mobile.cls} | ${coreWebVitals.desktop.cls} | Target: <0.1 |
-| FCP          | ${coreWebVitals.mobile.fcp} | ${coreWebVitals.desktop.fcp} | Target: <1.8s |
-| TBT          | ${coreWebVitals.mobile.tbt} | ${coreWebVitals.desktop.tbt} | Target: <200ms |
-
-`;
-    } else {
-      markdown += `4. CORE WEB VITALS & PERFORMANCE
-────────────────────────────────────────────────────────────────────
-PageSpeed Insights data not available. Basic performance indicators:
-- Response Time: ${responseTime}ms (Target < 1500ms)
-- Page Size: ${pageSizeKb}KB (Target < 2000KB)
-`;
-    }
-
-    markdown += `
-5. CRITICAL ISSUES & WARNINGS
-────────────────────────────────────────────────────────────────────
-`;
-
-    if (criticalIssues.length > 0) {
-      markdown += `**🔴 Critical Issues (Must Fix - Week 1):**\n`;
-      criticalIssues.forEach((issue, i) => markdown += `${i + 1}. ${issue}\n`);
+    // Competitor Benchmarking
+    if (competitors.length > 0) {
+      markdown += `4. COMPETITOR BENCHMARKING\n────────────────────────────────────────────────────────────────────\n`;
+      markdown += `We analyzed top competitors ranking for your brand queries.\n\n`;
+      markdown += `| Competitor | Estimated Technical Score | Missing Checks |\n|---|---|---|\n`;
+      competitors.forEach(comp => {
+        markdown += `| [${comp.domain}](${comp.link}) | ${comp.score}/100 | ${comp.missingChecks.join(', ')} |\n`;
+      });
       markdown += `\n`;
-    } else {
-      markdown += `**No critical issues found. Great!**\n\n`;
-    }
-    if (warnings.length > 0) {
-      markdown += `**🟡 Warnings (Should Fix - Week 1):**\n`;
-      warnings.forEach((issue, i) => markdown += `${i + 1}. ${issue}\n`);
-      markdown += `\n`;
-    } else {
-      markdown += `**No warnings.**\n\n`;
+      markdown += `**Gap Analysis:** Your score is ${overallScore}, competitors average ${Math.round(competitors.reduce((sum, c) => sum + c.score, 0) / competitors.length)}. Focus on the missing elements listed above to close the gap.\n\n`;
     }
 
-    markdown += `6. RECOMMENDED ACTION PLAN - 7 Day Roadmap
-────────────────────────────────────────────────────────────────────
-**Week 1 - Critical Fixes [Impact: +${Math.min(40, totalScore < 40 ? 40 : 20)} Points]**
-1.  ${titleTag === 'MISSING' ? 'Add Title Tag: "Your Main Keyword Here | 2026 Best Solutions"' : 'Title Tag is present, optimize for keyword targeting.'}
-2.  ${h1Count === 0 ? 'Add H1 Tag: "Your Main Keyword: Premium Solutions Delivered Fast in 2026"' : 'H1 found, ensure it includes primary keyword.'}
-3.  ${metaDescription === 'MISSING' ? 'Add Meta Description: "Get the best solutions in 2026. Fast, reliable, and trusted by thousands."' : 'Meta description present, improve CTR with compelling copy.'}
-4.  ${!hasViewport ? 'Add viewport meta tag for mobile.' : 'Viewport is set, verify mobile rendering.'}
+    // Priority Action Plan
+    markdown += `5. PRIORITY ACTION PLAN (30/60/90 DAYS)\n────────────────────────────────────────────────────────────────────\n`;
+    markdown += `**Week 1 (Critical Fixes – Immediate ROI):**\n`;
+    checks.filter(c => !c.passed && c.impactScore >= 7).forEach(c => {
+      markdown += `- ${c.name}: ${c.recommendation} (Effort: ${c.effort})\n`;
+    });
+    markdown += `\n**Weeks 2-4 (Technical Foundation):**\n`;
+    checks.filter(c => !c.passed && c.impactScore >= 4 && c.impactScore < 7).forEach(c => {
+      markdown += `- ${c.name}: ${c.recommendation} (Effort: ${c.effort})\n`;
+    });
+    markdown += `\n**Months 2-3 (Optimization & Scale):**\n`;
+    checks.filter(c => !c.passed && c.impactScore < 4).forEach(c => {
+      markdown += `- ${c.name}: ${c.recommendation} (Effort: ${c.effort})\n`;
+    });
+    markdown += `\n`;
 
-**Week 1 - Technical Fixes [Impact: +15 Points]**
-5.  ${hasRobots ? 'robots.txt found.' : 'Create robots.txt file and submit to Google Search Console'}
-6.  ${hasSitemap ? 'sitemap.xml found.' : 'Create sitemap.xml file and submit to Google Search Console'}
-7.  ${hasCanonical ? 'Canonical tag present.' : 'Add Canonical Tag to all pages: <link rel="canonical" href="...">'}
-8.  ${hasJSONLD ? 'Schema markup present.' : 'Add Schema.org JSON-LD markup for your business'}
+    // Revenue Impact Estimates
+    markdown += `6. REVENUE IMPACT ESTIMATES\n────────────────────────────────────────────────────────────────────\n`;
+    markdown += `Our analysis indicates the following estimated monthly revenue impact due to unfixed technical issues:\n\n`;
+    markdown += `- High-impact missing elements: ${highImpactMissing}, estimated traffic loss: ${highImpactMissing * 500} visits/month.\n`;
+    markdown += `- Medium-impact missing elements: ${mediumImpactMissing}, estimated additional traffic loss: ${mediumImpactMissing * 200} visits/month.\n`;
+    markdown += `- Assuming a conservative 2% conversion rate and average order value of $100, **estimated monthly revenue loss: $${estimatedRevenueLossMonthly.toLocaleString()}**.\n\n`;
+    markdown += `*This is a modeled estimate based on typical industry benchmarks. Actual figures may vary.*\n\n`;
 
-**Week 1 - Security Fixes [Impact: +10 Points]**
-9.  ${securityHeaders['X-Frame-Options'] ? 'X-Frame-Options set.' : 'Add X-Frame-Options header to prevent clickjacking.'}
-10. ${securityHeaders['X-Content-Type-Options'] ? 'X-Content-Type-Options set.' : 'Add X-Content-Type-Options: nosniff header.'}
-11. ${securityHeaders['Strict-Transport-Security'] ? 'HSTS set.' : 'Add Strict-Transport-Security header.'}
-12. ${securityHeaders['Content-Security-Policy'] ? 'CSP set.' : 'Add Content-Security-Policy header.'}
+    // Evidence & Methodology
+    markdown += `7. EVIDENCE & METHODOLOGY\n────────────────────────────────────────────────────────────────────\n`;
+    markdown += `**Methodology:** We performed a live crawl of ${websiteUrl} on ${auditTimestamp}, analyzing raw HTML, HTTP headers, auxiliary files, and performance data.\n`;
+    markdown += `**Evidence Summary:**\n`;
+    markdown += `- Page Fetch: HTTP ${status || 'Failed'} | ${responseTime}ms | ${pageSizeKb}KB downloaded.\n`;
+    markdown += `- robots.txt: ${hasRobots ? 'Found' : 'Not Found'}\n`;
+    markdown += `- sitemap.xml: ${hasSitemap ? 'Found' : 'Not Found'}\n`;
+    markdown += `- Security Headers: ${Object.values(securityHeaders).every(v => v === '') ? 'None present' : 'Partial presence detected'}.\n`;
+    markdown += `- PageSpeed: Mobile ${mobileScore !== null ? mobileScore + '/100' : 'N/A'} | Desktop ${desktopScore !== null ? desktopScore + '/100' : 'N/A'}\n\n`;
 
-> **ESTIMATED RESULT:** Score ${totalScore} → ${Math.min(100, totalScore + 45)}+ | Traffic potential +300% | Indexation +5x
+    markdown += `**Scoring Model:** Based on weighted business impact categories: On-Page (25%), Technical (20%), Performance (20%), Security (15%), Mobile/UX (10%), Structured Data (10%). Each check has an impact score (1-10) and effort level. Score reflects the percentage of critical impact items that are compliant.\n\n`;
+    markdown += `**Disclaimer:** This is a static analysis and does not include JavaScript rendering or field data. For a complete audit, a full site crawl is recommended.\n\n`;
 
-7. MOBILE FRIENDLINESS & SPEED OPTIMIZATION
-────────────────────────────────────────────────────────────────────
-- ✅ Responsive viewport detected.
-- ${mobileScore !== null ? `Mobile performance score: ${mobileScore}/100` : 'Mobile performance score not available.'}
-- ${desktopScore !== null ? `Desktop performance score: ${desktopScore}/100` : 'Desktop performance score not available.'}
-- Core Web Vitals targets: LCP < 2.5s, FID < 100ms, CLS < 0.1.
-- Recommendations: Optimize images, implement lazy loading, reduce JavaScript execution, enable compression, use a CDN, and prioritize above-the-fold content.
+    markdown += `════════════════════════════════════════════════════════════════════\nThis report is generated by MusePRO Senior Research Division.\n════════════════════════════════════════════════════════════════════`;
 
-8. ON-PAGE OPTIMIZATION CHECKLIST
-────────────────────────────────────────────────────────────────────
-1.  Ensure the main target keyword is in the H1 tag.
-2.  Optimize meta titles with primary keywords and 2026 date.
-3.  Add clear, descriptive alt text to all images.
-4.  Implement structured data (Schema.org) for rich snippets.
-5.  Ensure mobile responsiveness is flawless.
-6.  Fix all internal broken links (404 errors).
-7.  Improve page load speed to under 1.5 seconds.
-8.  Add a 'Last Updated' date to signal freshness.
-9.  Optimize URL structure to be short and keyword-focused.
-10. Add breadcrumb navigation for better indexing.
-11. Ensure all internal links have descriptive anchor text.
-12. Implement FAQ schema for informational queries.
-13. Avoid intrusive pop-ups that hurt Core Web Vitals.
-14. Ensure the site is fully crawlable (no 'noindex' on important pages).
-15. Add a table of contents for long-form articles.
-
-9. GROWTH ACCELERATORS
-────────────────────────────────────────────────────────────────────
-1.  Implement AMP (Accelerated Mobile Pages) for mobile-first indexing.
-2.  Build a real-time uptime monitoring dashboard to catch issues early.
-3.  Optimize for voice search with natural language processing.
-4.  Use a CDN to improve global loading times.
-5.  Automate weekly technical audits to stay ahead of algorithm updates.
-
-10. DATA CREDIBILITY & SOURCES
-════════════════════════════════════════════════════════════════════
-**Methodology:** This audit is based on a live HTTP request to the target URL (${websiteUrl}) at ${auditTimestamp}. We used a standard browser User-Agent and analyzed raw HTML, HTTP headers, and auxiliary files (robots.txt, sitemap.xml) where available. PageSpeed Insights API was used for Core Web Vitals and performance scoring.
-
-**Evidence Summary:**
-- **Page Fetch:** HTTP ${status || 'Failed'} | ${responseTime}ms | ${pageSizeKb}KB downloaded.
-- **robots.txt:** ${hasRobots ? 'Found' : 'Not Found'} | ${robotsContent ? 'Snippet: "' + robotsContent.replace(/\n/g, ' ') + '"' : 'N/A'}
-- **sitemap.xml:** ${hasSitemap ? 'Found' : 'Not Found'} | ${sitemapContent ? 'Snippet: "' + sitemapContent.replace(/\n/g, ' ') + '"' : 'N/A'}
-- **Security Headers:** ${Object.values(securityHeaders).every(v => v === '') ? 'None present' : 'Partial presence detected'}.
-
-**Scoring Model:** Based on industry best practices and Google's technical SEO guidelines. Categories: Infrastructure (30%), On-Page (30%), Technical (20%), Security (20%). Each missing element reduces the score accordingly.
-
-**Disclaimer:** This is a static analysis and may not reflect dynamic rendering or field data. For a complete audit, a full site crawl and field performance monitoring are recommended.
-
-════════════════════════════════════════════════════════════════════
-
-METHODOLOGY & SOURCES
-════════════════════════════════════════════════════════════════════
-This audit is based on comprehensive primary and secondary research conducted on ${today} from:
-
-• Live Search Engine Results (SERP) via Google Search Index
-• Technical Check & Site Health Audit via MusePRO Proprietary Database
-• 12-Month Search Trend & Seasonality via Google Trends
-• PageSpeed Insights API for Core Web Vitals and Performance
-• Strategic Synthesis & Market Insights by MusePRO Senior Research Division
-════════════════════════════════════════════════════════════════════
-`;
-
-    // Save report with type 'seo' and subtype 'technical'
+    // Save report (type 'seo' with subtype 'technical-business')
     const report = await Report.create({
       type: 'seo',
       niche: `Technical Audit: ${parsedUrl.hostname}`,
       country,
-      value: '$99',
+      value: '$299', // increase price reflecting premium service
       data: {
         websiteUrl,
-        score: totalScore,
+        score: overallScore,
         responseTime,
         status,
         hasSSL,
@@ -482,33 +579,28 @@ This audit is based on comprehensive primary and secondary research conducted on
         metaDescription,
         pageSizeKb,
         isBlocked,
-        subtype: 'technical',
+        subtype: 'technical-business',
         auditTimestamp,
-        robotsContent,
-        sitemapContent,
-        securityHeaders,
         mobileScore,
         desktopScore,
-        coreWebVitals
+        coreWebVitals,
+        checks,
+        competitors,
+        estimatedRevenueLossMonthly,
+        categoryScores,
       },
       markdown,
       charts: {},
       traffic_estimate: 0,
-      trend_summary: `Health score: ${totalScore}/100`,
+      trend_summary: `Business impact score: ${overallScore}/100`,
     });
 
-    const result = { id: report._id, ...report.toObject() };
-    res.status(201).json(result);
+    res.status(201).json({ id: report._id, ...report.toObject() });
 
   } catch (err) {
     console.error('Technical SEO Audit Error:', err);
-    if (err instanceof ZodError) {
-      return res.status(400).json({ error: err.errors });
-    }
-    return res.status(500).json({ 
-      error: 'Failed to run technical audit', 
-      details: err instanceof Error ? err.message : 'Unknown error' 
-    });
+    if (err instanceof ZodError) return res.status(400).json({ error: err.errors });
+    return res.status(500).json({ error: 'Failed to run technical audit', details: err instanceof Error ? err.message : 'Unknown error' });
   }
 };
 
