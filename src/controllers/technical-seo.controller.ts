@@ -282,6 +282,8 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
       { name: 'HSTS Header', passed: !!securityHeaders['Strict-Transport-Security'], measured: true, impactScore: 7, effort: 'Low', evidence: securityHeaders['Strict-Transport-Security'] || 'Missing', recommendation: securityHeaders['Strict-Transport-Security'] ? 'HSTS is enabled. Good.' : 'Add Strict-Transport-Security header.' },
       { name: 'Content-Security-Policy', passed: !!securityHeaders['Content-Security-Policy'], measured: true, impactScore: 6, effort: 'Medium', evidence: securityHeaders['Content-Security-Policy'] || 'Missing', recommendation: securityHeaders['Content-Security-Policy'] ? 'CSP is implemented. Good.' : 'Implement Content-Security-Policy to prevent XSS attacks.' },
       { name: 'X-Robots-Tag Header', passed: !!securityHeaders['X-Robots-Tag'], measured: true, impactScore: 4, effort: 'Low', evidence: securityHeaders['X-Robots-Tag'] || 'Missing', recommendation: securityHeaders['X-Robots-Tag'] ? 'Header is set.' : 'Add X-Robots-Tag if you need to control indexing.' },
+      { name: 'Permissions-Policy Header', passed: !!securityHeaders['Permissions-Policy'], measured: true, impactScore: 3, effort: 'Low', evidence: securityHeaders['Permissions-Policy'] || 'Missing', recommendation: securityHeaders['Permissions-Policy'] ? 'Header is set.' : 'Add Permissions-Policy header to control browser features.' },
+      { name: 'Referrer-Policy Header', passed: !!securityHeaders['Referrer-Policy'], measured: true, impactScore: 3, effort: 'Low', evidence: securityHeaders['Referrer-Policy'] || 'Missing', recommendation: securityHeaders['Referrer-Policy'] ? 'Header is set.' : 'Add Referrer-Policy header to control referrer information.' },
       { name: 'Performance Score (Mobile)', passed: mobileScore !== null && mobileScore >= 80, measured: mobileScore !== null, impactScore: 9, effort: 'High', evidence: mobileScore !== null ? `${mobileScore}/100` : 'Not measured', recommendation: mobileScore === null ? 'Performance data is not available in this audit cycle. We will provide complete speed analysis once the necessary data integration is in place.' : mobileScore < 80 ? 'Optimize images, minify CSS/JS, improve server response.' : 'Maintain current performance.' },
       { name: 'Performance Score (Desktop)', passed: desktopScore !== null && desktopScore >= 80, measured: desktopScore !== null, impactScore: 7, effort: 'Medium', evidence: desktopScore !== null ? `${desktopScore}/100` : 'Not measured', recommendation: desktopScore === null ? 'Performance data is not available in this audit cycle. We will provide complete speed analysis once the necessary data integration is in place.' : desktopScore < 80 ? 'Improve caching, reduce render-blocking resources.' : 'Good.' },
       { name: 'Image Alt Text', passed: missingAltCount === 0, measured: true, impactScore: 7, effort: 'Low', evidence: `${missingAltCount} images detected without ALT attributes`, recommendation: missingAltCount > 0 ? 'Add descriptive alt text to all images.' : 'All images have alt text.' },
@@ -300,12 +302,12 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
     };
 
     const finalCategoryMap: Record<string, AuditCheck[]> = {
-      'On-Page SEO': [checks[0], checks[1], checks[2], checks[16]], // title, meta, H1, image alt
+      'On-Page SEO': [checks[0], checks[1], checks[2], checks[18]], // title, meta, H1, image alt
       'Mobile & User Experience': [checks[3]], // viewport
       'Structured Data & Rich Results': [checks[4]],
-      'Technical Foundation': [checks[5], checks[6], checks[7], checks[17]], // canonical, robots, sitemap, internal links
-      'Security & Trust': [checks[8], checks[9], checks[10], checks[11], checks[12], checks[13], checks[14]],
-      'Performance & Core Web Vitals': [checks[15], checks[16]],
+      'Technical Foundation': [checks[5], checks[6], checks[7], checks[19]], // canonical, robots, sitemap, internal links
+      'Security & Trust': [checks[8], checks[9], checks[10], checks[11], checks[12], checks[13], checks[14], checks[15], checks[16]], // all security headers
+      'Performance & Core Web Vitals': [checks[17], checks[18]], // mobile, desktop
     };
 
     // Compute category scores
@@ -436,7 +438,7 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
         else if (c.name.includes('sitemap')) impactDescription = 'Incomplete indexing of site pages';
         else if (c.name.includes('robots')) impactDescription = 'Risk of crawl blocks or misconfigurations';
         else if (c.name.includes('HTTPS') || c.name.includes('Mixed Content')) impactDescription = 'Security warnings, trust issues';
-        else if (c.name.includes('X-Frame') || c.name.includes('X-Content') || c.name.includes('HSTS') || c.name.includes('Content-Security-Policy') || c.name.includes('X-Robots')) impactDescription = 'Security vulnerabilities, potential attacks';
+        else if (c.name.includes('X-Frame') || c.name.includes('X-Content') || c.name.includes('HSTS') || c.name.includes('Content-Security-Policy') || c.name.includes('X-Robots') || c.name.includes('Permissions-Policy') || c.name.includes('Referrer-Policy')) impactDescription = 'Security vulnerabilities, potential attacks';
         else if (c.name.includes('Performance')) impactDescription = 'Poor user experience, higher bounce rate';
         else if (c.name.includes('Image Alt')) impactDescription = 'Reduced accessibility and image search traffic';
         else if (c.name.includes('Internal Links')) impactDescription = 'Weak site architecture, crawl inefficiency';
