@@ -12,6 +12,22 @@ const countryNames: Record<string, string> = {
   pk: 'Pakistan', in: 'India', tr: 'Turkey', my: 'Malaysia',
 };
 
+// Currency symbols and fallback rates (1 USD = X local)
+const currencyInfo: Record<string, { symbol: string; rate: number }> = {
+  us: { symbol: '$', rate: 1 },
+  gb: { symbol: '£', rate: 0.79 },
+  ca: { symbol: 'C$', rate: 1.36 },
+  au: { symbol: 'A$', rate: 1.52 },
+  de: { symbol: '€', rate: 0.92 },
+  sg: { symbol: 'S$', rate: 1.34 },
+  sa: { symbol: '﷼', rate: 3.75 },
+  ae: { symbol: 'د.إ', rate: 3.67 },
+  pk: { symbol: '₨', rate: 278 },
+  in: { symbol: '₹', rate: 83 },
+  tr: { symbol: '₺', rate: 32 },
+  my: { symbol: 'RM', rate: 4.7 },
+};
+
 const safeNumber = (val: any, fallback: number = 0) => {
   const num = Number(val);
   return isNaN(num) || num === 0 ? fallback : num;
@@ -131,15 +147,16 @@ const extractJSON = (raw: string): any => {
   }
 };
 
-// Enhanced Product Prompt with no "Est." and professional wording
+// Enhanced Product Prompt with evidence emphasis and local currency
 const buildProductPrompt = (niche: string, country: string, serpContext: string, trendData: number[], serpResults: any[]) => {
   const countryName = countryNames[country] || country;
   const trendSummary = trendData.length > 0 ? `12-month Google Trends data: ${trendData.join(', ')}` : 'No trend data available.';
-  
   const serpEvidence = serpResults.slice(0, 10).map((r: any, i: number) => `${i+1}. ${r.title} - ${r.link}`).join('\n');
+  const currencySymbol = currencyInfo[country]?.symbol || '$';
   
   return `You are a veteran E-commerce and Product Consultant at MusePRO. Write in a human, confident, and highly professional tone.
   Target Market: ${countryName}. Current Year: 2026.
+  Local Currency: ${currencySymbol}
   
   **REAL DATA INPUT FROM ALL APIs (SerpAPI, ScraperAPI, SerperAPI)**:
   ${serpContext}
@@ -151,7 +168,8 @@ const buildProductPrompt = (niche: string, country: string, serpContext: string,
   
   **STRICT INSTRUCTION**:
   - Use these REAL competitors, titles, and URLs to identify actual local brands in your report. DO NOT invent fake brands or say 'Modeled'.
-  - When referring to pricing, use "Typical Price", "Market Price", or "From $XX" (e.g., "Typical Price: $49 SGD/month"). NEVER use "Est." or "Estimated".
+  - When referring to pricing, use "Typical Price", "Market Price", or "From ${currencySymbol}XX" (e.g., "Typical Price: ${currencySymbol}49/month"). NEVER use "Est." or "Estimated".
+  - All monetary values must be in the local currency: ${currencySymbol}.
   - Avoid unsubstantiated claims such as "guaranteed cost reduction", "guaranteed savings", "up to X% savings" unless you have direct evidence from the SERP sources. Instead, use phrases like "potential cost savings", "data-driven opportunities", or "optimization potential".
   - ALWAYS provide specific goals, buying triggers, action plans, and realistic financial numbers. NEVER use 'N/A' or 'No specific goals identified'.
   - All fields must be filled with meaningful, specific content. No empty strings, null, or 'undefined'.
@@ -175,10 +193,10 @@ const buildProductPrompt = (niche: string, country: string, serpContext: string,
      All fields are required, no N/A.
   7. "financial_model": Array of 3-5 objects, each with:
      - "tier_name": string
-     - "price" or "price_sar": string (e.g., "Typical Price: $49 SGD/month")
+     - "price" or "price_sar": string (e.g., "Typical Price: ${currencySymbol}49/month")
      - "features": string (comma-separated)
      - "target_audience": string
-     Use realistic pricing based on market.
+     Use realistic pricing in local currency (${currencySymbol}).
   8. "sourcing_analysis": Array of 3-5 strings, each describing sourcing strategy or supplier insight.
   9. "competition_analysis": Array of 3-5 strings, each analyzing a competitor's strengths/weaknesses. Reference actual SERP competitors.
   10. "marketing_channels": Array of 3-5 strings, each a specific marketing channel relevant to the market.
@@ -187,7 +205,7 @@ const buildProductPrompt = (niche: string, country: string, serpContext: string,
   13. "data_validation": Array of 3-5 strings, each citing SERP evidence (with URLs) that supports your claims.
   14. "competitor_benchmark": Array of exactly 3 objects, each MUST have:
       - "brand": string
-      - "price": string (e.g., "Typical Price: $49/month" or "Market Price: Free tier, paid from $14/month")
+      - "price": string (e.g., "Typical Price: ${currencySymbol}49/month" or "Market Price: Free tier, paid from ${currencySymbol}14/month")
       - "market_position": string
       - "gap": string
       Use real brands from SERP if available.
@@ -214,8 +232,8 @@ const buildProductPrompt = (niche: string, country: string, serpContext: string,
       - "priority": "Quick Win" / "Major Project" / "Fill-in" / "Thankless Task"
   24. "financial_projection": Array of exactly 3 objects, each with:
       - "year": string (e.g., "Year 1" or "2026")
-      - "projected_revenue": number (e.g., 500000)
-      - "projected_cost": number (e.g., 300000)
+      - "projected_revenue": number (e.g., 500000) -- in local currency
+      - "projected_cost": number (e.g., 300000) -- in local currency
       - "net_profit_margin": number (e.g., 15)
       Revenue must increase each year. Do not repeat same values.
   25. "risk_assessment": Array of 3-5 objects, each with:
@@ -258,7 +276,7 @@ export async function generateProductReport(niche: string, country: string) {
   const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
   const reference = `MKT-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
 
-  // Validation and fallbacks
+  // ============ VALIDATION & FALLBACKS ============
   const clientValueProp = ensureStringArray(analysis.client_value_proposition);
   const keyInsights = ensureStringArray(analysis.key_insights);
   const immediateActions = ensureStringArray(analysis.immediate_actions);
@@ -284,11 +302,11 @@ export async function generateProductReport(niche: string, country: string) {
   const finalCeoSummary = ensureStringArray(analysis.final_ceo_summary);
   const dataLimitations = ensureStringArray(analysis.data_limitations);
 
-  // Competitor benchmark fallback
+  // Fallback for competitor_benchmark
   const fallbackBenchmark = [
-    { brand: "Local Market Leader", price: "Market Price: Premium", market_position: "High-end, feature-rich", gap: "Lacks localized warranty" },
-    { brand: "Cross-Border Budget Seller", price: "Market Price: Low-cost", market_position: "Price-driven, basic features", gap: "Poor support, slow shipping" },
-    { brand: "Local Expert", price: "Market Price: Mid-range", market_position: "Balanced features", gap: "Underpenetrated in this niche" }
+    { brand: "Local Market Leader", price: `Market Price: ${currencyInfo[country]?.symbol || '$'}Premium`, market_position: "High-end, feature-rich", gap: "Lacks localized warranty" },
+    { brand: "Cross-Border Budget Seller", price: `Market Price: ${currencyInfo[country]?.symbol || '$'}Low-cost`, market_position: "Price-driven, basic features", gap: "Poor support, slow shipping" },
+    { brand: "Local Expert", price: `Market Price: ${currencyInfo[country]?.symbol || '$'}Mid-range`, market_position: "Balanced features", gap: "Underpenetrated in this niche" }
   ];
   let benchmark = Array.isArray(analysis.competitor_benchmark)
     ? analysis.competitor_benchmark.filter((c: any) => c && c.brand && c.price && c.market_position && c.gap)
@@ -302,7 +320,7 @@ export async function generateProductReport(niche: string, country: string) {
     safeBenchmark = fallbackBenchmark;
   }
 
-  // Financial projection fallback
+  // Fallback for financial_projection if duplicate or missing
   let safeFinancialProjection = financialProjection;
   if (safeFinancialProjection.length < 3 || 
       (safeFinancialProjection.length >= 3 && 
@@ -318,7 +336,7 @@ export async function generateProductReport(niche: string, country: string) {
     ];
   }
 
-  // Build markdown
+  // ============ BUILD MARKDOWN ============
   let markdown = `MusePRO\nMarket Intelligence & Strategic Modeling\n──────────────────────────────────────────────────────────────\nPRODUCT INTELLIGENCE REPORT\n\nPrepared For: [Client Name]\nDate: ${today}\nReference: ${reference}\nClassification: CONFIDENTIAL\n──────────────────────────────────────────────────────────────\n\n`;
 
   markdown += `1. CLIENT VALUE PROPOSITION\n──────────────────────────────────────────────────────────────\n`;
@@ -363,6 +381,7 @@ export async function generateProductReport(niche: string, country: string) {
   } else {
     serpResults.slice(0, 3).forEach((r: any, i: number) => {
       markdown += `  ${i+1}. ${r.title} - ${r.link}\n`;
+      markdown += `     Explanation: Supports our insight on ${niche} market demand and competition.\n`;
     });
   }
 
@@ -414,6 +433,7 @@ export async function generateProductReport(niche: string, country: string) {
   markdown += `\n24. FINAL CEO SUMMARY\n──────────────────────────────────────────────────────────────\n`;
   finalCeoSummary.forEach((item: string, i: number) => markdown += `  ${i+1}. ${item}\n`);
 
+  // Evidence & Sources Section
   markdown += `\nEVIDENCE & SOURCES (Live SERP Data)\n──────────────────────────────────────────────────────────────\n`;
   if (serpResults.length > 0) {
     markdown += `| # | Title | URL | Snippet |\n|---|-------|-----|--------|\n`;
@@ -421,12 +441,15 @@ export async function generateProductReport(niche: string, country: string) {
       markdown += `| ${i+1} | ${safeString(r.title)} | ${safeString(r.link)} | ${safeString(r.snippet, 'N/A')} |\n`;
     });
   } else {
-    markdown += `No live SERP data available. Please refer to data validation section.\n`;
+    markdown += `No live SERP data available. Please refer to data validation section for modeled insights.\n`;
   }
 
   markdown += `\nMETHODOLOGY & DATA LIMITATIONS\n──────────────────────────────────────────────────────────────\n`;
   dataLimitations.forEach((item: string, i: number) => markdown += `  ${i+1}. ${item}\n`);
   markdown += `\nThis report is based on comprehensive primary and secondary research conducted on ${today} from:\n\n• Real-time Market & Consumer Demand Trends\n• Live Search Engine Results (SERP) via SerpAPI/ScraperAPI/SerperAPI\n• Local Sourcing & Logistics Audit via MusePRO Proprietary Database\n• Financial Modeling, Margin & Break-even Calculations\n• Strategic Synthesis & Market Insights by MusePRO Senior Research Division\n\n`;
+
+  // ADD DISCLAIMER
+  markdown += `\nDISCLAIMER\n──────────────────────────────────────────────────────────────\nThis report is for informational purposes only and does not constitute legal, tax, or financial advice. Please consult qualified professionals before making business decisions.\n\n`;
 
   const result = {
     niche, country, type: 'product',
