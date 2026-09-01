@@ -13,7 +13,23 @@ const countryNames: Record<string, string> = {
   pk: 'Pakistan', in: 'India', tr: 'Turkey', my: 'Malaysia',
 };
 
-// ============ COUNTRY-SPECIFIC PUBLICATIONS ============
+// Currency symbols and fallback rates (1 USD = X local)
+const currencyInfo: Record<string, { symbol: string; rate: number }> = {
+  us: { symbol: '$', rate: 1 },
+  gb: { symbol: '£', rate: 0.79 },
+  ca: { symbol: 'C$', rate: 1.36 },
+  au: { symbol: 'A$', rate: 1.52 },
+  de: { symbol: '€', rate: 0.92 },
+  sg: { symbol: 'S$', rate: 1.34 },
+  sa: { symbol: '﷼', rate: 3.75 },
+  ae: { symbol: 'د.إ', rate: 3.67 },
+  pk: { symbol: '₨', rate: 278 },
+  in: { symbol: '₹', rate: 83 },
+  tr: { symbol: '₺', rate: 32 },
+  my: { symbol: 'RM', rate: 4.7 },
+};
+
+// Local publications fallback (country-specific)
 const localPublications: Record<string, { site: string; type: string; contact: string; pitch: string }[]> = {
   us: [
     { site: 'Search Engine Journal', type: 'SEO Publication', contact: 'editor@searchenginejournal.com', pitch: 'Data-driven analysis on niche SEO strategies for 2026.' },
@@ -44,9 +60,9 @@ const localPublications: Record<string, { site: string; type: string; contact: s
     { site: 'Dynamic Business', type: 'SME Business Portal', contact: 'editor@dynamicbusiness.com.au', pitch: 'Guide on navigating GST and consumer law for dropshipping.' }
   ],
   de: [
-    { site: 'Gründerdaily', type: 'Startup News', contact: 'redaktion@gruenderdaily.de', pitch: 'Data-driven article on German e-commerce trends.' },
-    { site: 'OnlineMarketing.de', type: 'Marketing Publication', contact: 'redaktion@onlinemarketing.de', pitch: 'Expert guide on SEO strategies for German SMEs.' },
     { site: 't3n', type: 'Tech & Digital News', contact: 'redaktion@t3n.de', pitch: 'Thought leadership on digital marketing and AI.' },
+    { site: 'OnlineMarketing.de', type: 'Marketing Publication', contact: 'redaktion@onlinemarketing.de', pitch: 'Expert guide on SEO strategies for German SMEs.' },
+    { site: 'Gründerdaily', type: 'Startup News', contact: 'redaktion@gruenderdaily.de', pitch: 'Data-driven article on German e-commerce trends.' },
     { site: 'Gruenderszene', type: 'Startup Magazine', contact: 'redaktion@gruenderszene.de', pitch: 'Case study on Berlin startups and e-commerce.' },
     { site: 'Internet World', type: 'Business & E-commerce', contact: 'redaktion@internetworld.de', pitch: 'Guide on cross-border e-commerce and SEO.' }
   ],
@@ -202,30 +218,37 @@ async function mapWithConcurrency<T>(items: T[], limit: number, fn: (item: T) =>
   return Promise.all(results);
 }
 
-// Enhanced SEO Prompt
+// Enhanced SEO Prompt with case studies
 const buildSEOPrompt = (niche: string, country: string, serpLinks: string[], trendData: number[], serpResults: any[]) => {
   const countryName = countryNames[country] || country;
   const trendSummary = trendData.length > 0 ? `12-month Google Trends data: ${trendData.join(', ')}` : 'No trend data available.';
   const serpEvidence = serpResults.slice(0, 10).map((r: any, i: number) => `${i+1}. ${r.title} - ${r.link}`).join('\n');
+  const currencySymbol = currencyInfo[country]?.symbol || '$';
   
   return `You are a senior SEO strategist at a top-tier digital agency. Write in a highly professional, consultative tone.
   Target Market: ${countryName}. Current Year: 2026.
+  Local Currency: ${currencySymbol}
   **Return ONLY a valid JSON object. No markdown blocks, no extra text.**
   
   **STRICT INSTRUCTIONS**:
-  1. CPC must be between $0.50 and $8.00, realistic and varied for each keyword. NEVER use the same CPC for multiple keywords.
-  2. Keyword volumes must be realistic and varied: range from 50 to 5000, NOT sequential or linearly increasing.
+  1. CPC must be between ${currencySymbol}0.50 and ${currencySymbol}8.00 (or equivalent local currency), realistic and varied for each keyword. NEVER use the same CPC for multiple keywords.
+  2. Keyword volumes must be realistic and varied: range from 50 to 5000.
   3. SERP landscape 'traffic' values must be realistic and varied: range from 100 to 50000.
   4. Content roadmap 'expected_traffic' must be varied: range from 200 to 3000.
   5. If real local websites are missing, DO NOT invent fake sites. Say: 'SERP data currently unavailable. Focus on actionable strategies.'
   6. Strict Country Lock: Do not mention US, UK, or other countries unless they are the target country (${countryName}). Stay localized.
   7. For 'content_roadmap', each 'title' must be a plain string WITHOUT 'Week X:' prefixed, and must NOT start with 'How to How to'.
-  8. For 'link_acquisition', you MUST generate 5 highly realistic local publications relevant to ${niche} in ${countryName}. Use actual local media, tech blogs, industry portals. Provide a specific outreach pitch.
+  8. For 'link_acquisition', generate 5 highly realistic local publications relevant to ${niche} in ${countryName}. Use actual local media, tech blogs, industry portals. Provide a specific outreach pitch.
   9. For 'guest_post_topics', provide 5 detailed guest post topics.
   10. For 'serp_landscape', each object must include a 'gap' field with specific opportunity.
   11. For 'data_validation', cite exactly 3 SERP sources with URLs and brief explanation.
   12. NEVER use "Est." or "Estimated". Use "Approx.", "Typical", "Market Price".
-  13. All arrays must be filled with meaningful, varied content. No empty strings or 'undefined'.
+  13. For 'case_studies', provide 2-3 concise case studies. Each case study must have:
+      - "title": string
+      - "challenge": string (problem faced)
+      - "solution": string (what was done)
+      - "results": string (outcome with metrics in local currency if applicable)
+  14. All monetary values should be in local currency (${currencySymbol}).
 
   **Google Trends Data (12 months)**: ${trendSummary}
   **Top SERP Evidence (Titles & URLs)**:
@@ -250,9 +273,10 @@ const buildSEOPrompt = (niche: string, country: string, serpLinks: string[], tre
   - swot_analysis: array of 4 objects with { type, points }
   - action_priority_matrix: array of 4-5 objects with { task, impact, effort, priority }
   - risk_assessment: array of 3-5 objects with { risk_factor, impact_level, mitigation_strategy }
-  - financial_projection: array of 3 strings with 'Modeled Estimate' mention
+  - financial_projection: array of 3 strings with 'Modeled Estimate' mention, in local currency
   - final_ceo_summary: array of 3 strings
   - data_limitations: array of 3 strings
+  - case_studies: array of 2-3 objects with { title, challenge, solution, results }
 
   Provide the JSON directly without any markdown formatting.`;
 };
@@ -282,6 +306,9 @@ export async function generateSEOReport(niche: string, country: string) {
   const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
   const reference = `MKT-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
 
+  // Currency info
+  const currency = currencyInfo[country] || { symbol: '$', rate: 1 };
+
   // ============ VALIDATION & FALLBACKS ============
   const clientValueProp = ensureStringArray(analysis.client_value_proposition);
   const keyInsights = ensureStringArray(analysis.key_insights);
@@ -299,33 +326,35 @@ export async function generateSEOReport(niche: string, country: string) {
   const riskAssessment = ensureStringArray(analysis.risk_assessment);
   const financialProjection = ensureStringArray(analysis.financial_projection);
   const dataValidation = ensureStringArray(analysis.data_validation);
+  const caseStudies = Array.isArray(analysis.case_studies) ? analysis.case_studies : [];
 
   // Keywords processing with realistic fallbacks
   let keywords = Array.isArray(analysis.keywords) ? analysis.keywords : [];
-  const currencyMap: Record<string, string> = { us: 'USD', gb: 'GBP', ca: 'CAD', au: 'AUD', de: 'EUR', sg: 'SGD', sa: 'SAR', ae: 'AED', pk: 'PKR', in: 'INR', tr: 'TRY', my: 'MYR' };
-  const targetCurrency = currencyMap[country] || 'USD';
   
   keywords = keywords.map((kw: any, i: number) => ({
     keyword: safeString(kw.keyword, `${niche} ${i+1}`),
     volume: safeNumber(kw.volume, Math.floor(Math.random() * 5000) + 100),
-    cpc: safeNumber(kw.cpc, Math.random() * 7 + 0.5),
+    cpc: safeNumber(kw.cpc, Math.random() * 7 + 0.5), // USD fallback, will convert
     kd: safeNumber(kw.kd, Math.floor(Math.random() * 50) + 10),
     intent: safeString(kw.intent, ['informational', 'commercial', 'transactional', 'navigational'][i % 4]),
     potential: safeString(kw.potential, 'Easy Win')
   }));
 
-  // Currency conversion with fallback
+  // Currency conversion with robust fallback
   keywords = await mapWithConcurrency(keywords, 5, async (kw: any) => {
     try {
-      const originalCpc = kw.cpc;
-      let cpc = await convertCurrency(originalCpc, 'USD', targetCurrency);
-      if (!cpc || isNaN(cpc) || cpc <= 0) {
-        cpc = originalCpc;
+      const originalCpcUsd = kw.cpc;
+      let cpcLocal = await convertCurrency(originalCpcUsd, 'USD', country.toUpperCase());
+      if (!cpcLocal || isNaN(cpcLocal) || cpcLocal <= 0) {
+        // Fallback to static rate
+        cpcLocal = originalCpcUsd * currency.rate;
       }
-      if (cpc > 12) cpc = 12; // Cap at realistic max
-      kw.cpc = Number(cpc.toFixed(2));
+      // Cap at realistic max (e.g., 20 units)
+      if (cpcLocal > 20) cpcLocal = 20;
+      kw.cpc = Number(cpcLocal.toFixed(2));
     } catch (error) {
-      console.warn(`Currency conversion failed for "${kw.keyword}"`);
+      // Use static rate
+      kw.cpc = Number((kw.cpc * currency.rate).toFixed(2));
     }
     return kw;
   });
@@ -395,16 +424,15 @@ export async function generateSEOReport(niche: string, country: string) {
   if (analysis.link_acquisition?.target_sites && Array.isArray(analysis.link_acquisition.target_sites)) {
     targetSites = analysis.link_acquisition.target_sites.filter((s: any) => 
       s.site && s.site !== 'N/A' && 
-      !s.site.includes('Journal') && !s.site.includes('Review') && 
-      !s.site.toLowerCase().includes(niche.toLowerCase()) &&
       !s.site.includes('Local Business Journal') &&
       !s.site.includes('Tech Times') &&
       !s.site.includes('Marketing Weekly') &&
-      !s.site.includes('Web Designer Hub')
+      !s.site.includes('Web Designer Hub') &&
+      !s.site.toLowerCase().includes(niche.toLowerCase())
     );
   }
   if (targetSites.length < 5) {
-    const countryPubs = localPublications[country] || localPublications['default'] || localPublications['us'];
+    const countryPubs = localPublications[country] || localPublications['us'];
     targetSites = countryPubs.slice(0, 5);
   }
   const guestPosts = ensureStringArray(analysis.link_acquisition?.guest_post_topics);
@@ -444,11 +472,11 @@ export async function generateSEOReport(niche: string, country: string) {
   ];
   const safeRisk = riskAssessment.length > 0 ? riskAssessment : riskFallback;
 
-  // Financial projection fallback
+  // Financial projection fallback (in local currency symbol)
   const financialFallback = [
-    "Expected 150% increase in organic leads within 6 months, translating to estimated 45,000 local currency in monthly service revenue (Modeled Estimate).",
-    "Acquisition cost per lead projected to decrease by 40% as organic authority builds (Modeled Estimate).",
-    "A Modeled Estimate indicates a 1.8% improvement in conversion rates from reducing site errors, significantly boosting overall ROI."
+    `Expected 150% increase in organic leads within 6 months, translating to estimated ${currency.symbol}45,000 monthly service revenue (Modeled Estimate).`,
+    `Acquisition cost per lead projected to decrease by 40% as organic authority builds (Modeled Estimate).`,
+    `A Modeled Estimate indicates a 1.8% improvement in conversion rates from reducing site errors, significantly boosting overall ROI.`
   ];
   const safeFinancial = financialProjection.length > 0 ? financialProjection : financialFallback;
 
@@ -465,10 +493,10 @@ export async function generateSEOReport(niche: string, country: string) {
   immediateActions.slice(0, 3).forEach((w: string, i: number) => markdown += `  ${i+1}. ${w}\n`);
   markdown += `\n3. TREND ASSESSMENT\n──────────────────────────────────────────────────────────────\n${analysis.trend_assessment || 'Steady market growth.'}\n\n`;
 
-  markdown += `4. KEYWORD OPPORTUNITIES (TOP 50)\n──────────────────────────────────────────────────────────────\n| # | Keyword | Volume | KD | CPC | Intent | Potential |\n|---|---------|--------|-----|-----|--------|----------|\n`;
+  markdown += `4. KEYWORD OPPORTUNITIES (TOP 50)\n──────────────────────────────────────────────────────────────\n| # | Keyword | Volume | KD | CPC (${currency.symbol}) | Intent | Potential |\n|---|---------|--------|-----|-----|--------|----------|\n`;
   keywords.slice(0, 50).forEach((k: any, i: number) => {
     const potential = k.kd < 30 ? 'Easy Win' : k.kd < 60 ? 'Moderate' : 'Long Game';
-    markdown += `| ${i+1} | ${k.keyword} | ${safeNumber(k.volume, 300)} | ${safeNumber(k.kd, 20)} | $${safeNumber(k.cpc, 1.5).toFixed(2)} | ${k.intent || 'informational'} | ${potential} |\n`;
+    markdown += `| ${i+1} | ${k.keyword} | ${safeNumber(k.volume, 300)} | ${safeNumber(k.kd, 20)} | ${currency.symbol}${safeNumber(k.cpc, 1.5).toFixed(2)} | ${k.intent || 'informational'} | ${potential} |\n`;
   });
 
   markdown += `\n5. SERP LANDSCAPE\n──────────────────────────────────────────────────────────────\n`;
@@ -534,7 +562,20 @@ export async function generateSEOReport(niche: string, country: string) {
   finalCeoSummary.forEach((item, i) => markdown += `  ${i+1}. ${item}\n`);
   markdown += `\n`;
 
-  markdown += `19. DATA LIMITATIONS & ASSUMPTIONS\n──────────────────────────────────────────────────────────────\n`;
+  // Case Studies Section
+  markdown += `19. CASE STUDIES\n──────────────────────────────────────────────────────────────\n`;
+  if (caseStudies.length > 0) {
+    caseStudies.forEach((cs: any, i: number) => {
+      markdown += `Case Study ${i+1}: ${safeString(cs.title)}\n`;
+      markdown += `  Challenge: ${safeString(cs.challenge)}\n`;
+      markdown += `  Solution: ${safeString(cs.solution)}\n`;
+      markdown += `  Results: ${safeString(cs.results)}\n\n`;
+    });
+  } else {
+    markdown += `No case studies provided.\n\n`;
+  }
+
+  markdown += `20. DATA LIMITATIONS & ASSUMPTIONS\n──────────────────────────────────────────────────────────────\n`;
   dataLimitations.forEach((item, i) => markdown += `  ${i+1}. ${item}\n`);
   markdown += `\n`;
 
