@@ -1,11 +1,11 @@
 // seo.report.generator.ts
 import { cacheService } from './cache';
 import { getGoogleTrends } from './trends';
-import { getSearchResults, getKeywordSuggestions } from './serpapi'; // SerpAPI
-import { getSerperResults } from './serper'; // Serper
-import { getScraperAPISearch } from './scraperapi'; // (optional fallback)
+import { getSearchResults, getKeywordSuggestions } from './serpapi';
+import { getSerperResults } from './serper';
+import { getScraperAPISearch } from './scraperapi';
 import { convertCurrency } from './exchange';
-import { runGroqWithRetry } from './groq'; // Gemini via Groq
+import { runGroqWithRetry } from './groq';
 
 const countryNames: Record<string, string> = {
   us: 'United States', gb: 'United Kingdom', ca: 'Canada', au: 'Australia',
@@ -13,7 +13,7 @@ const countryNames: Record<string, string> = {
   pk: 'Pakistan', in: 'India', tr: 'Turkey', my: 'Malaysia',
 };
 
-// Realistic local publications per country
+// ============ COUNTRY-SPECIFIC PUBLICATIONS ============
 const localPublications: Record<string, { site: string; type: string; contact: string; pitch: string }[]> = {
   us: [
     { site: 'Search Engine Journal', type: 'SEO Publication', contact: 'editor@searchenginejournal.com', pitch: 'Data-driven analysis on niche SEO strategies for 2026.' },
@@ -29,6 +29,13 @@ const localPublications: Record<string, { site: string; type: string; contact: s
     { site: 'Econsultancy', type: 'Digital Marketing', contact: 'editor@econsultancy.com', pitch: 'Expert guide on SEO and conversion optimization.' },
     { site: 'TechRadar', type: 'Tech News', contact: 'editor@techradar.com', pitch: 'How-to article on technical SEO.' }
   ],
+  ca: [
+    { site: 'Search Engine Journal Canada', type: 'SEO Publication', contact: 'editor@searchenginejournal.ca', pitch: 'Localized SEO insights for Canadian businesses.' },
+    { site: 'BetaKit', type: 'Tech & Startup News', contact: 'editor@betakit.com', pitch: 'Data-driven analysis on Canadian e-commerce trends.' },
+    { site: 'The Globe and Mail (Report on Business)', type: 'Business News', contact: 'rob@globeandmail.com', pitch: 'Thought leadership on digital marketing ROI.' },
+    { site: 'Canadian Business', type: 'Business Magazine', contact: 'editor@canadianbusiness.com', pitch: 'Case study on Canadian startup growth.' },
+    { site: 'Marketing Mag', type: 'Marketing Publication', contact: 'editor@marketingmag.ca', pitch: 'Expert advice on SEO trends in Canada.' }
+  ],
   au: [
     { site: 'Startup Daily', type: 'Tech & Startup Portal', contact: 'editor@startupdaily.net', pitch: 'Exclusive data-backed study on Australian e-commerce trends.' },
     { site: 'SmartCompany', type: 'SME Business Publication', contact: 'editorial@smartcompany.com.au', pitch: 'Case study on Australian entrepreneur scaling with organic TikTok.' },
@@ -36,12 +43,26 @@ const localPublications: Record<string, { site: string; type: string; contact: s
     { site: 'Inside Retail Australia', type: 'Retail Industry Publication', contact: 'news@insideretail.com.au', pitch: 'Expert commentary on micro-warehousing impact.' },
     { site: 'Dynamic Business', type: 'SME Business Portal', contact: 'editor@dynamicbusiness.com.au', pitch: 'Guide on navigating GST and consumer law for dropshipping.' }
   ],
-  tr: [
-    { site: 'Webrazzi', type: 'Tech Portal', contact: 'editor@webrazzi.com', pitch: 'Data-driven guest post on Turkish e-commerce SEO.' },
-    { site: 'ShiftDelete.Net', type: 'Tech Blog', contact: 'icerik@shiftdelete.net', pitch: 'Comprehensive guide on fixing browser rendering bugs.' },
-    { site: 'CHIP Online Turkey', type: 'Tech Magazine', contact: 'editor@chip.com.tr', pitch: 'Article on security implications of unpatched bugs.' },
-    { site: 'DonanımHaber', type: 'Tech Forum & News', contact: 'haber@donanimhaber.com', pitch: 'Walkthrough of resolving database connection errors.' },
-    { site: 'Log.com.tr', type: 'Digital Culture & Tech', contact: 'iletisim@log.com.tr', pitch: 'Infographic-rich article on mobile web performance.' }
+  de: [
+    { site: 'Gründerdaily', type: 'Startup News', contact: 'redaktion@gruenderdaily.de', pitch: 'Data-driven article on German e-commerce trends.' },
+    { site: 'OnlineMarketing.de', type: 'Marketing Publication', contact: 'redaktion@onlinemarketing.de', pitch: 'Expert guide on SEO strategies for German SMEs.' },
+    { site: 't3n', type: 'Tech & Digital News', contact: 'redaktion@t3n.de', pitch: 'Thought leadership on digital marketing and AI.' },
+    { site: 'Gruenderszene', type: 'Startup Magazine', contact: 'redaktion@gruenderszene.de', pitch: 'Case study on Berlin startups and e-commerce.' },
+    { site: 'Internet World', type: 'Business & E-commerce', contact: 'redaktion@internetworld.de', pitch: 'Guide on cross-border e-commerce and SEO.' }
+  ],
+  sg: [
+    { site: 'e27', type: 'Tech & Startup Portal', contact: 'editor@e27.co', pitch: 'Exclusive data on Singapore e-commerce sourcing trends.' },
+    { site: 'Vulcan Post', type: 'Business & Startup Media', contact: 'team@vulcanpost.com', pitch: 'Case study on Singaporean entrepreneurs using local SEO.' },
+    { site: 'SGSME.sg', type: 'SME Business Portal', contact: 'editor@sgsme.sg', pitch: 'Guide on digital marketing for Singapore SMEs.' },
+    { site: 'Marketing Interactive', type: 'Marketing Publication', contact: 'editor@marketing-interactive.com', pitch: 'Expert commentary on Southeast Asian e-commerce.' },
+    { site: 'The Business Times (SME)', type: 'Business News', contact: 'btnews@sph.com.sg', pitch: 'Thought leadership on cross-border logistics and sourcing.' }
+  ],
+  sa: [
+    { site: 'Arab News', type: 'Mainstream Media', contact: 'editor@arabnews.com', pitch: 'Exclusive editorial on Saudi e-commerce growth.' },
+    { site: 'Saudi Gazette', type: 'News Portal', contact: 'editor@saudigazette.com.sa', pitch: 'Thought-leadership piece on digital transformation.' },
+    { site: 'Argaam', type: 'Business News', contact: 'editor@argaam.com', pitch: 'Data-driven analysis on Saudi market trends.' },
+    { site: 'Wamda', type: 'Startup & Tech', contact: 'editor@wamda.com', pitch: 'Case study on Saudi startups using SEO.' },
+    { site: 'MENAbytes', type: 'Tech News', contact: 'editor@menabytes.com', pitch: 'Guide on e-commerce and digital marketing in KSA.' }
   ],
   ae: [
     { site: 'Gulf News', type: 'Mainstream Media', contact: 'editorial@gulfnews.com', pitch: 'Exclusive editorial on AI adoption in UAE SMEs.' },
@@ -50,19 +71,33 @@ const localPublications: Record<string, { site: string; type: string; contact: s
     { site: 'Arabian Business', type: 'Business Publication', contact: 'features@arabianbusiness.com', pitch: 'Executive analysis of ROI from SEO investments.' },
     { site: 'Wired Middle East', type: 'Tech Media', contact: 'editor@wired.me', pitch: 'Deep dive into localized Arabic SEO strategies.' }
   ],
-  my: [
-    { site: 'SoyaCincau', type: 'Tech & Lifestyle Portal', contact: 'editor@soyacincau.com', pitch: 'Exclusive data-driven study on rising digital economy in Malaysia.' },
-    { site: 'Vulcan Post', type: 'Business & Startup Media', contact: 'team@vulcanpost.com', pitch: 'Case study of Malaysian Gen-Z creator building five-figure income using local affiliate networks.' },
-    { site: 'Digital News Asia', type: 'Tech News & Business', contact: 'editor@digitalnewsasia.com', pitch: 'Analytical piece on bilingual content strategies for local publishers.' },
-    { site: 'TechNave', type: 'Tech & Gadget Portal', contact: 'feedback@technave.com', pitch: 'Guide on essential digital tools for Malaysian bloggers.' },
-    { site: 'Rakyat Post', type: 'General & Lifestyle News', contact: 'editorial@therakyatpost.com', pitch: 'Lifestyle article on side-hustle blogging in Malaysia.' }
+  pk: [
+    { site: 'Profit by Pakistan Today', type: 'Business News', contact: 'editor@profit.pakistantoday.com.pk', pitch: 'Data-driven analysis on Pakistani e-commerce.' },
+    { site: 'TechJuice', type: 'Tech & Startup', contact: 'editor@techjuice.pk', pitch: 'Case study on Pakistani startups using SEO.' },
+    { site: 'Dawn (Business)', type: 'Mainstream Media', contact: 'business@dawn.com', pitch: 'Thought leadership on digital economy.' },
+    { site: 'PakWired', type: 'Tech News', contact: 'editor@pakwired.com', pitch: 'Guide on e-commerce and digital marketing in Pakistan.' },
+    { site: 'Startup Pakistan', type: 'Startup News', contact: 'editor@startuppakistan.pk', pitch: 'Feature on emerging Pakistani e-commerce brands.' }
   ],
-  default: [
-    { site: 'Local Business Journal', type: 'Business Publication', contact: 'editor@localbusinessjournal.com', pitch: 'Feature story on innovative local SEO strategies.' },
-    { site: 'Tech Times', type: 'Tech News', contact: 'editor@techtimes.com', pitch: 'How-to guide on improving website performance.' },
-    { site: 'Marketing Weekly', type: 'Marketing Magazine', contact: 'editor@marketingweekly.com', pitch: 'Expert advice on digital marketing trends.' },
-    { site: 'Web Designer Hub', type: 'Design Blog', contact: 'contact@webdesignerhub.com', pitch: 'Tutorial on fixing common website bugs.' },
-    { site: 'Startup Daily', type: 'Startup News', contact: 'editor@startupdaily.com', pitch: 'Case study on SEO for early-stage companies.' }
+  in: [
+    { site: 'YourStory', type: 'Startup & Tech', contact: 'editor@yourstory.com', pitch: 'Case study on Indian e-commerce growth.' },
+    { site: 'Inc42', type: 'Startup News', contact: 'editor@inc42.com', pitch: 'Data-driven analysis on Indian digital economy.' },
+    { site: 'Economic Times (ET Rise)', type: 'Business News', contact: 'etrise@timesgroup.com', pitch: 'Thought leadership on SME digital marketing.' },
+    { site: 'Entrackr', type: 'Startup & Tech', contact: 'editor@entrackr.com', pitch: 'Feature on Indian e-commerce and sourcing trends.' },
+    { site: 'Social Samosa', type: 'Marketing Publication', contact: 'editor@socialsamosa.com', pitch: 'Expert guide on SEO and digital marketing in India.' }
+  ],
+  tr: [
+    { site: 'Webrazzi', type: 'Tech Portal', contact: 'editor@webrazzi.com', pitch: 'Data-driven guest post on Turkish e-commerce SEO.' },
+    { site: 'ShiftDelete.Net', type: 'Tech Blog', contact: 'icerik@shiftdelete.net', pitch: 'Comprehensive guide on digital marketing trends.' },
+    { site: 'CHIP Online Turkey', type: 'Tech Magazine', contact: 'editor@chip.com.tr', pitch: 'Article on SEO and e-commerce optimization.' },
+    { site: 'DonanımHaber', type: 'Tech Forum & News', contact: 'haber@donanimhaber.com', pitch: 'Walkthrough of digital marketing strategies.' },
+    { site: 'Webrazzi', type: 'Startup & Tech', contact: 'editor@webrazzi.com', pitch: 'Case study on Turkish e-commerce brands.' }
+  ],
+  my: [
+    { site: 'SoyaCincau', type: 'Tech & Lifestyle Portal', contact: 'editor@soyacincau.com', pitch: 'Exclusive data-driven study on Malaysian e-commerce.' },
+    { site: 'Vulcan Post Malaysia', type: 'Business & Startup Media', contact: 'my@vulcanpost.com', pitch: 'Case study of Malaysian Gen-Z creator building income online.' },
+    { site: 'Digital News Asia', type: 'Tech News & Business', contact: 'editor@digitalnewsasia.com', pitch: 'Analytical piece on digital marketing strategies.' },
+    { site: 'TechNave', type: 'Tech & Gadget Portal', contact: 'feedback@technave.com', pitch: 'Guide on digital tools for Malaysian SMEs.' },
+    { site: 'The Malaysian Reserve', type: 'Business News', contact: 'editor@themalaysianreserve.com', pitch: 'Thought leadership on e-commerce growth in Malaysia.' }
   ]
 };
 
@@ -149,50 +184,6 @@ const extractJSON = (raw: string): any => {
   }
 };
 
-// Helper to generate random realistic numbers
-const randomInRange = (min: number, max: number): number => {
-  return Math.floor(Math.random() * (max - min + 1)) + min;
-};
-
-// Post-processing to ensure keyword metrics are realistic and varied
-function normalizeKeywords(keywords: any[]): any[] {
-  if (!keywords || keywords.length === 0) return keywords;
-
-  // Detect if all volumes are identical or linearly increasing
-  const volumes = keywords.map(k => k.volume);
-  const uniqueVolumes = new Set(volumes);
-  const allSame = uniqueVolumes.size === 1;
-  
-  // Detect linear pattern (difference between consecutive same)
-  let isLinear = false;
-  if (volumes.length > 2) {
-    const diff1 = volumes[1] - volumes[0];
-    const diff2 = volumes[2] - volumes[1];
-    isLinear = diff1 === diff2 && diff1 > 0 && volumes.every((v, i) => i === 0 || v - volumes[i-1] === diff1);
-  }
-
-  if (allSame || isLinear) {
-    // Replace volumes with realistic random distribution based on index and intent
-    return keywords.map((kw, i) => {
-      const baseVolume = randomInRange(100, 5000);
-      // Add some variation based on index
-      const volume = Math.round(baseVolume * (0.8 + (i * 0.02)));
-      return { ...kw, volume };
-    });
-  }
-
-  // CPC check: if all identical, randomize
-  const cpcs = keywords.map(k => k.cpc);
-  if (new Set(cpcs).size === 1) {
-    return keywords.map((kw, i) => {
-      const baseCpc = randomInRange(0.5, 8.0);
-      return { ...kw, cpc: Number(baseCpc.toFixed(2)) };
-    });
-  }
-
-  return keywords;
-}
-
 // Custom concurrency limiter
 async function mapWithConcurrency<T>(items: T[], limit: number, fn: (item: T) => Promise<any>): Promise<any[]> {
   const results: any[] = [];
@@ -211,7 +202,7 @@ async function mapWithConcurrency<T>(items: T[], limit: number, fn: (item: T) =>
   return Promise.all(results);
 }
 
-// Enhanced SEO Prompt - Premium with stricter data requirements
+// Enhanced SEO Prompt
 const buildSEOPrompt = (niche: string, country: string, serpLinks: string[], trendData: number[], serpResults: any[]) => {
   const countryName = countryNames[country] || country;
   const trendSummary = trendData.length > 0 ? `12-month Google Trends data: ${trendData.join(', ')}` : 'No trend data available.';
@@ -222,20 +213,19 @@ const buildSEOPrompt = (niche: string, country: string, serpLinks: string[], tre
   **Return ONLY a valid JSON object. No markdown blocks, no extra text.**
   
   **STRICT INSTRUCTIONS**:
-  1. CPC must be between $0.50 and $8.00, realistic and varied for each keyword. NEVER use the same CPC for multiple keywords unless they are extremely similar.
-  2. Keyword volumes must be realistic and varied: range from 50 to 5000, NOT sequential or linearly increasing. Use realistic volumes based on search demand.
-  3. SERP landscape 'traffic' values must be realistic and varied: range from 100 to 50000, NOT all the same.
-  4. Content roadmap 'expected_traffic' must be varied: range from 200 to 3000, NOT all the same.
+  1. CPC must be between $0.50 and $8.00, realistic and varied for each keyword. NEVER use the same CPC for multiple keywords.
+  2. Keyword volumes must be realistic and varied: range from 50 to 5000, NOT sequential or linearly increasing.
+  3. SERP landscape 'traffic' values must be realistic and varied: range from 100 to 50000.
+  4. Content roadmap 'expected_traffic' must be varied: range from 200 to 3000.
   5. If real local websites are missing, DO NOT invent fake sites. Say: 'SERP data currently unavailable. Focus on actionable strategies.'
   6. Strict Country Lock: Do not mention US, UK, or other countries unless they are the target country (${countryName}). Stay localized.
-  7. For 'content_roadmap', each 'title' must be a plain string WITHOUT 'Week X:' prefixed, and must NOT start with 'How to How to'. Use unique, specific titles.
-  8. For 'link_acquisition', you MUST generate 5 highly realistic local publications relevant to ${niche} in ${countryName}. Do NOT include niche name in publication name. Provide a specific outreach pitch.
+  7. For 'content_roadmap', each 'title' must be a plain string WITHOUT 'Week X:' prefixed, and must NOT start with 'How to How to'.
+  8. For 'link_acquisition', you MUST generate 5 highly realistic local publications relevant to ${niche} in ${countryName}. Use actual local media, tech blogs, industry portals. Provide a specific outreach pitch.
   9. For 'guest_post_topics', provide 5 detailed guest post topics.
-  10. For 'serp_landscape', each object must include a 'gap' field with specific opportunity, not generic.
-  11. For 'data_validation', cite exactly 3 SERP sources (with URLs) that support your insights, with brief explanation.
-  12. NEVER use the word "Est." or "Estimated". For traffic/volume use "Approx." or "Typical". For prices use "Typical Price" or "Market Price".
-  13. All arrays must be filled with meaningful, specific, and varied content. No empty strings, null, or 'undefined'.
-  14. Ensure every numeric field has a realistic, unique value.
+  10. For 'serp_landscape', each object must include a 'gap' field with specific opportunity.
+  11. For 'data_validation', cite exactly 3 SERP sources with URLs and brief explanation.
+  12. NEVER use "Est." or "Estimated". Use "Approx.", "Typical", "Market Price".
+  13. All arrays must be filled with meaningful, varied content. No empty strings or 'undefined'.
 
   **Google Trends Data (12 months)**: ${trendSummary}
   **Top SERP Evidence (Titles & URLs)**:
@@ -274,12 +264,10 @@ export async function generateSEOReport(niche: string, country: string) {
 
   const trendData = await getGoogleTrends(niche, country).catch(() => []);
   
-  // Use SerpAPI first, then Scraper, then Serper
   let searchData = await getScraperAPISearch(niche, country).catch(() => null);
   if (!searchData?.organic_results) searchData = await getSearchResults(niche, country).catch(() => null);
   if (!searchData?.organic_results) searchData = await getSerperResults(niche, country).catch(() => null);
 
-  // Clean Google redirect URLs
   const cleanOrganicResults = (searchData?.organic_results || [])
     .filter((r: any) => r.link && !r.link.includes('google.com/goto?url='))
     .slice(0, 10);
@@ -312,51 +300,21 @@ export async function generateSEOReport(niche: string, country: string) {
   const financialProjection = ensureStringArray(analysis.financial_projection);
   const dataValidation = ensureStringArray(analysis.data_validation);
 
-  // ============ KEYWORDS PROCESSING ============
+  // Keywords processing with realistic fallbacks
   let keywords = Array.isArray(analysis.keywords) ? analysis.keywords : [];
+  const currencyMap: Record<string, string> = { us: 'USD', gb: 'GBP', ca: 'CAD', au: 'AUD', de: 'EUR', sg: 'SGD', sa: 'SAR', ae: 'AED', pk: 'PKR', in: 'INR', tr: 'TRY', my: 'MYR' };
+  const targetCurrency = currencyMap[country] || 'USD';
   
-  // If AI did not provide 50 keywords, generate fallback keyword list from SerpAPI suggestions or niche terms
-  if (keywords.length === 0) {
-    // Try to get suggestions from SerpAPI
-    const suggestions = await getKeywordSuggestions(niche, country).catch(() => []);
-    if (suggestions.length > 0) {
-      keywords = suggestions.slice(0, 50).map((kw: string, i: number) => ({
-        keyword: kw,
-        volume: randomInRange(100, 5000),
-        cpc: randomInRange(0.5, 8.0),
-        kd: randomInRange(10, 60),
-        intent: ['informational', 'commercial', 'transactional', 'navigational'][i % 4],
-        potential: 'Easy Win'
-      }));
-    } else {
-      // Generate from niche
-      keywords = Array.from({ length: 50 }, (_, i) => ({
-        keyword: `${niche} ${['guide', 'tips', 'ideas', 'strategy', 'tools'][i % 5]} ${i+1}`,
-        volume: randomInRange(100, 5000),
-        cpc: randomInRange(0.5, 8.0),
-        kd: randomInRange(10, 60),
-        intent: ['informational', 'commercial', 'transactional', 'navigational'][i % 4],
-        potential: 'Easy Win'
-      }));
-    }
-  }
-
-  // Map to safe values
-  keywords = keywords.slice(0, 50).map((kw: any, i: number) => ({
+  keywords = keywords.map((kw: any, i: number) => ({
     keyword: safeString(kw.keyword, `${niche} ${i+1}`),
-    volume: safeNumber(kw.volume, randomInRange(100, 5000)),
-    cpc: safeNumber(kw.cpc, randomInRange(0.5, 8.0)),
-    kd: safeNumber(kw.kd, randomInRange(10, 60)),
+    volume: safeNumber(kw.volume, Math.floor(Math.random() * 5000) + 100),
+    cpc: safeNumber(kw.cpc, Math.random() * 7 + 0.5),
+    kd: safeNumber(kw.kd, Math.floor(Math.random() * 50) + 10),
     intent: safeString(kw.intent, ['informational', 'commercial', 'transactional', 'navigational'][i % 4]),
     potential: safeString(kw.potential, 'Easy Win')
   }));
 
-  // Post-process to ensure realism (no uniform or linear)
-  keywords = normalizeKeywords(keywords);
-
   // Currency conversion with fallback
-  const currencyMap: Record<string, string> = { us: 'USD', gb: 'GBP', ca: 'CAD', au: 'AUD', de: 'EUR', sg: 'SGD', sa: 'SAR', ae: 'AED', pk: 'PKR', in: 'INR', tr: 'TRY', my: 'MYR' };
-  const targetCurrency = currencyMap[country] || 'USD';
   keywords = await mapWithConcurrency(keywords, 5, async (kw: any) => {
     try {
       const originalCpc = kw.cpc;
@@ -364,7 +322,7 @@ export async function generateSEOReport(niche: string, country: string) {
       if (!cpc || isNaN(cpc) || cpc <= 0) {
         cpc = originalCpc;
       }
-      if (cpc > 20) cpc = 20;
+      if (cpc > 12) cpc = 12; // Cap at realistic max
       kw.cpc = Number(cpc.toFixed(2));
     } catch (error) {
       console.warn(`Currency conversion failed for "${kw.keyword}"`);
@@ -372,7 +330,7 @@ export async function generateSEOReport(niche: string, country: string) {
     return kw;
   });
 
-  // ============ SERP LANDSCAPE ============
+  // SERP landscape with realistic fallback
   let serp = Array.isArray(analysis.serp_landscape) 
     ? analysis.serp_landscape
         .filter((s: any) => s.title && s.link && !s.link.includes('google.com/goto?url='))
@@ -380,10 +338,10 @@ export async function generateSEOReport(niche: string, country: string) {
           position: s.position || i + 1,
           title: safeString(s.title),
           link: safeString(s.link),
-          da: safeNumber(s.da, randomInRange(20, 90)),
-          words: safeNumber(s.words, randomInRange(500, 4000)),
-          backlinks: safeNumber(s.backlinks, randomInRange(5, 500)),
-          traffic: safeNumber(s.traffic, randomInRange(500, 20000)),
+          da: safeNumber(s.da, Math.floor(Math.random() * 70) + 20),
+          words: safeNumber(s.words, Math.floor(Math.random() * 3500) + 500),
+          backlinks: safeNumber(s.backlinks, Math.floor(Math.random() * 500) + 5),
+          traffic: safeNumber(s.traffic, Math.floor(Math.random() * 20000) + 500),
           strengths: safeString(s.strengths, 'Ranking for this keyword'),
           weaknesses: safeString(s.weaknesses, 'No localized content'),
           gap: safeString(s.gap, 'Opportunity to create localized guide')
@@ -395,17 +353,17 @@ export async function generateSEOReport(niche: string, country: string) {
       position: i + 1,
       title: r.title || 'Untitled',
       link: r.link || '#',
-      da: randomInRange(20, 90),
-      words: randomInRange(500, 4000),
-      backlinks: randomInRange(5, 500),
-      traffic: randomInRange(500, 20000),
+      da: Math.floor(Math.random() * 70) + 20,
+      words: Math.floor(Math.random() * 3500) + 500,
+      backlinks: Math.floor(Math.random() * 500) + 5,
+      traffic: Math.floor(Math.random() * 20000) + 500,
       strengths: 'Ranking for this keyword',
       weaknesses: 'No localized content',
       gap: 'Opportunity to create localized guide'
     }));
   }
 
-  // ============ CONTENT ROADMAP ============
+  // Content roadmap
   let roadmap = (Array.isArray(analysis.content_roadmap) ? analysis.content_roadmap : []).map((c: any, i: number) => {
     let rawTitle = safeString(c.title, `How to ${niche} - Step by Step`);
     rawTitle = rawTitle.replace(/^Week \d+: Week \d+: /i, '');
@@ -418,7 +376,7 @@ export async function generateSEOReport(niche: string, country: string) {
       title: rawTitle,
       primary_keyword: keyword,
       type: safeString(c.type, 'Pillar'),
-      expected_traffic: safeNumber(c.expected_traffic, randomInRange(200, 3000))
+      expected_traffic: safeNumber(c.expected_traffic, Math.floor(Math.random() * 2800) + 200)
     };
   }).slice(0, 12);
 
@@ -428,19 +386,25 @@ export async function generateSEOReport(niche: string, country: string) {
       title: `How to ${kw.keyword}`,
       primary_keyword: kw.keyword,
       type: 'Pillar',
-      expected_traffic: randomInRange(200, 3000)
+      expected_traffic: Math.floor(Math.random() * 2800) + 200
     }));
   }
 
-  // ============ LINK ACQUISITION ============
+  // Link acquisition with country-specific fallback
   let targetSites = [];
   if (analysis.link_acquisition?.target_sites && Array.isArray(analysis.link_acquisition.target_sites)) {
     targetSites = analysis.link_acquisition.target_sites.filter((s: any) => 
-      s.site && s.site !== 'N/A' && !s.site.includes('Journal') && !s.site.includes('Review') && !s.site.toLowerCase().includes(niche.toLowerCase())
+      s.site && s.site !== 'N/A' && 
+      !s.site.includes('Journal') && !s.site.includes('Review') && 
+      !s.site.toLowerCase().includes(niche.toLowerCase()) &&
+      !s.site.includes('Local Business Journal') &&
+      !s.site.includes('Tech Times') &&
+      !s.site.includes('Marketing Weekly') &&
+      !s.site.includes('Web Designer Hub')
     );
   }
   if (targetSites.length < 5) {
-    const countryPubs = localPublications[country] || localPublications['default'];
+    const countryPubs = localPublications[country] || localPublications['default'] || localPublications['us'];
     targetSites = countryPubs.slice(0, 5);
   }
   const guestPosts = ensureStringArray(analysis.link_acquisition?.guest_post_topics);
@@ -454,7 +418,7 @@ export async function generateSEOReport(niche: string, country: string) {
     );
   }
 
-  // ============ FALLBACKS FOR OTHER SECTIONS ============
+  // SWOT fallback
   const swotFallback = [
     "Strengths: High demand for localized technical solutions and strong domain expertise.",
     "Weaknesses: Low initial brand awareness in a competitive market.",
@@ -463,6 +427,7 @@ export async function generateSEOReport(niche: string, country: string) {
   ];
   const safeSwot = swotAnalysis.length > 0 ? swotAnalysis : swotFallback;
 
+  // Action priority matrix fallback
   const matrixFallback = [
     "Task: Fix broken links and optimize meta tags | Impact: High | Effort: Low | Priority: Quick Win",
     "Task: Develop interactive diagnostic tool | Impact: High | Effort: High | Priority: Major Project",
@@ -471,6 +436,7 @@ export async function generateSEOReport(niche: string, country: string) {
   ];
   const safeMatrix = actionPriorityMatrix.length > 0 ? actionPriorityMatrix : matrixFallback;
 
+  // Risk assessment fallback
   const riskFallback = [
     "Risk Factor: Algorithm updates prioritizing global forums over niche local blogs | Impact: Medium | Mitigation: Build strong local brand authority and backlinks.",
     "Risk Factor: Technical guides becoming outdated due to software updates | Impact: Medium | Mitigation: Schedule quarterly content audits and updates.",
@@ -478,6 +444,7 @@ export async function generateSEOReport(niche: string, country: string) {
   ];
   const safeRisk = riskAssessment.length > 0 ? riskAssessment : riskFallback;
 
+  // Financial projection fallback
   const financialFallback = [
     "Expected 150% increase in organic leads within 6 months, translating to estimated 45,000 local currency in monthly service revenue (Modeled Estimate).",
     "Acquisition cost per lead projected to decrease by 40% as organic authority builds (Modeled Estimate).",
