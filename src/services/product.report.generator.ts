@@ -28,6 +28,17 @@ const currencyInfo: Record<string, { symbol: string; rate: number }> = {
   my: { symbol: 'RM', rate: 4.7 },
 };
 
+// Domains to filter out from SERP evidence (too generic/irrelevant)
+const genericDomains = [
+  'wikipedia.org',
+  'bbc.com',
+  'business.google.com',
+  'investopedia.com',
+  'salesforce.com',
+  'linkedin.com/pulse',
+  'medium.com',
+];
+
 const safeNumber = (val: any, fallback: number = 0) => {
   const num = Number(val);
   return isNaN(num) || num === 0 ? fallback : num;
@@ -93,23 +104,26 @@ const ensureStringArray = (arr: any): string[] => {
   return arr.map((item: any) => formatComplexObject(item));
 };
 
-const sanitizePersona = (personas: any): any[] => {
+// Improved persona sanitizer with niche-specific fallbacks
+const sanitizePersona = (personas: any, niche: string, country: string): any[] => {
   if (!Array.isArray(personas) || personas.length === 0) {
+    // Generate two distinct, plausible personas based on niche and country
+    const countryName = countryNames[country] || 'your market';
     return [
       {
         idx: 1,
-        demographics: 'Age 25-34, tech-savvy, urban professional',
-        pain_points: 'High costs and lack of localized support',
-        goals: 'Find high-quality reliable products and reduce long-term maintenance costs.',
-        buying_triggers: 'A sudden price increase from a competitor, or an urgent need for repair.',
+        demographics: `Age 28-40, male, ${countryName}-based entrepreneur`,
+        pain_points: `High setup costs and confusing regulations for ${niche}`,
+        goals: `Launch a compliant ${niche} business quickly and minimize overhead`,
+        buying_triggers: `Discovering a streamlined digital solution with transparent pricing`
       },
       {
         idx: 2,
-        demographics: 'Age 35-45, business owner, value-oriented',
-        pain_points: 'Inefficient sourcing processes and inconsistent product quality',
-        goals: 'Streamline supply chain and maximize profit margins.',
-        buying_triggers: 'Discovery of a new supplier with faster shipping and better pricing.',
-      },
+        demographics: `Age 35-50, female, business owner in ${countryName}`,
+        pain_points: `Lack of clear guidance and fear of non-compliance`,
+        goals: `Scale existing operations and enter new markets with confidence`,
+        buying_triggers: `Recommendations from trusted local advisors or successful peers`
+      }
     ];
   }
   return personas.map((persona, idx) => {
@@ -117,14 +131,18 @@ const sanitizePersona = (personas: any): any[] => {
     if (typeof demographics === 'object' && demographics !== null) {
       const keys = ['age', 'gender', 'location', 'occupation', 'income'];
       demographics = keys.map(k => demographics[k]).filter(Boolean).join(', ');
-      if (!demographics) demographics = 'Age 25-34, tech-savvy, urban professional';
+      if (!demographics) demographics = `Age 30-45, business professional in ${countryNames[country] || 'your market'}`;
+    }
+    // If demographics is same as previous, add variation
+    if (idx > 0 && demographics === personas[idx-1]?.demographics) {
+      demographics += `, different segment`;
     }
     return {
       idx: idx + 1,
-      demographics: safeString(demographics, 'Age 25-34, tech-savvy, urban professional'),
-      pain_points: safeString(persona.pain_points, 'High costs and lack of localized support'),
-      goals: safeString(persona.goals, 'Find high-quality reliable products and reduce long-term maintenance costs.'),
-      buying_triggers: safeString(persona.buying_triggers, 'A sudden price increase from a competitor, or an urgent need for repair.'),
+      demographics: safeString(demographics, `Age 30-45, business professional in ${countryNames[country] || 'your market'}`),
+      pain_points: safeString(persona.pain_points, `High costs and lack of localized support for ${niche}`),
+      goals: safeString(persona.goals, `Achieve sustainable growth with ${niche}`),
+      buying_triggers: safeString(persona.buying_triggers, `Recognition of a clear ROI and trusted local references`),
     };
   });
 };
@@ -147,7 +165,7 @@ const extractJSON = (raw: string): any => {
   }
 };
 
-// Enhanced Product Prompt with local currency and case studies
+// Enhanced Product Prompt with local currency and case studies, strict persona requirements
 const buildProductPrompt = (niche: string, country: string, serpContext: string, trendData: number[], serpResults: any[]) => {
   const countryName = countryNames[country] || country;
   const trendSummary = trendData.length > 0 ? `12-month Google Trends data: ${trendData.join(', ')}` : 'No trend data available.';
@@ -174,7 +192,7 @@ const buildProductPrompt = (niche: string, country: string, serpContext: string,
   - ALWAYS provide specific goals, buying triggers, action plans, and realistic financial numbers. NEVER use 'N/A' or 'No specific goals identified'.
   - All fields must be filled with meaningful, specific content. No empty strings, null, or 'undefined'.
   - For 'data_validation', explicitly cite at least 2-3 of the SERP sources (with URLs) that support your insights.
-  - Provide at least 2 consumer personas. If only one comes to mind, add a second plausible persona based on the market.
+  - Provide at least 2 consumer personas. Each persona MUST have distinct demographics, pain points, goals, and buying triggers. Do NOT use generic phrases like "tech-savvy urban professional". Be specific based on the niche and local market.
   - For 'case_studies', provide 2-3 concise case studies. Each case study must have:
       - "title": string
       - "challenge": string (problem faced)
@@ -191,11 +209,11 @@ const buildProductPrompt = (niche: string, country: string, serpContext: string,
   4. "trend_assessment": A single string with detailed trend assessment, referencing Google Trends data.
   5. "local_business_insight": Array of 3 strings, each describing a unique local market opportunity or challenge.
   6. "consumer_persona": Array of exactly 2-3 objects. Each object must have:
-     - "demographics": string like "Age 25-34, male, Riyadh-based, tech-savvy"
-     - "pain_points": string describing specific pain points
+     - "demographics": string like "Age 30-45, female, Dubai-based retail manager" (specific, not generic)
+     - "pain_points": string describing specific pain points related to the niche
      - "goals": string describing specific goals
      - "buying_triggers": string describing what triggers purchase
-     All fields are required, no N/A.
+     All fields are required, no N/A, no duplicate personas.
   7. "financial_model": Array of 3-5 objects, each with:
      - "tier_name": string
      - "price" or "price_sar": string (e.g., "Typical Price: ${currencySymbol}49/month")
@@ -213,7 +231,7 @@ const buildProductPrompt = (niche: string, country: string, serpContext: string,
       - "price": string (e.g., "Typical Price: ${currencySymbol}49/month" or "Market Price: Free tier, paid from ${currencySymbol}14/month")
       - "market_position": string
       - "gap": string
-      Use real brands from SERP if available.
+      Use real brands from SERP if available; otherwise use credible local competitors.
   15. "assumptions_risk": Array of 3-4 strings, each describing an assumption or risk with mitigation.
   16. "customer_sentiment": Array of 3 strings, capturing market sentiment or quotes.
   17. "client_value_proposition": Array of 3 strings, each a value proposition.
@@ -263,14 +281,23 @@ export async function generateProductReport(niche: string, country: string) {
   if (!searchData?.organic_results) searchData = await getScraperAPISearch(niche, country).catch(() => null);
   if (!searchData?.organic_results) searchData = await getSerperResults(niche, country).catch(() => null);
 
+  // Filter out generic/irrelevant domains from SERP results
   let serpContext = "SERP Data currently unavailable. Please focus on generating realistic local market insights.";
   let serpResults: any[] = [];
   if (searchData?.organic_results) {
-    serpResults = searchData.organic_results.slice(0, 10);
+    const filteredResults = searchData.organic_results.filter((r: any) => {
+      try {
+        const domain = new URL(r.link).hostname.replace('www.', '');
+        return !genericDomains.some(g => domain.includes(g));
+      } catch {
+        return false;
+      }
+    });
+    serpResults = filteredResults.slice(0, 10);
     const topSites = serpResults.map((r: any) => 
       `Title: ${r.title} | URL: ${r.link} | Snippet: ${r.snippet || ''}`
     ).join('\n');
-    serpContext = `Here are the top real competitors found via Google SERP:\n${topSites}`;
+    serpContext = `Here are the top real competitors found via Google SERP (filtered):\n${topSites}`;
   } else {
     serpContext = `SERP Data unavailable. However, based on our knowledge of the ${countryNames[country] || country} market for ${niche}, typical competitors include local leaders, cross-border budget sellers, and specialized niche players. Please create realistic competitor brands and data accordingly.`;
   }
@@ -287,7 +314,7 @@ export async function generateProductReport(niche: string, country: string) {
   const keyInsights = ensureStringArray(analysis.key_insights);
   const immediateActions = ensureStringArray(analysis.immediate_actions);
   const localBusinessInsight = ensureStringArray(analysis.local_business_insight);
-  const persona = sanitizePersona(analysis.consumer_persona);
+  const persona = sanitizePersona(analysis.consumer_persona, niche, country);
   const financialModel = ensureStringArray(analysis.financial_model);
   const sourcingAnalysis = ensureStringArray(analysis.sourcing_analysis);
   const competitionAnalysis = ensureStringArray(analysis.competition_analysis);
@@ -309,7 +336,7 @@ export async function generateProductReport(niche: string, country: string) {
   const dataLimitations = ensureStringArray(analysis.data_limitations);
   const caseStudies = Array.isArray(analysis.case_studies) ? analysis.case_studies : [];
 
-  // Fallback for competitor_benchmark
+  // Fallback for competitor_benchmark using actual SERP titles/domains if available
   const fallbackBenchmark = [
     { brand: "Local Market Leader", price: `Market Price: ${currencyInfo[country]?.symbol || '$'}Premium`, market_position: "High-end, feature-rich", gap: "Lacks localized warranty" },
     { brand: "Cross-Border Budget Seller", price: `Market Price: ${currencyInfo[country]?.symbol || '$'}Low-cost`, market_position: "Price-driven, basic features", gap: "Poor support, slow shipping" },
@@ -321,10 +348,18 @@ export async function generateProductReport(niche: string, country: string) {
   let safeBenchmark;
   if (benchmark.length >= 3) {
     safeBenchmark = benchmark.slice(0, 3);
-  } else if (benchmark.length > 0) {
-    safeBenchmark = [...benchmark, ...fallbackBenchmark.slice(benchmark.length)];
   } else {
-    safeBenchmark = fallbackBenchmark;
+    // Try to use SERP results as benchmark
+    const serpBrands = serpResults.slice(0, 3).map(r => ({
+      brand: r.title?.split('|')[0]?.trim() || r.title?.split('-')[0]?.trim() || 'Local Competitor',
+      price: `Market Price: ${currencyInfo[country]?.symbol || '$'}Unknown`,
+      market_position: 'Active in local market',
+      gap: 'Opportunity for differentiation'
+    }));
+    safeBenchmark = benchmark.length > 0 ? [...benchmark, ...serpBrands.slice(benchmark.length)] : serpBrands;
+    if (safeBenchmark.length < 3) {
+      safeBenchmark = [...safeBenchmark, ...fallbackBenchmark.slice(safeBenchmark.length)];
+    }
   }
 
   // Fallback for financial_projection if duplicate or missing
