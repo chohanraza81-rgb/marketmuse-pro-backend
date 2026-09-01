@@ -147,7 +147,7 @@ const extractJSON = (raw: string): any => {
   }
 };
 
-// Enhanced Product Prompt with evidence emphasis and local currency
+// Enhanced Product Prompt with local currency and case studies
 const buildProductPrompt = (niche: string, country: string, serpContext: string, trendData: number[], serpResults: any[]) => {
   const countryName = countryNames[country] || country;
   const trendSummary = trendData.length > 0 ? `12-month Google Trends data: ${trendData.join(', ')}` : 'No trend data available.';
@@ -175,7 +175,12 @@ const buildProductPrompt = (niche: string, country: string, serpContext: string,
   - All fields must be filled with meaningful, specific content. No empty strings, null, or 'undefined'.
   - For 'data_validation', explicitly cite at least 2-3 of the SERP sources (with URLs) that support your insights.
   - Provide at least 2 consumer personas. If only one comes to mind, add a second plausible persona based on the market.
-  - Return a JSON object with ALL 27 keys exactly as specified below. Do not omit any key. If a key is an array and you have no data, return an empty array.
+  - For 'case_studies', provide 2-3 concise case studies. Each case study must have:
+      - "title": string
+      - "challenge": string (problem faced)
+      - "solution": string (what was done)
+      - "results": string (outcome with metrics in local currency if applicable)
+  - Return a JSON object with ALL keys specified below, including 'case_studies'. Do not omit any key. If a key is an array and you have no data, return an empty array.
   
   **Return ONLY a valid JSON object. No markdown blocks, no extra text.**
   
@@ -242,6 +247,7 @@ const buildProductPrompt = (niche: string, country: string, serpContext: string,
       - "mitigation_strategy": string
   26. "final_ceo_summary": Array of 3-5 strings, summarizing the opportunity for CEO.
   27. "data_limitations": Array of 2-3 strings, noting limitations of the data.
+  28. "case_studies": Array of 2-3 objects with { title, challenge, solution, results }
 
   Provide the JSON directly without any markdown formatting.`;
 };
@@ -301,6 +307,7 @@ export async function generateProductReport(niche: string, country: string) {
   const riskAssessment = ensureStringArray(analysis.risk_assessment);
   const finalCeoSummary = ensureStringArray(analysis.final_ceo_summary);
   const dataLimitations = ensureStringArray(analysis.data_limitations);
+  const caseStudies = Array.isArray(analysis.case_studies) ? analysis.case_studies : [];
 
   // Fallback for competitor_benchmark
   const fallbackBenchmark = [
@@ -432,6 +439,19 @@ export async function generateProductReport(niche: string, country: string) {
 
   markdown += `\n24. FINAL CEO SUMMARY\n──────────────────────────────────────────────────────────────\n`;
   finalCeoSummary.forEach((item: string, i: number) => markdown += `  ${i+1}. ${item}\n`);
+
+  // Case Studies Section
+  markdown += `\n25. CASE STUDIES\n──────────────────────────────────────────────────────────────\n`;
+  if (caseStudies.length > 0) {
+    caseStudies.forEach((cs: any, i: number) => {
+      markdown += `Case Study ${i+1}: ${safeString(cs.title)}\n`;
+      markdown += `  Challenge: ${safeString(cs.challenge)}\n`;
+      markdown += `  Solution: ${safeString(cs.solution)}\n`;
+      markdown += `  Results: ${safeString(cs.results)}\n\n`;
+    });
+  } else {
+    markdown += `No case studies provided.\n\n`;
+  }
 
   // Evidence & Sources Section
   markdown += `\nEVIDENCE & SOURCES (Live SERP Data)\n──────────────────────────────────────────────────────────────\n`;
