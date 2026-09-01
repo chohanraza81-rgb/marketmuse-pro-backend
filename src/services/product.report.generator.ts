@@ -28,7 +28,7 @@ const currencyInfo: Record<string, { symbol: string; rate: number }> = {
   my: { symbol: 'RM', rate: 4.7 },
 };
 
-// Expanded list of generic/global domains to filter out from SERP evidence
+// Expanded list of generic/global/irrelevant domains to filter out from SERP evidence
 const genericDomains = [
   'wikipedia.org',
   'bbc.com',
@@ -55,6 +55,11 @@ const genericDomains = [
   'shopify.com',
   'amazon.com',
   'ebay.com',
+  'google.com', // remove Google redirect URLs
+  'pinterest.com',
+  'blogspot.com',
+  'ltdcommodities.com',
+  'hotcommodityhome.blogspot.com',
 ];
 
 const safeNumber = (val: any, fallback: number = 0) => {
@@ -303,7 +308,9 @@ export async function generateProductReport(niche: string, country: string) {
   if (searchData?.organic_results) {
     const filteredResults = searchData.organic_results.filter((r: any) => {
       try {
-        const domain = new URL(r.link).hostname.replace('www.', '');
+        const url = r.link || '';
+        if (url.includes('google.com/goto')) return false; // explicit redirect removal
+        const domain = new URL(url).hostname.replace('www.', '');
         return !genericDomains.some(g => domain.includes(g));
       } catch {
         return false;
