@@ -1,28 +1,39 @@
+// exchange.ts
 import axios from 'axios';
+import { cacheService } from './cache';
 
-export const convertCurrency = async (amount: number, from: string = 'USD', to: string = 'SGD'): Promise<number> => {
-  try {
-    if (from === to) return amount;
-    const response = await axios.get(`https://api.exchangerate-api.com/v4/latest/${from}`);
-    const rate = response.data.rates[to];
-    if (!rate) return amount;
-    return parseFloat((amount * rate).toFixed(2));
-  } catch (error) {
-    console.warn('Exchange API failed:', error instanceof Error ? error.message : String(error));
-    return amount;
+const EXCHANGE_API_URL = 'https://api.exchangerate-api.com/v4/latest/USD';
+
+interface ExchangeRates {
+  [currency: string]: number;
+}
+
+export async function convertCurrency(
+  amount: number,
+  from: string,
+  to: string
+): Promise<number | null> {
+  if (from === to) return amount;
+
+  const cacheKey = `exchange_${from}_${to}`;
+  const cachedRate = cacheService.get<number>(cacheKey);
+  if (cachedRate) {
+    return Number((amount * cachedRate).toFixed(2));
   }
-};
 
-export const getExchangeRates = async (base: string = 'USD'): Promise<any> => {
   try {
-    const response = await axios.get(`https://api.exchangerate-api.com/v4/latest/${base}`);
-    return response.data.rates;
-  } catch (error) {
-    console.warn('Exchange API failed:', error instanceof Error ? error.message : String(error));
-    return {};
-  }
-};
+    const response = await axios.get(EXCHANGE_API_URL, { timeout: 10000 });
+    const rates: ExchangeRates = response.data?.rates;
+    if (!rates || !rates[from] || !rates[to]) return null;
 
-export const convertPrice = async (amount: number, from: string, to: string): Promise<number> => {
-  return convertCurrency(amount, from, to);
-};
+    const fromRate = rates[from];
+    const toRate = rates[to];
+    const rate = toRate / fromRate;
+
+    cacheService.set(cacheKey, rate, 86400); // cache for 24 hours
+    return Number((amount * rate).toFixed(2));
+  } catch (error) {
+    console.warn('Exchange rate API error:', error instanceof Error ? error.message : 'Unknown');
+    return null;
+  }
+}
