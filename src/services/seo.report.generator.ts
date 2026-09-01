@@ -218,7 +218,7 @@ async function mapWithConcurrency<T>(items: T[], limit: number, fn: (item: T) =>
   return Promise.all(results);
 }
 
-// Enhanced SEO Prompt with case studies
+// Enhanced SEO Prompt with case studies and local currency
 const buildSEOPrompt = (niche: string, country: string, serpLinks: string[], trendData: number[], serpResults: any[]) => {
   const countryName = countryNames[country] || country;
   const trendSummary = trendData.length > 0 ? `12-month Google Trends data: ${trendData.join(', ')}` : 'No trend data available.';
@@ -603,6 +603,9 @@ export async function generateSEOReport(niche: string, country: string) {
   markdown += `\n`;
 
   markdown += `METHODOLOGY & SOURCES\n──────────────────────────────────────────────────────────────\nThis report is based on comprehensive primary and secondary research conducted on ${today} from:\n\n• Live Search Engine Results (SERP) via SerpAPI/ScraperAPI/SerperAPI\n• Competitive Landscape Audit via MusePRO Proprietary Database\n• Keyword Volume, CPC & Difficulty via Industry-Standard Keyword Planners\n• 12-Month Search Trend & Seasonality via Google Trends\n• Real-time Exchange Rate Data for localized pricing\n• Strategic Synthesis & Market Insights by MusePRO Senior Research Division\n\n`;
+
+  // ADD DISCLAIMER
+  markdown += `\nDISCLAIMER\n──────────────────────────────────────────────────────────────\nThis report is for informational purposes only and does not constitute legal, tax, or financial advice. Please consult qualified professionals before making business decisions.\n\n`;
 
   const monthlyTotal = roadmap.reduce((sum: number, week: any) => sum + safeNumber(week.expected_traffic, 1000), 0);
   let trafficEstimate = Math.round(monthlyTotal * 2);
