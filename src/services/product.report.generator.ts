@@ -60,7 +60,7 @@ const genericDomains = [
   'blogspot.com',
   'ltdcommodities.com',
   'hotcommodityhome.blogspot.com',
-  'jpmorgan.com', // added final filter
+  'jpmorgan.com',
 ];
 
 const safeNumber = (val: any, fallback: number = 0) => {
