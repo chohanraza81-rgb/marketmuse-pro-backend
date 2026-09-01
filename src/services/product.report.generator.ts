@@ -12,7 +12,6 @@ const countryNames: Record<string, string> = {
   pk: 'Pakistan', in: 'India', tr: 'Turkey', my: 'Malaysia',
 };
 
-// Currency symbols and fallback rates (1 USD = X local)
 const currencyInfo: Record<string, { symbol: string; rate: number }> = {
   us: { symbol: '$', rate: 1 },
   gb: { symbol: '£', rate: 0.79 },
@@ -28,7 +27,6 @@ const currencyInfo: Record<string, { symbol: string; rate: number }> = {
   my: { symbol: 'RM', rate: 4.7 },
 };
 
-// Generic base domain keywords (will match any extension like .com, .de, .co.uk)
 const genericDomainKeywords = [
   'wikipedia',
   'bbc',
@@ -53,15 +51,16 @@ const genericDomainKeywords = [
   'godaddy',
   'prometai',
   'shopify',
-  'amazon',        // catches amazon.com, amazon.de, amazon.co.uk, etc.
-  'ebay',          // catches ebay.com, ebay.de, etc.
-  'fundgrube',     // fundgrube.com
+  'amazon',
+  'ebay',
+  'fundgrube',
   'pinterest',
   'blogspot',
   'ltdcommodities',
   'hotcommodityhome',
   'jpmorgan',
-  'google',        // removes Google redirect URLs
+  'google',
+  'experian',   // added
 ];
 
 const safeNumber = (val: any, fallback: number = 0) => {
@@ -129,7 +128,6 @@ const ensureStringArray = (arr: any): string[] => {
   return arr.map((item: any) => formatComplexObject(item));
 };
 
-// Improved persona sanitizer with niche and country-specific fallbacks
 const sanitizePersona = (personas: any, niche: string, country: string): any[] => {
   if (!Array.isArray(personas) || personas.length === 0) {
     const countryName = countryNames[country] || 'your market';
@@ -188,7 +186,6 @@ const extractJSON = (raw: string): any => {
   }
 };
 
-// Enhanced Product Prompt with local currency, case studies, and strict persona requirements
 const buildProductPrompt = (niche: string, country: string, serpContext: string, trendData: number[], serpResults: any[]) => {
   const countryName = countryNames[country] || country;
   const trendSummary = trendData.length > 0 ? `12-month Google Trends data: ${trendData.join(', ')}` : 'No trend data available.';
@@ -304,7 +301,6 @@ export async function generateProductReport(niche: string, country: string) {
   if (!searchData?.organic_results) searchData = await getScraperAPISearch(niche, country).catch(() => null);
   if (!searchData?.organic_results) searchData = await getSerperResults(niche, country).catch(() => null);
 
-  // Filter out generic/irrelevant domains from SERP results using base keywords
   let serpContext = "SERP Data currently unavailable. Please focus on generating realistic local market insights.";
   let serpResults: any[] = [];
   if (searchData?.organic_results) {
@@ -334,7 +330,6 @@ export async function generateProductReport(niche: string, country: string) {
   const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
   const reference = `MKT-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
 
-  // ============ VALIDATION & FALLBACKS ============
   const clientValueProp = ensureStringArray(analysis.client_value_proposition);
   const keyInsights = ensureStringArray(analysis.key_insights);
   const immediateActions = ensureStringArray(analysis.immediate_actions);
@@ -361,7 +356,6 @@ export async function generateProductReport(niche: string, country: string) {
   const dataLimitations = ensureStringArray(analysis.data_limitations);
   const caseStudies = Array.isArray(analysis.case_studies) ? analysis.case_studies : [];
 
-  // Fallback for competitor_benchmark using SERP results if AI failed
   const fallbackBenchmark = [
     { brand: "Local Market Leader", price: `Market Price: ${currencyInfo[country]?.symbol || '$'}Premium`, market_position: "High-end, feature-rich", gap: "Lacks localized warranty" },
     { brand: "Cross-Border Budget Seller", price: `Market Price: ${currencyInfo[country]?.symbol || '$'}Low-cost`, market_position: "Price-driven, basic features", gap: "Poor support, slow shipping" },
@@ -386,7 +380,6 @@ export async function generateProductReport(niche: string, country: string) {
     }
   }
 
-  // Fallback for financial_projection if duplicate or missing
   let safeFinancialProjection = financialProjection;
   if (safeFinancialProjection.length < 3 || 
       (safeFinancialProjection.length >= 3 && 
@@ -402,7 +395,6 @@ export async function generateProductReport(niche: string, country: string) {
     ];
   }
 
-  // ============ BUILD MARKDOWN ============
   let markdown = `MusePRO\nMarket Intelligence & Strategic Modeling\n──────────────────────────────────────────────────────────────\nPRODUCT INTELLIGENCE REPORT\n\nPrepared For: [Client Name]\nDate: ${today}\nReference: ${reference}\nClassification: CONFIDENTIAL\n──────────────────────────────────────────────────────────────\n\n`;
 
   markdown += `1. CLIENT VALUE PROPOSITION\n──────────────────────────────────────────────────────────────\n`;
@@ -499,7 +491,6 @@ export async function generateProductReport(niche: string, country: string) {
   markdown += `\n24. FINAL CEO SUMMARY\n──────────────────────────────────────────────────────────────\n`;
   finalCeoSummary.forEach((item: string, i: number) => markdown += `  ${i+1}. ${item}\n`);
 
-  // Case Studies Section
   markdown += `\n25. CASE STUDIES\n──────────────────────────────────────────────────────────────\n`;
   if (caseStudies.length > 0) {
     caseStudies.forEach((cs: any, i: number) => {
@@ -512,7 +503,6 @@ export async function generateProductReport(niche: string, country: string) {
     markdown += `No case studies provided.\n\n`;
   }
 
-  // Evidence & Sources Section
   markdown += `\nEVIDENCE & SOURCES (Live SERP Data)\n──────────────────────────────────────────────────────────────\n`;
   if (serpResults.length > 0) {
     markdown += `| # | Title | URL | Snippet |\n|---|-------|-----|--------|\n`;
@@ -527,7 +517,6 @@ export async function generateProductReport(niche: string, country: string) {
   dataLimitations.forEach((item: string, i: number) => markdown += `  ${i+1}. ${item}\n`);
   markdown += `\nThis report is based on comprehensive primary and secondary research conducted on ${today} from:\n\n• Real-time Market & Consumer Demand Trends\n• Live Search Engine Results (SERP) via SerpAPI/ScraperAPI/SerperAPI\n• Local Sourcing & Logistics Audit via MusePRO Proprietary Database\n• Financial Modeling, Margin & Break-even Calculations\n• Strategic Synthesis & Market Insights by MusePRO Senior Research Division\n\n`;
 
-  // ADD DISCLAIMER
   markdown += `\nDISCLAIMER\n──────────────────────────────────────────────────────────────\nThis report is for informational purposes only and does not constitute legal, tax, or financial advice. Please consult qualified professionals before making business decisions.\n\n`;
 
   const result = {
