@@ -55,11 +55,12 @@ const genericDomains = [
   'shopify.com',
   'amazon.com',
   'ebay.com',
-  'google.com', // remove Google redirect URLs
+  'google.com',
   'pinterest.com',
   'blogspot.com',
   'ltdcommodities.com',
   'hotcommodityhome.blogspot.com',
+  'jpmorgan.com', // added final filter
 ];
 
 const safeNumber = (val: any, fallback: number = 0) => {
