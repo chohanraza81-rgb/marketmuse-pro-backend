@@ -28,39 +28,40 @@ const currencyInfo: Record<string, { symbol: string; rate: number }> = {
   my: { symbol: 'RM', rate: 4.7 },
 };
 
-// Expanded list of generic/global/irrelevant domains to filter out from SERP evidence
-const genericDomains = [
-  'wikipedia.org',
-  'bbc.com',
-  'business.google.com',
-  'investopedia.com',
-  'salesforce.com',
-  'linkedin.com/pulse',
-  'medium.com',
-  'wolterskluwer.com',
-  'baremetrics.com',
-  'entrepreneur.com',
-  'quora.com',
-  'paisabazaar.com',
-  'uschamber.com',
-  'reddit.com',
-  'slideshare.net',
-  'skynethosting.net',
-  'coursera.org',
-  'mailchimp.com',
-  'bigcommerce.com',
-  'wix.com',
-  'godaddy.com',
-  'prometai.app',
-  'shopify.com',
-  'amazon.com',
-  'ebay.com',
-  'google.com',
-  'pinterest.com',
-  'blogspot.com',
-  'ltdcommodities.com',
-  'hotcommodityhome.blogspot.com',
-  'jpmorgan.com',
+// Generic base domain keywords (will match any extension like .com, .de, .co.uk)
+const genericDomainKeywords = [
+  'wikipedia',
+  'bbc',
+  'business.google',
+  'investopedia',
+  'salesforce',
+  'linkedin',
+  'medium',
+  'wolterskluwer',
+  'baremetrics',
+  'entrepreneur',
+  'quora',
+  'paisabazaar',
+  'uschamber',
+  'reddit',
+  'slideshare',
+  'skynethosting',
+  'coursera',
+  'mailchimp',
+  'bigcommerce',
+  'wix',
+  'godaddy',
+  'prometai',
+  'shopify',
+  'amazon',        // catches amazon.com, amazon.de, amazon.co.uk, etc.
+  'ebay',          // catches ebay.com, ebay.de, etc.
+  'fundgrube',     // fundgrube.com
+  'pinterest',
+  'blogspot',
+  'ltdcommodities',
+  'hotcommodityhome',
+  'jpmorgan',
+  'google',        // removes Google redirect URLs
 ];
 
 const safeNumber = (val: any, fallback: number = 0) => {
@@ -303,16 +304,16 @@ export async function generateProductReport(niche: string, country: string) {
   if (!searchData?.organic_results) searchData = await getScraperAPISearch(niche, country).catch(() => null);
   if (!searchData?.organic_results) searchData = await getSerperResults(niche, country).catch(() => null);
 
-  // Filter out generic/irrelevant domains from SERP results
+  // Filter out generic/irrelevant domains from SERP results using base keywords
   let serpContext = "SERP Data currently unavailable. Please focus on generating realistic local market insights.";
   let serpResults: any[] = [];
   if (searchData?.organic_results) {
     const filteredResults = searchData.organic_results.filter((r: any) => {
       try {
         const url = r.link || '';
-        if (url.includes('google.com/goto')) return false; // explicit redirect removal
-        const domain = new URL(url).hostname.replace('www.', '');
-        return !genericDomains.some(g => domain.includes(g));
+        if (url.includes('google.com/goto')) return false;
+        const domain = new URL(url).hostname.replace('www.', '').toLowerCase();
+        return !genericDomainKeywords.some(keyword => domain.includes(keyword));
       } catch {
         return false;
       }
