@@ -28,7 +28,7 @@ const currencyInfo: Record<string, { symbol: string; rate: number }> = {
   my: { symbol: 'RM', rate: 4.7 },
 };
 
-// Domains to filter out from SERP evidence (too generic/irrelevant)
+// Expanded list of generic/global domains to filter out from SERP evidence
 const genericDomains = [
   'wikipedia.org',
   'bbc.com',
@@ -37,6 +37,24 @@ const genericDomains = [
   'salesforce.com',
   'linkedin.com/pulse',
   'medium.com',
+  'wolterskluwer.com',
+  'baremetrics.com',
+  'entrepreneur.com',
+  'quora.com',
+  'paisabazaar.com',
+  'uschamber.com',
+  'reddit.com',
+  'slideshare.net',
+  'skynethosting.net',
+  'coursera.org',
+  'mailchimp.com',
+  'bigcommerce.com',
+  'wix.com',
+  'godaddy.com',
+  'prometai.app',
+  'shopify.com',
+  'amazon.com',
+  'ebay.com',
 ];
 
 const safeNumber = (val: any, fallback: number = 0) => {
@@ -104,10 +122,9 @@ const ensureStringArray = (arr: any): string[] => {
   return arr.map((item: any) => formatComplexObject(item));
 };
 
-// Improved persona sanitizer with niche-specific fallbacks
+// Improved persona sanitizer with niche and country-specific fallbacks
 const sanitizePersona = (personas: any, niche: string, country: string): any[] => {
   if (!Array.isArray(personas) || personas.length === 0) {
-    // Generate two distinct, plausible personas based on niche and country
     const countryName = countryNames[country] || 'your market';
     return [
       {
@@ -133,7 +150,6 @@ const sanitizePersona = (personas: any, niche: string, country: string): any[] =
       demographics = keys.map(k => demographics[k]).filter(Boolean).join(', ');
       if (!demographics) demographics = `Age 30-45, business professional in ${countryNames[country] || 'your market'}`;
     }
-    // If demographics is same as previous, add variation
     if (idx > 0 && demographics === personas[idx-1]?.demographics) {
       demographics += `, different segment`;
     }
@@ -165,7 +181,7 @@ const extractJSON = (raw: string): any => {
   }
 };
 
-// Enhanced Product Prompt with local currency and case studies, strict persona requirements
+// Enhanced Product Prompt with local currency, case studies, and strict persona requirements
 const buildProductPrompt = (niche: string, country: string, serpContext: string, trendData: number[], serpResults: any[]) => {
   const countryName = countryNames[country] || country;
   const trendSummary = trendData.length > 0 ? `12-month Google Trends data: ${trendData.join(', ')}` : 'No trend data available.';
@@ -297,7 +313,7 @@ export async function generateProductReport(niche: string, country: string) {
     const topSites = serpResults.map((r: any) => 
       `Title: ${r.title} | URL: ${r.link} | Snippet: ${r.snippet || ''}`
     ).join('\n');
-    serpContext = `Here are the top real competitors found via Google SERP (filtered):\n${topSites}`;
+    serpContext = `Here are the top real competitors found via Google SERP (filtered for local relevance):\n${topSites}`;
   } else {
     serpContext = `SERP Data unavailable. However, based on our knowledge of the ${countryNames[country] || country} market for ${niche}, typical competitors include local leaders, cross-border budget sellers, and specialized niche players. Please create realistic competitor brands and data accordingly.`;
   }
@@ -336,7 +352,7 @@ export async function generateProductReport(niche: string, country: string) {
   const dataLimitations = ensureStringArray(analysis.data_limitations);
   const caseStudies = Array.isArray(analysis.case_studies) ? analysis.case_studies : [];
 
-  // Fallback for competitor_benchmark using actual SERP titles/domains if available
+  // Fallback for competitor_benchmark using SERP results if AI failed
   const fallbackBenchmark = [
     { brand: "Local Market Leader", price: `Market Price: ${currencyInfo[country]?.symbol || '$'}Premium`, market_position: "High-end, feature-rich", gap: "Lacks localized warranty" },
     { brand: "Cross-Border Budget Seller", price: `Market Price: ${currencyInfo[country]?.symbol || '$'}Low-cost`, market_position: "Price-driven, basic features", gap: "Poor support, slow shipping" },
@@ -349,7 +365,6 @@ export async function generateProductReport(niche: string, country: string) {
   if (benchmark.length >= 3) {
     safeBenchmark = benchmark.slice(0, 3);
   } else {
-    // Try to use SERP results as benchmark
     const serpBrands = serpResults.slice(0, 3).map(r => ({
       brand: r.title?.split('|')[0]?.trim() || r.title?.split('-')[0]?.trim() || 'Local Competitor',
       price: `Market Price: ${currencyInfo[country]?.symbol || '$'}Unknown`,
