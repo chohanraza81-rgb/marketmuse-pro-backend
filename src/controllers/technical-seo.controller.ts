@@ -223,12 +223,13 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
       if (sitemapRes.status === 200) hasSitemap = true;
     } catch {}
 
-    // PageSpeed Insights
+    // ============ PERFORMANCE MEASUREMENT (Google PageSpeed or GTmetrix) ============
     let mobileScore: number | null = null;
     let desktopScore: number | null = null;
     let coreWebVitals: any = { mobile: {}, desktop: {} };
     let performanceMeasured = false;
 
+    // Primary: Google PageSpeed
     if (process.env.GOOGLE_API_KEY) {
       try {
         const apiUrl = 'https://www.googleapis.com/pagespeedonline/v5/runPagespeed';
@@ -265,6 +266,62 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
       }
     }
 
+    // Fallback: GTmetrix API
+    if (!performanceMeasured && process.env.GTMETRIX_API_KEY) {
+      try {
+        const gtmetrixBase = 'https://gtmetrix.com/api/2.0';
+        const headers = {
+          'Content-Type': 'application/json',
+          'X-Api-Key': process.env.GTMETRIX_API_KEY
+        };
+        // Start test
+        const testConfig = {
+          data: {
+            type: 'test',
+            attributes: {
+              url: websiteUrl,
+              location: 1, // 1 = Vancouver, Canada (or adjust)
+              browser: 1, // 1 = Chrome
+              report: 1
+            }
+          }
+        };
+        const startRes = await axios.post(`${gtmetrixBase}/test`, testConfig, { headers, timeout: 20000 });
+        const testId = startRes.data.data.id;
+        // Poll for completion (max 30 seconds)
+        let resultRes: any;
+        let attempts = 0;
+        while (attempts < 30) {
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          resultRes = await axios.get(`${gtmetrixBase}/test/${testId}`, { headers, timeout: 10000 });
+          if (resultRes.data.data.attributes.state === 'completed') break;
+          attempts++;
+        }
+        if (resultRes?.data?.data?.attributes?.state === 'completed') {
+          const reportData = resultRes.data.data.attributes;
+          // GTmetrix scores are 0-100, might need conversion? They use grades? Actually scores are 0-100.
+          const gtmetrixScore = reportData.results?.performance_score || reportData.results?.pagespeed_score || null;
+          const yslowScore = reportData.results?.yslow_score || null;
+          // We'll map to desktopScore as primary
+          if (gtmetrixScore !== null) {
+            desktopScore = Math.round(gtmetrixScore);
+            performanceMeasured = true;
+            // Extract some timings as core web vitals proxies
+            coreWebVitals.desktop = {
+              lcp: reportData.results?.onload_time ? `${reportData.results.onload_time}ms` : 'N/A',
+              fid: 'N/A', // Not directly provided
+              cls: 'N/A',
+              fcp: reportData.results?.first_contentful_paint_time ? `${reportData.results.first_contentful_paint_time}ms` : 'N/A',
+              tbt: 'N/A'
+            };
+          }
+        }
+      } catch (gtError) {
+        console.warn('GTmetrix API error:', gtError instanceof Error ? gtError.message : 'Unknown');
+      }
+    }
+
+    // If neither API worked, performance remains Not Measured
     // ============ BUILD CHECKS ============
     const checks: AuditCheck[] = [
       { name: 'Title Tag Present', passed: titleTag !== 'MISSING', measured: true, impactScore: 9, effort: 'Low', evidence: titleTag !== 'MISSING' ? `Current: "${titleTag}"` : 'Missing', recommendation: titleTag !== 'MISSING' ? 'Ensure title includes target keyword and is under 60 characters.' : 'Add a concise, keyword-rich title tag.' },
@@ -302,12 +359,12 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
     };
 
     const finalCategoryMap: Record<string, AuditCheck[]> = {
-      'On-Page SEO': [checks[0], checks[1], checks[2], checks[18]], // title, meta, H1, image alt
+      'On-Page SEO': [checks[0], checks[1], checks[2], checks[16]], // title, meta, H1, image alt
       'Mobile & User Experience': [checks[3]], // viewport
       'Structured Data & Rich Results': [checks[4]],
-      'Technical Foundation': [checks[5], checks[6], checks[7], checks[19]], // canonical, robots, sitemap, internal links
-      'Security & Trust': [checks[8], checks[9], checks[10], checks[11], checks[12], checks[13], checks[15], checks[16]], // all security headers excluding X-Robots-Tag
-      'Performance & Core Web Vitals': [checks[17], checks[18]], // mobile, desktop
+      'Technical Foundation': [checks[5], checks[6], checks[7], checks[17]], // canonical, robots, sitemap, internal links
+      'Security & Trust': [checks[8], checks[9], checks[10], checks[11], checks[12], checks[13], checks[14], checks[15], checks[16]], // all security headers
+      'Performance & Core Web Vitals': [checks[18], checks[19]], // mobile, desktop
     };
 
     // Compute category scores
@@ -438,16 +495,7 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
         else if (c.name.includes('sitemap')) impactDescription = 'Incomplete indexing of site pages';
         else if (c.name.includes('robots')) impactDescription = 'Risk of crawl blocks or misconfigurations';
         else if (c.name.includes('HTTPS') || c.name.includes('Mixed Content')) impactDescription = 'Security warnings, trust issues';
-        else if (c.name.includes('X-Robots-Tag')) {
-          if (securityHeaders['X-Robots-Tag'] && /noindex/i.test(securityHeaders['X-Robots-Tag'])) {
-            impactDescription = 'Page blocked from indexing by search engines, causing complete loss of organic visibility';
-          } else if (!securityHeaders['X-Robots-Tag']) {
-            impactDescription = 'No impact – header not present, but it is not required for indexing';
-          } else {
-            impactDescription = 'Header present but not blocking indexing';
-          }
-        }
-        else if (c.name.includes('X-Frame') || c.name.includes('X-Content') || c.name.includes('HSTS') || c.name.includes('Content-Security-Policy') || c.name.includes('Permissions-Policy') || c.name.includes('Referrer-Policy')) impactDescription = 'Security vulnerabilities, potential attacks';
+        else if (c.name.includes('X-Frame') || c.name.includes('X-Content') || c.name.includes('HSTS') || c.name.includes('Content-Security-Policy') || c.name.includes('Permissions-Policy') || c.name.includes('Referrer-Policy') || c.name.includes('X-Robots')) impactDescription = 'Security vulnerabilities, potential attacks';
         else if (c.name.includes('Performance')) impactDescription = 'Poor user experience, higher bounce rate';
         else if (c.name.includes('Image Alt')) impactDescription = 'Reduced accessibility and image search traffic';
         else if (c.name.includes('Internal Links')) impactDescription = 'Weak site architecture, crawl inefficiency';
@@ -467,9 +515,7 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
     markdown += `- robots.txt: ${hasRobots ? 'Found' : 'Not Found'}\n`;
     markdown += `- sitemap.xml: ${hasSitemap ? 'Found' : 'Not Found'}\n`;
 
-    // Security headers status (exclude X-Robots-Tag)
-    const securityHeaderKeys = ['X-Frame-Options', 'X-Content-Type-Options', 'Strict-Transport-Security', 'Content-Security-Policy', 'Permissions-Policy', 'Referrer-Policy'];
-    const missingSecurityHeaders = securityHeaderKeys.filter(key => !securityHeaders[key]);
+    const missingSecurityHeaders = Object.keys(securityHeaders).filter(key => !securityHeaders[key]);
     const securityHeaderStatus = missingSecurityHeaders.length === 0 
       ? 'All recommended security headers present' 
       : `Missing: ${missingSecurityHeaders.join(', ')}`;
@@ -481,7 +527,7 @@ export const createTechnicalSEOReport = async (req: Request, res: Response, next
 
     markdown += `════════════════════════════════════════════════════════════════════\nThis report is generated by MusePRO Senior Research Division.\n════════════════════════════════════════════════════════════════════`;
 
-    // ============ SAVE REPORT ============
+    // Save report
     const report = await Report.create({
       type: 'seo',
       niche: `Technical Audit: ${parsedUrl.hostname}`,
