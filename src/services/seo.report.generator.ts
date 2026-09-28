@@ -1,5 +1,6 @@
 // seo.report.generator.ts
 // 10-SECTION STRUCTURE + TAWIZ COMPLIANT + HYBRID MODE (DataForSEO + Gemini)
+// TypeScript fixes applied: trends map, metricMap typing, convertCurrency null handling
 
 import { cacheService } from './cache';
 import { getGoogleTrends } from './trends';
@@ -8,7 +9,7 @@ import { getSerperResults } from './serper';
 import { getScraperAPISearch } from './scraperapi';
 import { convertCurrency } from './exchange';
 import { runGroqWithRetry } from './groq';
-import { isDataForSEOAvailable, fetchRealKeywordMetrics, fetchRealTrends } from './dataforseo.service';
+import { isDataForSEOAvailable, fetchRealKeywordMetrics, fetchRealTrends, RealKeywordMetric } from './dataforseo.service';
 
 const countryNames: Record<string, string> = {
   us: 'United States', gb: 'United Kingdom', ca: 'Canada', au: 'Australia',
@@ -588,7 +589,8 @@ export async function generateSEOReport(niche: string, country: string) {
     try {
       const realTrends = await fetchRealTrends([niche], country);
       if (realTrends.length > 0 && realTrends[0].timeline.length > 0) {
-        trendData = realTrends[0].timeline.map((t) => t.value);
+        // ✅ FIX: Type annotation added
+        trendData = realTrends[0].timeline.map((t: { value: number }) => t.value);
         console.log(`✅ [Hybrid] Using DataForSEO trends (${trendData.length} points).`);
       }
     } catch (e) {
@@ -662,7 +664,10 @@ export async function generateSEOReport(niche: string, country: string) {
         country
       );
       if (realMetrics.length > 0) {
-        const metricMap = new Map(realMetrics.map((m) => [m.keyword.toLowerCase(), m]));
+        // ✅ FIX: Proper typing for metricMap
+        const metricMap = new Map<string, RealKeywordMetric>(
+          realMetrics.map((m: RealKeywordMetric) => [m.keyword.toLowerCase(), m])
+        );
         let overridden = 0;
         keywords = keywords.map((kw: any) => {
           const real = metricMap.get(kw.keyword.toLowerCase());
@@ -692,8 +697,11 @@ export async function generateSEOReport(niche: string, country: string) {
       const originalCpc = kw.cpc;
       let cpcLocal: number;
       if (kw.dataSource === 'dataforseo') {
-        cpcLocal = await convertCurrency(originalCpc, 'USD', country.toUpperCase());
-        if (!cpcLocal || isNaN(cpcLocal) || cpcLocal <= 0) cpcLocal = originalCpc * currency.rate;
+        // ✅ FIX: Handle null return from convertCurrency
+        const converted = await convertCurrency(originalCpc, 'USD', country.toUpperCase());
+        cpcLocal = (converted === null || isNaN(converted) || converted <= 0)
+          ? originalCpc * currency.rate
+          : converted;
       } else {
         cpcLocal = originalCpc;
       }
