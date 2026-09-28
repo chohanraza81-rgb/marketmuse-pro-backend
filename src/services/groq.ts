@@ -1,26 +1,21 @@
 // groq.ts
 import { env } from '../config/env';
 
-// ============================================================
-// MODEL CONFIGURATION (Updated — Sept 2026)
-// Only currently valid Gemini models. Deprecated/non-existent
-// models removed to prevent "not found" errors and speed up
-// generation.
-// ============================================================
-
-// Pro models (quality first)
+// Pro models: first 2 attempts (higher quality)
 const PRO_MODELS = [
-  'gemini-2.5-pro',        // Current flagship — best quality
+  'gemini-2.5-pro',
+  'gemini-1.5-pro',
 ];
 
-// Flash models (fallback — faster, still capable)
+// Flash models: next 4 attempts (faster, still capable)
 const FLASH_MODELS = [
-  'gemini-2.5-flash',      // Current stable
-  'gemini-2.0-flash',      // Previous gen stable
-  'gemini-2.0-flash-lite', // Fastest fallback
+  'gemini-3.5-flash',
+  'gemini-flash-latest',
+  'gemini-2.0-flash',
+  'gemini-1.5-flash',
 ];
 
-// Total 4 attempts (down from 6)
+// Total 6 attempts
 const ALL_MODELS = [...PRO_MODELS, ...FLASH_MODELS];
 
 const TIMEOUT_MS = 90000;
@@ -42,7 +37,7 @@ async function callGemini(model: string, systemPrompt: string, userMessage: stri
           temperature: 0.3,
           maxOutputTokens: 60000,
           topP: 0.95,
-          responseMimeType: "application/json",
+          responseMimeType: "application/json", // Ensure JSON output
         },
       }),
       signal: controller.signal,
