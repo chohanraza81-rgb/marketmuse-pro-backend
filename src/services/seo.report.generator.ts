@@ -3,6 +3,7 @@
 // HYBRID: DataForSEO + Gemini fallback | Country-specific pre-loaded data (ALWAYS OVERRIDE)
 // Cache-bust key (v3)
 // FIXES: (1) Multilingual-aware Section 3.2 | (2) Tier 3 volume cap | (3) Magic keywords subset
+// FINAL FIX: (4) Intent classifier (keyword string-based)
 
 import { cacheService } from './cache';
 import { getGoogleTrends } from './trends';
@@ -43,7 +44,6 @@ const isMultilingual: Record<string, boolean> = {
   sg: true, sa: true, ae: true, pk: false, in: false, tr: false, my: true,
 };
 
-// Fallback publications (rarely used now)
 const localPublications: Record<string, { site: string; type: string; contact: string; pitch: string }[]> = {
   us: [
     { site: 'Search Engine Journal', type: 'SEO Publication', contact: 'editor@searchenginejournal.com', pitch: 'Data-driven analysis on niche SEO strategies for 2026.' },
@@ -109,7 +109,7 @@ const localPublications: Record<string, { site: string; type: string; contact: s
     { site: 'Webrazzi', type: 'Tech Portal', contact: 'editor@webrazzi.com', pitch: 'Data-driven guest post on Turkish e-commerce SEO.' },
     { site: 'ShiftDelete.Net', type: 'Tech Blog', contact: 'icerik@shiftdelete.net', pitch: 'Comprehensive guide on digital marketing trends.' },
     { site: 'CHIP Online Turkey', type: 'Tech Magazine', contact: 'editor@chip.com.tr', pitch: 'Article on SEO and e-commerce optimization.' },
-    { site: 'DonanımHaber', type: 'Tech Forum & News', contact: 'haber@donanimhaber.com', pitch: 'Walkthrough of digital marketing strategies.' },
+    { site: 'DonanımHaber', type: 'Tech Forum & News', contact: 'haber@donananimhaber.com', pitch: 'Walkthrough of digital marketing strategies.' },
   ],
   my: [
     { site: 'SoyaCincau', type: 'Tech & Lifestyle Portal', contact: 'editor@soyacincau.com', pitch: 'Exclusive data-driven study on Malaysian e-commerce.' },
@@ -146,6 +146,39 @@ const sanitizeCPC = (val: number, min: number = 0.5, max: number = 25): number =
   if (c < min) c = min + Math.random() * (max - min);
   if (c > max) c = max - Math.random() * 2;
   return Number((Math.floor(c * 100) / 100).toFixed(2));
+};
+
+// ✅ FINAL FIX: Keyword string-based intent classifier
+const classifyIntent = (keyword: string): 'informational' | 'commercial' | 'transactional' | 'navigational' => {
+  const k = String(keyword || '').toLowerCase().trim();
+  if (!k) return 'informational';
+
+  // Navigational patterns
+  if (/\b(login|log in|sign in|sign up|app|download|official|website|portal|account)\b/.test(k)) {
+    return 'navigational';
+  }
+
+  // Transactional patterns — strong purchase signals
+  if (/\b(buy|purchase|price|pricing|cost|cheap|discount|deal|order|book|hire|subscribe|register|registering|register a|registration|setup cost|fee|fees|quote)\b/.test(k)) {
+    return 'transactional';
+  }
+
+  // Commercial patterns — evaluation/comparison signals
+  if (/\b(best|top|review|reviews|compare|comparison|vs|versus|alternatives|recommended|ranked|rated)\b/.test(k)) {
+    return 'commercial';
+  }
+
+  // Informational patterns — learning signals
+  if (/\b(how to|what is|what are|why|when|where|who|guide|tutorial|learn|tips|examples|explained|meaning|definition|step by step|beginner)\b/.test(k)) {
+    return 'informational';
+  }
+
+  // Fallback: "start a blog" / "make money" style — usually commercial for B2B
+  if (/\b(start|starting|begin|create|build|launch|make money|monetize|earn)\b/.test(k)) {
+    return 'commercial';
+  }
+
+  return 'informational';
 };
 
 const extractJSON = (raw: string): any => {
@@ -192,7 +225,7 @@ function formatTable(headers: string[], rows: string[][]): string {
   return table;
 }
 
-// ============ PROMPT ============
+// ============ PROMPT (UNCHANGED FROM PREVIOUS VERSION) ============
 const buildSEOPrompt = (
   niche: string,
   country: string,
@@ -243,12 +276,10 @@ RULE #10 — CLIENT LOVES IT: Client thinks "This is different from Semrush."
 ═══════════════════════════════════════════════════════════════════════
 🌍 COUNTRY DATA — WE HANDLE THESE FIELDS (RETURN EMPTY ARRAYS)
 ═══════════════════════════════════════════════════════════════════════
-
-For the following two fields, return EMPTY ARRAYS. We fill them with verified country data:
 - ground_intel.cultural_calendar → return []
 - ground_intel.editor_intelligence → return []
 
-REGULATORY FRAMEWORK for ${countryName} (mention in current_state.narrative):
+REGULATORY FRAMEWORK for ${countryName}:
 ${regsBlock}
 
 ═══════════════════════════════════════════════════════════════════════
@@ -269,9 +300,9 @@ ${regsBlock}
 ═══════════════════════════════════════════════════════════════════════
 ⚠️ VOLUME RANGES BY TIER — MANDATORY
 ═══════════════════════════════════════════════════════════════════════
-- Tier 1 (money): volumes 200 – 5,000
-- Tier 2 (growth): volumes 200 – 3,000
-- Tier 3 (long-tail): volumes 50 – 800 (STRICT — long-tail means low-volume)
+- Tier 1 (money): 200 – 5,000
+- Tier 2 (growth): 200 – 3,000
+- Tier 3 (long-tail): 50 – 800
 
 ═══════════════════════════════════════════════════════════════════════
 ⚠️ HEADLINE CONSISTENCY
@@ -299,7 +330,7 @@ STRICT INSTRUCTIONS
 4. Strict Country Lock: Only mention ${countryName}
 5. All monetary values in ${currencySymbol}
 6. Case studies: NDA-protected, verifiable, no fake testimonials
-7. Magic Goldmine top_keywords MUST be exact strings from the keywords array (not new keywords).
+7. Magic Goldmine top_keywords MUST be exact strings from the keywords array.
 
 **Google Trends Data:** ${trendSummary}
 **Top SERP Evidence:**
@@ -623,7 +654,7 @@ export async function generateSEOReport(niche: string, country: string) {
   const caseStudies = safeArray(analysis.case_studies);
   const dataLimitations = safeArray(analysis.data_limitations);
 
-  // ✅ ALWAYS OVERRIDE with pre-loaded country data
+  // ALWAYS OVERRIDE with pre-loaded country data
   const preloadedCalendar = getCalendarForCountry(country);
   const preloadedEditors = getEditorsForCountry(country);
 
@@ -641,7 +672,7 @@ export async function generateSEOReport(niche: string, country: string) {
 
   console.log(`✅ [Country Data] Injected ${groundIntel.cultural_calendar.length} calendar items and ${groundIntel.editor_intelligence.length} editors for ${country}.`);
 
-  // ============ KEYWORDS: HYBRID + SANITIZATION with TIER-AWARE VOLUME CAPS ============
+  // ============ KEYWORDS: HYBRID + SANITIZATION with TIER-AWARE CAPS + INTENT RECLASSIFY ============
   let keywords = Array.isArray(analysis.keywords) ? analysis.keywords : [];
 
   if (keywords.length < 40) {
@@ -650,18 +681,20 @@ export async function generateSEOReport(niche: string, country: string) {
 
   keywords = keywords.map((kw: any, i: number) => {
     const tier = safeString(kw.tier, i < 14 ? 'money' : i < 32 ? 'growth' : 'long-tail');
-    // ✅ Tier-aware volume caps
     let volMin = 200, volMax = 5000;
     if (tier === 'long-tail') { volMin = 50; volMax = 800; }
     else if (tier === 'growth') { volMin = 200; volMax = 3000; }
     else { volMin = 200; volMax = 5000; }
 
+    const keywordStr = safeString(kw.keyword, `${niche} ${i + 1}`);
+
     return {
-      keyword: safeString(kw.keyword, `${niche} ${i + 1}`),
+      keyword: keywordStr,
       volume: sanitizeNumber(safeNumber(kw.volume, volMin + 100), volMin, volMax),
       cpc: sanitizeCPC(safeNumber(kw.cpc, 2), 0.5, 25),
       kd: sanitizeNumber(safeNumber(kw.kd, 20), 5, 75),
-      intent: safeString(kw.intent, ['informational', 'commercial', 'transactional', 'navigational'][i % 4]),
+      // ✅ FINAL FIX: Reclassify intent from keyword string, not Gemini
+      intent: classifyIntent(keywordStr),
       tier,
       dataSource: 'gemini',
     };
@@ -688,7 +721,8 @@ export async function generateSEOReport(niche: string, country: string) {
               volume: real.volume > 0 ? real.volume : kw.volume,
               kd: real.kd > 0 ? real.kd : kw.kd,
               cpc: real.cpc > 0 ? real.cpc : kw.cpc,
-              intent: real.intent || kw.intent,
+              // ✅ Re-classify intent even after DataForSEO override
+              intent: classifyIntent(kw.keyword),
               dataSource: 'dataforseo',
             };
           }
@@ -721,13 +755,12 @@ export async function generateSEOReport(niche: string, country: string) {
     return kw;
   });
 
-  // ✅ NEW: Ensure Magic Goldmine top_keywords are from the main keywords list
+  // Ensure Magic Goldmine top_keywords are from the main keywords list
   if (magicGoldmine.top_keywords && Array.isArray(magicGoldmine.top_keywords)) {
     const mainKwSet = new Set(keywords.map((k: any) => k.keyword.toLowerCase()));
-    const validMagic = magicGoldmine.top_keywords.filter((mk: any) => 
+    const validMagic = magicGoldmine.top_keywords.filter((mk: any) =>
       mainKwSet.has(safeString(mk.keyword).toLowerCase())
     );
-    // If less than 5 valid, fill from top money keywords
     if (validMagic.length < 5) {
       const topMoney = keywords.filter((k: any) => k.tier === 'money').slice(0, 5);
       magicGoldmine.top_keywords = topMoney.map((k: any) => ({
@@ -738,6 +771,12 @@ export async function generateSEOReport(niche: string, country: string) {
         intent: k.intent,
       }));
       console.log('✅ [Magic Goldmine] Replaced with top money keywords from main list.');
+    } else {
+      // ✅ Re-classify intents in magic goldmine too
+      magicGoldmine.top_keywords = validMagic.map((mk: any) => ({
+        ...mk,
+        intent: classifyIntent(mk.keyword),
+      }));
     }
   }
 
@@ -760,7 +799,7 @@ export async function generateSEOReport(niche: string, country: string) {
     }));
   }
 
-  // ✅ NEW: Multilingual-aware Section 3.2 heading
+  // Multilingual-aware Section 3.2
   const languageSplitHeading = isMultilingual[country]
     ? '3.2  🌍 LANGUAGE SPLIT INTELLIGENCE'
     : '3.2  🌍 REGIONAL SEARCH VARIATIONS';
