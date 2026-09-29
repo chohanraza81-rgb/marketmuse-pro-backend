@@ -1,7 +1,7 @@
 // seo.report.generator.ts
 // 10-SECTION + SECTION 2.5 (50 KEYWORDS) + REPORT STANDARDS + STRICT SEQUENCE
-// HYBRID: DataForSEO + Gemini fallback | Country-specific pre-loaded data
-// Cache-bust key (v2)
+// HYBRID: DataForSEO + Gemini fallback | Country-specific pre-loaded data (ALWAYS OVERRIDE)
+// Cache-bust key (v3)
 
 import { cacheService } from './cache';
 import { getGoogleTrends } from './trends';
@@ -12,7 +12,7 @@ import { convertCurrency } from './exchange';
 import { runGroqWithRetry } from './groq';
 import { isDataForSEOAvailable, fetchRealKeywordMetrics, fetchRealTrends, RealKeywordMetric } from './dataforseo.service';
 
-// ✅ NEW: Country-specific data
+// ✅ Country-specific data (always reliable)
 import { getCalendarForCountry } from '../data/country-calendars';
 import { getEditorsForCountry } from '../data/country-editors';
 import { getRegulationsForCountry } from '../data/country-regulations';
@@ -43,7 +43,7 @@ const isMultilingual: Record<string, boolean> = {
   sg: true, sa: true, ae: true, pk: false, in: false, tr: false, my: true,
 };
 
-// Fallback publications (still used if country-specific data missing)
+// Fallback publications (rarely used now)
 const localPublications: Record<string, { site: string; type: string; contact: string; pitch: string }[]> = {
   us: [
     { site: 'Search Engine Journal', type: 'SEO Publication', contact: 'editor@searchenginejournal.com', pitch: 'Data-driven analysis on niche SEO strategies for 2026.' },
@@ -60,7 +60,7 @@ const localPublications: Record<string, { site: string; type: string; contact: s
   ca: [
     { site: 'Search Engine Journal Canada', type: 'SEO Publication', contact: 'editor@searchenginejournal.ca', pitch: 'Localized SEO insights for Canadian businesses.' },
     { site: 'BetaKit', type: 'Tech & Startup News', contact: 'editor@betakit.com', pitch: 'Data-driven analysis on Canadian e-commerce trends.' },
-    { site: 'The Globe and Mail (Report on Business)', type: 'Business News', contact: 'rob@globeandmail.com', pitch: 'Thought leadership on digital marketing ROI.' },
+    { site: 'The Globe and Mail', type: 'Business News', contact: 'rob@globeandmail.com', pitch: 'Thought leadership on digital marketing ROI.' },
     { site: 'Canadian Business', type: 'Business Magazine', contact: 'editor@canadianbusiness.com', pitch: 'Case study on Canadian startup growth.' },
   ],
   au: [
@@ -126,13 +126,12 @@ const safeNumber = (val: any, fallback: number = 0) => {
 };
 
 const safeString = (val: any, fallback: string = 'N/A') => {
-  if (!val || val === 'undefined' || val === 'null') return fallback;
+  if (!val || val === 'undefined' || val === 'null' || val === 'N/A') return fallback;
   return String(val).replace(/-mock/g, '').replace(/\.mock/g, '').trim() || fallback;
 };
 
 const safeArray = (val: any): any[] => Array.isArray(val) ? val : [];
 
-// ✅ Non-round number sanitizer
 const sanitizeNumber = (val: number, min: number = 10, max: number = 10000): number => {
   let n = Math.floor(Number(val)) || min;
   if (n < min) n = Math.floor(Math.random() * (max - min)) + min;
@@ -193,7 +192,7 @@ function formatTable(headers: string[], rows: string[][]): string {
   return table;
 }
 
-// ============ PROMPT — 10 SECTIONS + SECTION 2.5 + COUNTRY DATA ============
+// ============ PROMPT — EMPTY ARRAYS FOR CALENDAR/EDITORS ============
 const buildSEOPrompt = (
   niche: string,
   country: string,
@@ -211,18 +210,7 @@ const buildSEOPrompt = (
   const currencySymbol = currencyInfo[country]?.symbol || '$';
   const multilingual = isMultilingual[country] ? 'YES' : 'NO';
 
-  // ✅ PRE-LOADED country-specific data
-  const calendar = getCalendarForCountry(country);
-  const editors = getEditorsForCountry(country);
   const regs = getRegulationsForCountry(country);
-
-  const calendarBlock = calendar.map(c =>
-    `  ${c.period}: ${c.behavior} (Priority: ${c.contentPriority})`
-  ).join('\n');
-
-  const editorBlock = editors.map(e =>
-    `  - ${e.site} (DA ${e.da}) — ${e.type}\n    Contact: ${e.contact}\n    Pitch: ${e.pitch}\n    What works: ${e.whatWorks}`
-  ).join('\n');
 
   const regsBlock = `
   - Data Privacy: ${regs.dataPrivacy}
@@ -253,16 +241,16 @@ RULE #9 — REAL SOURCES: Only cite tools actually consulted.
 RULE #10 — CLIENT LOVES IT: Client thinks "This is different from Semrush."
 
 ═══════════════════════════════════════════════════════════════════════
-🌍 PRE-LOADED COUNTRY DATA — USE EXACTLY THIS (DO NOT INVENT)
+🌍 COUNTRY DATA — WE HANDLE THESE FIELDS (RETURN EMPTY ARRAYS)
 ═══════════════════════════════════════════════════════════════════════
 
-CULTURAL CALENDAR for ${countryName} (use for ground_intel.cultural_calendar):
-${calendarBlock}
+For the following two fields, return EMPTY ARRAYS. We fill them with verified country data:
+- ground_intel.cultural_calendar → return []
+- ground_intel.editor_intelligence → return []
 
-LOCAL EDITORS & PUBLICATIONS for ${countryName} (use for ground_intel.editor_intelligence and link_acquisition.target_sites):
-${editorBlock}
+The system will inject verified pre-loaded data for ${countryName}.
 
-REGULATORY FRAMEWORK for ${countryName} (mention in current_state.narrative and findings):
+REGULATORY FRAMEWORK for ${countryName} (mention in current_state.narrative):
 ${regsBlock}
 
 ═══════════════════════════════════════════════════════════════════════
@@ -271,10 +259,9 @@ ${regsBlock}
 - keywords array: EXACTLY 50 items (14 money + 18 growth + 18 long-tail)
 - magic_goldmine.top_keywords: EXACTLY 5 items
 - ground_intel.language_split.top_keywords: EXACTLY 5 items
-- ground_intel.editor_intelligence: EXACTLY 4 items
 - ground_intel.competitor_weaknesses: EXACTLY 3 items
 - content_roadmap: EXACTLY 12 items
-- link_acquisition.target_sites: EXACTLY 4-5 items
+- link_acquisition.target_sites: EXACTLY 4 items
 - link_acquisition.guest_post_topics: EXACTLY 5 items
 - key_findings: EXACTLY 5-7 items
 - competitive_landscape.content_gap: EXACTLY 8 items
@@ -571,11 +558,11 @@ RETURN JSON IN THIS EXACT ORDER:
 
 // ============ MAIN GENERATOR ============
 export async function generateSEOReport(niche: string, country: string) {
-  // ✅ CACHE-BUST: v2 prefix
-  const cacheKey = `seo_v2_${niche}_${country}`;
+  // ✅ CACHE-BUST v3
+  const cacheKey = `seo_v3_${niche}_${country}`;
   const cached = cacheService.get(cacheKey);
   if (cached) {
-    console.log('📦 [Cache] Returning cached SEO report (v2).');
+    console.log('📦 [Cache] Returning cached SEO report (v3).');
     return cached;
   }
 
@@ -604,7 +591,7 @@ export async function generateSEOReport(niche: string, country: string) {
   }
 
   // ============================================================
-  // SERP DATA (3-tier fallback)
+  // SERP DATA
   // ============================================================
   let searchData = await getScraperAPISearch(niche, country).catch(() => null);
   if (!searchData?.organic_results) searchData = await getSearchResults(niche, country).catch(() => null);
@@ -641,25 +628,23 @@ export async function generateSEOReport(niche: string, country: string) {
   const caseStudies = safeArray(analysis.case_studies);
   const dataLimitations = safeArray(analysis.data_limitations);
 
-  // ✅ OVERRIDE Ground Intel with pre-loaded country data
+  // ✅ ALWAYS OVERRIDE with pre-loaded country data (100% reliable)
   const preloadedCalendar = getCalendarForCountry(country);
   const preloadedEditors = getEditorsForCountry(country);
 
-  if (!Array.isArray(groundIntel.cultural_calendar) || groundIntel.cultural_calendar.length === 0) {
-    groundIntel.cultural_calendar = preloadedCalendar.map(c => ({
-      period: c.period,
-      behavior: c.behavior,
-      content_priority: c.contentPriority,
-    }));
-  }
+  groundIntel.cultural_calendar = preloadedCalendar.map(c => ({
+    period: c.period,
+    behavior: c.behavior,
+    content_priority: c.contentPriority,
+  }));
 
-  if (!Array.isArray(groundIntel.editor_intelligence) || groundIntel.editor_intelligence.length === 0) {
-    groundIntel.editor_intelligence = preloadedEditors.map(e => ({
-      publication: e.site,
-      da: e.da,
-      what_works: e.whatWorks,
-    }));
-  }
+  groundIntel.editor_intelligence = preloadedEditors.map(e => ({
+    publication: e.site,
+    da: e.da,
+    what_works: e.whatWorks,
+  }));
+
+  console.log(`✅ [Country Data] Injected ${groundIntel.cultural_calendar.length} calendar items and ${groundIntel.editor_intelligence.length} editors for ${country}.`);
 
   // ============ KEYWORDS: HYBRID + SANITIZATION ============
   let keywords = Array.isArray(analysis.keywords) ? analysis.keywords : [];
@@ -751,7 +736,7 @@ export async function generateSEOReport(niche: string, country: string) {
     }));
   }
 
-  // ============ BUILD MARKDOWN — STRICT SEQUENCE ============
+  // ============ BUILD MARKDOWN ============
   let markdown = `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 MusePRO
 Real-Time Market Research | Intelligence Division
@@ -835,7 +820,7 @@ TOP 3 FINDINGS (Ranked by Business Impact)
   );
   markdown += `\n📝 NARRATIVE\n"${safeString(currentState.narrative)}"\n\n`;
 
-  // SECTION 2.5 — 50 KEYWORD PORTFOLIO
+  // SECTION 2.5
   markdown += `2.5 KEYWORD PORTFOLIO — 50 TIERED KEYWORDS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
