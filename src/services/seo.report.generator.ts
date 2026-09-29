@@ -2,6 +2,7 @@
 // 10-SECTION + SECTION 2.5 (50 KEYWORDS) + REPORT STANDARDS + STRICT SEQUENCE
 // HYBRID: DataForSEO + Gemini fallback | Country-specific pre-loaded data (ALWAYS OVERRIDE)
 // Cache-bust key (v3)
+// FIXES: (1) Multilingual-aware Section 3.2 | (2) Tier 3 volume cap | (3) Magic keywords subset
 
 import { cacheService } from './cache';
 import { getGoogleTrends } from './trends';
@@ -12,7 +13,6 @@ import { convertCurrency } from './exchange';
 import { runGroqWithRetry } from './groq';
 import { isDataForSEOAvailable, fetchRealKeywordMetrics, fetchRealTrends, RealKeywordMetric } from './dataforseo.service';
 
-// ✅ Country-specific data (always reliable)
 import { getCalendarForCountry } from '../data/country-calendars';
 import { getEditorsForCountry } from '../data/country-editors';
 import { getRegulationsForCountry } from '../data/country-regulations';
@@ -192,7 +192,7 @@ function formatTable(headers: string[], rows: string[][]): string {
   return table;
 }
 
-// ============ PROMPT — EMPTY ARRAYS FOR CALENDAR/EDITORS ============
+// ============ PROMPT ============
 const buildSEOPrompt = (
   niche: string,
   country: string,
@@ -231,7 +231,7 @@ Is ${countryName} multilingual? ${multilingual}
 ═══════════════════════════════════════════════════════════════════════
 RULE #1 — VALUE: Every line earns its place. No filler.
 RULE #2 — EVIDENCE: Every number has source: "[tool/date]" or "Modeled Estimate: [formula]". NEVER standalone "Approx".
-RULE #3 — NO FABRICATED NUMBERS: Volumes non-round (887 not 890). CPC varied. KD varied.
+RULE #3 — NO FABRICATED NUMBERS: Volumes non-round. CPC varied. KD varied.
 RULE #4 — NO AI MENTION: Never say "AI", "Gemini", "ChatGPT".
 RULE #5 — NO FAKE QUOTES: No fabricated testimonials.
 RULE #6 — NO UNIFORM DATA: No two keywords share CPC or volume.
@@ -248,8 +248,6 @@ For the following two fields, return EMPTY ARRAYS. We fill them with verified co
 - ground_intel.cultural_calendar → return []
 - ground_intel.editor_intelligence → return []
 
-The system will inject verified pre-loaded data for ${countryName}.
-
 REGULATORY FRAMEWORK for ${countryName} (mention in current_state.narrative):
 ${regsBlock}
 
@@ -257,7 +255,7 @@ ${regsBlock}
 ⚠️ STRICT KEYWORD COUNT — MANDATORY
 ═══════════════════════════════════════════════════════════════════════
 - keywords array: EXACTLY 50 items (14 money + 18 growth + 18 long-tail)
-- magic_goldmine.top_keywords: EXACTLY 5 items
+- magic_goldmine.top_keywords: EXACTLY 5 items — MUST be exact strings from the keywords array
 - ground_intel.language_split.top_keywords: EXACTLY 5 items
 - ground_intel.competitor_weaknesses: EXACTLY 3 items
 - content_roadmap: EXACTLY 12 items
@@ -267,6 +265,13 @@ ${regsBlock}
 - competitive_landscape.content_gap: EXACTLY 8 items
 - competitive_landscape.backlink_gap: EXACTLY 5 items
 - roadmap_90day.days_1_30/31_60/61_90: EXACTLY 3 items each
+
+═══════════════════════════════════════════════════════════════════════
+⚠️ VOLUME RANGES BY TIER — MANDATORY
+═══════════════════════════════════════════════════════════════════════
+- Tier 1 (money): volumes 200 – 5,000
+- Tier 2 (growth): volumes 200 – 3,000
+- Tier 3 (long-tail): volumes 50 – 800 (STRICT — long-tail means low-volume)
 
 ═══════════════════════════════════════════════════════════════════════
 ⚠️ HEADLINE CONSISTENCY
@@ -294,6 +299,7 @@ STRICT INSTRUCTIONS
 4. Strict Country Lock: Only mention ${countryName}
 5. All monetary values in ${currencySymbol}
 6. Case studies: NDA-protected, verifiable, no fake testimonials
+7. Magic Goldmine top_keywords MUST be exact strings from the keywords array (not new keywords).
 
 **Google Trends Data:** ${trendSummary}
 **Top SERP Evidence:**
@@ -353,7 +359,7 @@ RETURN JSON IN THIS EXACT ORDER:
   "ground_intel": {
     "cultural_calendar": [],
     "language_split": {
-      "summary": "2-3 sentences",
+      "summary": "2-3 sentences${multilingual === 'YES' ? ' about bilingual (local language + English) dynamics' : ' about regional search variations (city/state-specific terms) in ' + countryName}",
       "top_keywords": [
         { "keyword": "kw1", "keyword_en": "translation", "volume": 887, "kd": 14, "cpc": 12.80 },
         { "keyword": "kw2", "keyword_en": "translation", "volume": 723, "kd": 9, "cpc": 9.40 },
@@ -375,11 +381,11 @@ RETURN JSON IN THIS EXACT ORDER:
     "criteria_met": ["Combined volume: X/mo (verified)", "Average CPC: ${currencySymbol}Y", "Average KD: Z", "Dedicated pages in Top 10: ZERO"],
     "why_invisible": ["Reason 1", "Reason 2", "Reason 3"],
     "top_keywords": [
-      { "keyword": "kw1", "volume": 887, "kd": 11, "cpc": 21.00, "intent": "transactional" },
-      { "keyword": "kw2", "volume": 723, "kd": 14, "cpc": 24.50, "intent": "commercial" },
-      { "keyword": "kw3", "volume": 612, "kd": 10, "cpc": 16.40, "intent": "transactional" },
-      { "keyword": "kw4", "volume": 487, "kd": 9, "cpc": 18.20, "intent": "commercial" },
-      { "keyword": "kw5", "volume": 342, "kd": 13, "cpc": 19.80, "intent": "commercial" }
+      { "keyword": "<exact string from keywords array>", "volume": 887, "kd": 11, "cpc": 21.00, "intent": "transactional" },
+      { "keyword": "<exact string from keywords array>", "volume": 723, "kd": 14, "cpc": 24.50, "intent": "commercial" },
+      { "keyword": "<exact string from keywords array>", "volume": 612, "kd": 10, "cpc": 16.40, "intent": "transactional" },
+      { "keyword": "<exact string from keywords array>", "volume": 487, "kd": 9, "cpc": 18.20, "intent": "commercial" },
+      { "keyword": "<exact string from keywords array>", "volume": 342, "kd": 13, "cpc": 19.80, "intent": "commercial" }
     ],
     "revenue_projection": {
       "monthly_traffic": 1200,
@@ -558,7 +564,6 @@ RETURN JSON IN THIS EXACT ORDER:
 
 // ============ MAIN GENERATOR ============
 export async function generateSEOReport(niche: string, country: string) {
-  // ✅ CACHE-BUST v3
   const cacheKey = `seo_v3_${niche}_${country}`;
   const cached = cacheService.get(cacheKey);
   if (cached) {
@@ -566,9 +571,6 @@ export async function generateSEOReport(niche: string, country: string) {
     return cached;
   }
 
-  // ============================================================
-  // HYBRID DATA SOURCE 1: Trends
-  // ============================================================
   let trendData: number[] = [];
   const dataForSEOAvailable = isDataForSEOAvailable();
 
@@ -590,9 +592,6 @@ export async function generateSEOReport(niche: string, country: string) {
     console.log(`ℹ️ [Hybrid] Using Google Trends fallback (${trendData.length} points).`);
   }
 
-  // ============================================================
-  // SERP DATA
-  // ============================================================
   let searchData = await getScraperAPISearch(niche, country).catch(() => null);
   if (!searchData?.organic_results) searchData = await getSearchResults(niche, country).catch(() => null);
   if (!searchData?.organic_results) searchData = await getSerperResults(niche, country).catch(() => null);
@@ -604,9 +603,6 @@ export async function generateSEOReport(niche: string, country: string) {
   const serpLinks = cleanOrganicResults.map((r: any) => r.link);
   const serpResults = cleanOrganicResults;
 
-  // ============================================================
-  // GEMINI GENERATION
-  // ============================================================
   const prompt = buildSEOPrompt(niche, country, serpLinks, trendData, serpResults);
   const aiResponse = await runGroqWithRetry(prompt, JSON.stringify({ niche, country }));
   const analysis = extractJSON(aiResponse);
@@ -615,7 +611,6 @@ export async function generateSEOReport(niche: string, country: string) {
   const reference = `MKT-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
   const currency = currencyInfo[country] || { symbol: '$', rate: 1 };
 
-  // ============ EXTRACT SECTIONS ============
   const execSum = analysis.executive_summary || {};
   const currentState = analysis.current_state || {};
   const groundIntel = analysis.ground_intel || {};
@@ -628,7 +623,7 @@ export async function generateSEOReport(niche: string, country: string) {
   const caseStudies = safeArray(analysis.case_studies);
   const dataLimitations = safeArray(analysis.data_limitations);
 
-  // ✅ ALWAYS OVERRIDE with pre-loaded country data (100% reliable)
+  // ✅ ALWAYS OVERRIDE with pre-loaded country data
   const preloadedCalendar = getCalendarForCountry(country);
   const preloadedEditors = getEditorsForCountry(country);
 
@@ -646,22 +641,31 @@ export async function generateSEOReport(niche: string, country: string) {
 
   console.log(`✅ [Country Data] Injected ${groundIntel.cultural_calendar.length} calendar items and ${groundIntel.editor_intelligence.length} editors for ${country}.`);
 
-  // ============ KEYWORDS: HYBRID + SANITIZATION ============
+  // ============ KEYWORDS: HYBRID + SANITIZATION with TIER-AWARE VOLUME CAPS ============
   let keywords = Array.isArray(analysis.keywords) ? analysis.keywords : [];
 
   if (keywords.length < 40) {
     console.warn(`⚠️ [Validation] Only ${keywords.length} keywords generated. Expected 50.`);
   }
 
-  keywords = keywords.map((kw: any, i: number) => ({
-    keyword: safeString(kw.keyword, `${niche} ${i + 1}`),
-    volume: sanitizeNumber(safeNumber(kw.volume, 100), 50, 5000),
-    cpc: sanitizeCPC(safeNumber(kw.cpc, 2), 0.5, 25),
-    kd: sanitizeNumber(safeNumber(kw.kd, 20), 5, 75),
-    intent: safeString(kw.intent, ['informational', 'commercial', 'transactional', 'navigational'][i % 4]),
-    tier: safeString(kw.tier, i < 14 ? 'money' : i < 32 ? 'growth' : 'long-tail'),
-    dataSource: 'gemini',
-  }));
+  keywords = keywords.map((kw: any, i: number) => {
+    const tier = safeString(kw.tier, i < 14 ? 'money' : i < 32 ? 'growth' : 'long-tail');
+    // ✅ Tier-aware volume caps
+    let volMin = 200, volMax = 5000;
+    if (tier === 'long-tail') { volMin = 50; volMax = 800; }
+    else if (tier === 'growth') { volMin = 200; volMax = 3000; }
+    else { volMin = 200; volMax = 5000; }
+
+    return {
+      keyword: safeString(kw.keyword, `${niche} ${i + 1}`),
+      volume: sanitizeNumber(safeNumber(kw.volume, volMin + 100), volMin, volMax),
+      cpc: sanitizeCPC(safeNumber(kw.cpc, 2), 0.5, 25),
+      kd: sanitizeNumber(safeNumber(kw.kd, 20), 5, 75),
+      intent: safeString(kw.intent, ['informational', 'commercial', 'transactional', 'navigational'][i % 4]),
+      tier,
+      dataSource: 'gemini',
+    };
+  });
 
   if (dataForSEOAvailable && keywords.length > 0) {
     console.log('🔀 [Hybrid] DataForSEO available — attempting live keyword metrics...');
@@ -717,6 +721,26 @@ export async function generateSEOReport(niche: string, country: string) {
     return kw;
   });
 
+  // ✅ NEW: Ensure Magic Goldmine top_keywords are from the main keywords list
+  if (magicGoldmine.top_keywords && Array.isArray(magicGoldmine.top_keywords)) {
+    const mainKwSet = new Set(keywords.map((k: any) => k.keyword.toLowerCase()));
+    const validMagic = magicGoldmine.top_keywords.filter((mk: any) => 
+      mainKwSet.has(safeString(mk.keyword).toLowerCase())
+    );
+    // If less than 5 valid, fill from top money keywords
+    if (validMagic.length < 5) {
+      const topMoney = keywords.filter((k: any) => k.tier === 'money').slice(0, 5);
+      magicGoldmine.top_keywords = topMoney.map((k: any) => ({
+        keyword: k.keyword,
+        volume: k.volume,
+        kd: k.kd,
+        cpc: k.cpc,
+        intent: k.intent,
+      }));
+      console.log('✅ [Magic Goldmine] Replaced with top money keywords from main list.');
+    }
+  }
+
   // ============ SERP LANDSCAPE ============
   let serp = Array.isArray(analysis.serp_landscape)
     ? analysis.serp_landscape.filter((s: any) => s.title && s.link).slice(0, 8)
@@ -735,6 +759,15 @@ export async function generateSEOReport(niche: string, country: string) {
       gap: 'Opportunity to create localized guide'
     }));
   }
+
+  // ✅ NEW: Multilingual-aware Section 3.2 heading
+  const languageSplitHeading = isMultilingual[country]
+    ? '3.2  🌍 LANGUAGE SPLIT INTELLIGENCE'
+    : '3.2  🌍 REGIONAL SEARCH VARIATIONS';
+
+  const languageSplitIntro = isMultilingual[country]
+    ? 'This section analyzes bilingual (English + local language) search dynamics.'
+    : `This section analyzes regional search variations across ${countryNames[country]} (city/state-specific terms).`;
 
   // ============ BUILD MARKDOWN ============
   let markdown = `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -899,9 +932,10 @@ tool can replicate.
     markdown += `   → Content Priority: ${safeString(c.content_priority)}\n\n`;
   });
 
-  markdown += `──────────────────────────────────────────────────────────────\n3.2  🌍 LANGUAGE SPLIT INTELLIGENCE\n──────────────────────────────────────────────────────────────\n\n`;
+  markdown += `──────────────────────────────────────────────────────────────\n${languageSplitHeading}\n──────────────────────────────────────────────────────────────\n\n`;
+  markdown += `${languageSplitIntro}\n\n`;
   markdown += `${safeString(groundIntel.language_split?.summary)}\n\n`;
-  markdown += `Top local-language keywords with commercial intent:\n\n`;
+  markdown += `Top ${isMultilingual[country] ? 'local-language' : 'regional'} keywords with commercial intent:\n\n`;
   markdown += formatTable(
     ['Keyword', 'Volume', 'KD', `CPC (${currency.symbol})`],
     safeArray(groundIntel.language_split?.top_keywords).map((k: any) => [
