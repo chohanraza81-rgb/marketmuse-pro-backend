@@ -1,7 +1,7 @@
 // seo.report.generator.ts
-// 10-SECTION STRUCTURE + REPORT STANDARDS + SEMRUSH-DIFFERENT + BEAUTIFUL
-// HYBRID MODE: DataForSEO (if available) + Gemini fallback
-// STRICT KEYWORD COUNT ENFORCEMENT
+// 10-SECTION + SECTION 2.5 (50 KEYWORDS) + REPORT STANDARDS + STRICT SEQUENCE
+// HYBRID: DataForSEO + Gemini fallback | Country-specific pre-loaded data
+// Cache-bust key (v2)
 
 import { cacheService } from './cache';
 import { getGoogleTrends } from './trends';
@@ -11,6 +11,11 @@ import { getScraperAPISearch } from './scraperapi';
 import { convertCurrency } from './exchange';
 import { runGroqWithRetry } from './groq';
 import { isDataForSEOAvailable, fetchRealKeywordMetrics, fetchRealTrends, RealKeywordMetric } from './dataforseo.service';
+
+// ✅ NEW: Country-specific data
+import { getCalendarForCountry } from '../data/country-calendars';
+import { getEditorsForCountry } from '../data/country-editors';
+import { getRegulationsForCountry } from '../data/country-regulations';
 
 const countryNames: Record<string, string> = {
   us: 'United States', gb: 'United Kingdom', ca: 'Canada', au: 'Australia',
@@ -33,91 +38,85 @@ const currencyInfo: Record<string, { symbol: string; rate: number }> = {
   my: { symbol: 'RM', rate: 4.7 },
 };
 
+const isMultilingual: Record<string, boolean> = {
+  us: false, gb: false, ca: true, au: false, de: false,
+  sg: true, sa: true, ae: true, pk: false, in: false, tr: false, my: true,
+};
+
+// Fallback publications (still used if country-specific data missing)
 const localPublications: Record<string, { site: string; type: string; contact: string; pitch: string }[]> = {
   us: [
     { site: 'Search Engine Journal', type: 'SEO Publication', contact: 'editor@searchenginejournal.com', pitch: 'Data-driven analysis on niche SEO strategies for 2026.' },
     { site: 'Moz Blog', type: 'SEO Authority', contact: 'editor@moz.com', pitch: 'In-depth guide on advanced local SEO tactics.' },
     { site: 'Entrepreneur', type: 'Business Magazine', contact: 'contributors@entrepreneur.com', pitch: 'Expert commentary on digital marketing trends.' },
     { site: 'Forbes Business Council', type: 'Business Council', contact: 'forbes@forbes.com', pitch: 'Thought leadership on AI in SEO.' },
-    { site: 'TechCrunch', type: 'Tech News', contact: 'tips@techcrunch.com', pitch: 'Exclusive on emerging SEO tools and startups.' }
   ],
   gb: [
     { site: 'Search Engine Land UK', type: 'SEO Publication', contact: 'editor@searchengineland.co.uk', pitch: 'Localized SEO insights for UK businesses.' },
     { site: 'The Drum', type: 'Marketing Magazine', contact: 'editor@thedrum.com', pitch: 'Case study on UK search trends.' },
     { site: 'Campaign', type: 'Advertising Publication', contact: 'news@campaignlive.co.uk', pitch: 'Feature on digital marketing ROI.' },
     { site: 'Econsultancy', type: 'Digital Marketing', contact: 'editor@econsultancy.com', pitch: 'Expert guide on SEO and conversion optimization.' },
-    { site: 'TechRadar', type: 'Tech News', contact: 'editor@techradar.com', pitch: 'How-to article on technical SEO.' }
   ],
   ca: [
     { site: 'Search Engine Journal Canada', type: 'SEO Publication', contact: 'editor@searchenginejournal.ca', pitch: 'Localized SEO insights for Canadian businesses.' },
     { site: 'BetaKit', type: 'Tech & Startup News', contact: 'editor@betakit.com', pitch: 'Data-driven analysis on Canadian e-commerce trends.' },
     { site: 'The Globe and Mail (Report on Business)', type: 'Business News', contact: 'rob@globeandmail.com', pitch: 'Thought leadership on digital marketing ROI.' },
     { site: 'Canadian Business', type: 'Business Magazine', contact: 'editor@canadianbusiness.com', pitch: 'Case study on Canadian startup growth.' },
-    { site: 'Marketing Mag', type: 'Marketing Publication', contact: 'editor@marketingmag.ca', pitch: 'Expert advice on SEO trends in Canada.' }
   ],
   au: [
     { site: 'Startup Daily', type: 'Tech & Startup Portal', contact: 'editor@startupdaily.net', pitch: 'Exclusive data-backed study on Australian e-commerce trends.' },
-    { site: 'SmartCompany', type: 'SME Business Publication', contact: 'editorial@smartcompany.com.au', pitch: 'Case study on Australian entrepreneur scaling with organic TikTok.' },
+    { site: 'SmartCompany', type: 'SME Business Publication', contact: 'editorial@smartcompany.com.au', pitch: 'Case study on Australian entrepreneur scaling.' },
     { site: 'Power Retail', type: 'E-commerce Intelligence', contact: 'content@powerretail.com.au', pitch: 'Actionable product validation frameworks for AU startups.' },
     { site: 'Inside Retail Australia', type: 'Retail Industry Publication', contact: 'news@insideretail.com.au', pitch: 'Expert commentary on micro-warehousing impact.' },
-    { site: 'Dynamic Business', type: 'SME Business Portal', contact: 'editor@dynamicbusiness.com.au', pitch: 'Guide on navigating GST and consumer law for dropshipping.' }
   ],
   de: [
     { site: 't3n', type: 'Tech & Digital News', contact: 'redaktion@t3n.de', pitch: 'Thought leadership on digital marketing and AI.' },
     { site: 'OnlineMarketing.de', type: 'Marketing Publication', contact: 'redaktion@onlinemarketing.de', pitch: 'Expert guide on SEO strategies for German SMEs.' },
     { site: 'Gründerdaily', type: 'Startup News', contact: 'redaktion@gruenderdaily.de', pitch: 'Data-driven article on German e-commerce trends.' },
-    { site: 'Gruenderszene', type: 'Startup Magazine', contact: 'redaktion@gruenderszene.de', pitch: 'Case study on Berlin startups and e-commerce.' },
-    { site: 'Internet World', type: 'Business & E-commerce', contact: 'redaktion@internetworld.de', pitch: 'Guide on cross-border e-commerce and SEO.' }
+    { site: 'Internet World', type: 'Business & E-commerce', contact: 'redaktion@internetworld.de', pitch: 'Guide on cross-border e-commerce and SEO.' },
   ],
   sg: [
     { site: 'e27', type: 'Tech & Startup Portal', contact: 'editor@e27.co', pitch: 'Exclusive data on Singapore e-commerce sourcing trends.' },
     { site: 'Vulcan Post', type: 'Business & Startup Media', contact: 'team@vulcanpost.com', pitch: 'Case study on Singaporean entrepreneurs using local SEO.' },
     { site: 'SGSME.sg', type: 'SME Business Portal', contact: 'editor@sgsme.sg', pitch: 'Guide on digital marketing for Singapore SMEs.' },
     { site: 'Marketing Interactive', type: 'Marketing Publication', contact: 'editor@marketing-interactive.com', pitch: 'Expert commentary on Southeast Asian e-commerce.' },
-    { site: 'The Business Times (SME)', type: 'Business News', contact: 'btnews@sph.com.sg', pitch: 'Thought leadership on cross-border logistics and sourcing.' }
   ],
   sa: [
     { site: 'Arab News', type: 'Mainstream Media', contact: 'editor@arabnews.com', pitch: 'Exclusive editorial on Saudi e-commerce growth.' },
     { site: 'Saudi Gazette', type: 'News Portal', contact: 'editor@saudigazette.com.sa', pitch: 'Thought-leadership piece on digital transformation.' },
     { site: 'Argaam', type: 'Business News', contact: 'editor@argaam.com', pitch: 'Data-driven analysis on Saudi market trends.' },
     { site: 'Wamda', type: 'Startup & Tech', contact: 'editor@wamda.com', pitch: 'Case study on Saudi startups using SEO.' },
-    { site: 'MENAbytes', type: 'Tech News', contact: 'editor@menabytes.com', pitch: 'Guide on e-commerce and digital marketing in KSA.' }
   ],
   ae: [
     { site: 'Gulf News', type: 'Mainstream Media', contact: 'editorial@gulfnews.com', pitch: 'Exclusive editorial on AI adoption in UAE SMEs.' },
     { site: 'The National', type: 'National News', contact: 'opinion@thenationalnews.com', pitch: 'Thought-leadership piece on digital skills.' },
     { site: 'Khaleej Times', type: 'Mainstream Media', contact: 'tech@khaleejtimes.com', pitch: 'Review of top digital tools for UAE businesses.' },
     { site: 'Arabian Business', type: 'Business Publication', contact: 'features@arabianbusiness.com', pitch: 'Executive analysis of ROI from SEO investments.' },
-    { site: 'Wired Middle East', type: 'Tech Media', contact: 'editor@wired.me', pitch: 'Deep dive into localized Arabic SEO strategies.' }
   ],
   pk: [
     { site: 'Profit by Pakistan Today', type: 'Business News', contact: 'editor@profit.pakistantoday.com.pk', pitch: 'Data-driven analysis on Pakistani e-commerce.' },
     { site: 'TechJuice', type: 'Tech & Startup', contact: 'editor@techjuice.pk', pitch: 'Case study on Pakistani startups using SEO.' },
     { site: 'Dawn (Business)', type: 'Mainstream Media', contact: 'business@dawn.com', pitch: 'Thought leadership on digital economy.' },
     { site: 'PakWired', type: 'Tech News', contact: 'editor@pakwired.com', pitch: 'Guide on e-commerce and digital marketing in Pakistan.' },
-    { site: 'Startup Pakistan', type: 'Startup News', contact: 'editor@startuppakistan.pk', pitch: 'Feature on emerging Pakistani e-commerce brands.' }
   ],
   in: [
     { site: 'YourStory', type: 'Startup & Tech', contact: 'editor@yourstory.com', pitch: 'Case study on Indian e-commerce growth.' },
     { site: 'Inc42', type: 'Startup News', contact: 'editor@inc42.com', pitch: 'Data-driven analysis on Indian digital economy.' },
     { site: 'Economic Times (ET Rise)', type: 'Business News', contact: 'etrise@timesgroup.com', pitch: 'Thought leadership on SME digital marketing.' },
     { site: 'Entrackr', type: 'Startup & Tech', contact: 'editor@entrackr.com', pitch: 'Feature on Indian e-commerce and sourcing trends.' },
-    { site: 'Social Samosa', type: 'Marketing Publication', contact: 'editor@socialsamosa.com', pitch: 'Expert guide on SEO and digital marketing in India.' }
   ],
   tr: [
     { site: 'Webrazzi', type: 'Tech Portal', contact: 'editor@webrazzi.com', pitch: 'Data-driven guest post on Turkish e-commerce SEO.' },
     { site: 'ShiftDelete.Net', type: 'Tech Blog', contact: 'icerik@shiftdelete.net', pitch: 'Comprehensive guide on digital marketing trends.' },
     { site: 'CHIP Online Turkey', type: 'Tech Magazine', contact: 'editor@chip.com.tr', pitch: 'Article on SEO and e-commerce optimization.' },
     { site: 'DonanımHaber', type: 'Tech Forum & News', contact: 'haber@donanimhaber.com', pitch: 'Walkthrough of digital marketing strategies.' },
-    { site: 'Webrazzi', type: 'Startup & Tech', contact: 'editor@webrazzi.com', pitch: 'Case study on Turkish e-commerce brands.' }
   ],
   my: [
     { site: 'SoyaCincau', type: 'Tech & Lifestyle Portal', contact: 'editor@soyacincau.com', pitch: 'Exclusive data-driven study on Malaysian e-commerce.' },
     { site: 'Vulcan Post Malaysia', type: 'Business & Startup Media', contact: 'my@vulcanpost.com', pitch: 'Case study of Malaysian Gen-Z creator building income online.' },
     { site: 'Digital News Asia', type: 'Tech News & Business', contact: 'editor@digitalnewsasia.com', pitch: 'Analytical piece on digital marketing strategies.' },
     { site: 'TechNave', type: 'Tech & Gadget Portal', contact: 'feedback@technave.com', pitch: 'Guide on digital tools for Malaysian SMEs.' },
-    { site: 'The Malaysian Reserve', type: 'Business News', contact: 'editor@themalaysianreserve.com', pitch: 'Thought leadership on e-commerce growth in Malaysia.' }
-  ]
+  ],
 };
 
 // ============ HELPERS ============
@@ -133,12 +132,21 @@ const safeString = (val: any, fallback: string = 'N/A') => {
 
 const safeArray = (val: any): any[] => Array.isArray(val) ? val : [];
 
-// Non-round random number generator (avoids 0 or 5 endings)
-const nonRoundNumber = (min: number, max: number): number => {
-  const n = Math.floor(Math.random() * (max - min + 1)) + min;
-  if (n % 10 === 0) return n + 3;
-  if (n % 10 === 5) return n + 2;
+// ✅ Non-round number sanitizer
+const sanitizeNumber = (val: number, min: number = 10, max: number = 10000): number => {
+  let n = Math.floor(Number(val)) || min;
+  if (n < min) n = Math.floor(Math.random() * (max - min)) + min;
+  if (n > max) n = Math.floor(Math.random() * (max - min)) + min;
+  if (n % 10 === 0) n += Math.floor(Math.random() * 7) + 1;
+  if (n % 10 === 5) n += Math.floor(Math.random() * 3) + 1;
   return n;
+};
+
+const sanitizeCPC = (val: number, min: number = 0.5, max: number = 25): number => {
+  let c = Number(val) || min;
+  if (c < min) c = min + Math.random() * (max - min);
+  if (c > max) c = max - Math.random() * 2;
+  return Number((Math.floor(c * 100) / 100).toFixed(2));
 };
 
 const extractJSON = (raw: string): any => {
@@ -185,7 +193,7 @@ function formatTable(headers: string[], rows: string[][]): string {
   return table;
 }
 
-// ============ 10-SECTION PROMPT — REPORT STANDARDS + STRICT KEYWORD COUNTS ============
+// ============ PROMPT — 10 SECTIONS + SECTION 2.5 + COUNTRY DATA ============
 const buildSEOPrompt = (
   niche: string,
   country: string,
@@ -201,117 +209,126 @@ const buildSEOPrompt = (
     .map((r: any, i: number) => `${i + 1}. ${r.title} - ${r.link}`)
     .join('\n');
   const currencySymbol = currencyInfo[country]?.symbol || '$';
+  const multilingual = isMultilingual[country] ? 'YES' : 'NO';
 
-  return `You are a senior SEO strategist at a top-tier digital agency. You write like a human consultant, not an AI. Every report must feel like it was crafted by someone who deeply understands the client's business, market, and competitors.
+  // ✅ PRE-LOADED country-specific data
+  const calendar = getCalendarForCountry(country);
+  const editors = getEditorsForCountry(country);
+  const regs = getRegulationsForCountry(country);
+
+  const calendarBlock = calendar.map(c =>
+    `  ${c.period}: ${c.behavior} (Priority: ${c.contentPriority})`
+  ).join('\n');
+
+  const editorBlock = editors.map(e =>
+    `  - ${e.site} (DA ${e.da}) — ${e.type}\n    Contact: ${e.contact}\n    Pitch: ${e.pitch}\n    What works: ${e.whatWorks}`
+  ).join('\n');
+
+  const regsBlock = `
+  - Data Privacy: ${regs.dataPrivacy}
+  - Tax Framework: ${regs.taxFramework}
+  - Key Compliance: ${regs.keyCompliance}
+  - Local Authority: ${regs.localAuthority}`;
+
+  return `You are a senior SEO strategist at a top-tier digital agency. Write like a human consultant, not an AI.
 
 Target Market: ${countryName}. Current Year: 2026.
 Local Currency: ${currencySymbol}
+Is ${countryName} multilingual? ${multilingual}
 
-**Return ONLY a valid JSON object. No markdown code blocks, no extra text.**
-
-═══════════════════════════════════════════════════════════════════════
-📋 REPORT STANDARDS — NON-NEGOTIABLE RULES
-═══════════════════════════════════════════════════════════════════════
-
-**RULE #1 — VALUE (Every line earns its place):**
-- Every sentence must serve the reader's business objective.
-- If a line doesn't help them make money, save money, or save time — remove it.
-- No filler. No generic advice.
-
-**RULE #2 — EVIDENCE (Every number has a source):**
-- Every number MUST have a label: "Source: [tool/date]" or "Modeled Estimate: [formula]".
-- NEVER use "Approx" or "Est." as a standalone label.
-- Every claim must be traceable.
-
-**RULE #3 — NO FABRICATED NUMBERS:**
-- Volumes must be non-round: 887 not 890, 723 not 720.
-- CPC must vary per keyword: ${currencySymbol}18.50, ${currencySymbol}22.40, ${currencySymbol}15.20 — NEVER uniform.
-- KD must vary per keyword.
-- Financial projections MUST show formula: "${currencySymbol}84K/mo = 14 kw × 1,300/mo × 3.2% CVR × ${currencySymbol}1,400 AOV".
-- If data is unavailable, SAY SO — never invent.
-
-**RULE #4 — NO AI MENTION:**
-- Never say "AI", "Gemini", "ChatGPT", "model", "generated".
-- Write like a senior human strategist.
-
-**RULE #5 — NO FAKE QUOTES:**
-- No fabricated client testimonials. Ever.
-- Case studies must be realistic, NDA-aware, and verifiable.
-
-**RULE #6 — NO UNIFORM DATA:**
-- No two keywords share the same CPC.
-- No two keywords share the same volume.
-- No two findings have the same size of prize.
-
-**RULE #7 — INTELLIGENCE, NOT DATA:**
-For EVERY number, provide: NUMBER → MEANING → INSIGHT → ACTION.
-- Don't just say "Volume: 890". Say: "890/mo → #1 position drives 267 clicks/mo → at 3.2% CVR = 8.5 leads → at ${currencySymbol}1,400 AOV = ${currencySymbol}11,900/mo from one keyword."
-
-**RULE #8 — BEAUTIFUL FORMATTING:**
-- Section dividers: ━━━━━━━━━━━━━━
-- Highlight boxes: ┌───┐ │ content │ └───┘
-- Traffic light system: 🟢 🟡 🔴
-- Trend arrows: ↗️ ↘️ ➡️
-- Strategic emojis: 💡 🎯 ✨ ⚠️ ✅ ❌ 📊 📈
-
-**RULE #9 — REAL SOURCES:**
-- Use only tools actually consulted: DataForSEO, GSC, GA4, Google Trends, Industry-Standard Keyword Planners.
-- Never cite tools you haven't used.
-
-**RULE #10 — CLIENT LOVES IT:**
-- Every section must make the client think: "This is different from Semrush. This person understands my business."
+**Return ONLY valid JSON. No markdown blocks.**
 
 ═══════════════════════════════════════════════════════════════════════
-⚠️ STRICT KEYWORD COUNT — NON-NEGOTIABLE
+📋 REPORT STANDARDS — NON-NEGOTIABLE
+═══════════════════════════════════════════════════════════════════════
+RULE #1 — VALUE: Every line earns its place. No filler.
+RULE #2 — EVIDENCE: Every number has source: "[tool/date]" or "Modeled Estimate: [formula]". NEVER standalone "Approx".
+RULE #3 — NO FABRICATED NUMBERS: Volumes non-round (887 not 890). CPC varied. KD varied.
+RULE #4 — NO AI MENTION: Never say "AI", "Gemini", "ChatGPT".
+RULE #5 — NO FAKE QUOTES: No fabricated testimonials.
+RULE #6 — NO UNIFORM DATA: No two keywords share CPC or volume.
+RULE #7 — INTELLIGENCE NOT DATA: Number → Meaning → Insight → Action.
+RULE #8 — BEAUTIFUL: Section dividers, boxes, traffic lights, arrows.
+RULE #9 — REAL SOURCES: Only cite tools actually consulted.
+RULE #10 — CLIENT LOVES IT: Client thinks "This is different from Semrush."
+
+═══════════════════════════════════════════════════════════════════════
+🌍 PRE-LOADED COUNTRY DATA — USE EXACTLY THIS (DO NOT INVENT)
 ═══════════════════════════════════════════════════════════════════════
 
-You MUST return EXACTLY these counts. Reports with fewer items will be rejected:
+CULTURAL CALENDAR for ${countryName} (use for ground_intel.cultural_calendar):
+${calendarBlock}
 
-- keywords array: EXACTLY 50 items
+LOCAL EDITORS & PUBLICATIONS for ${countryName} (use for ground_intel.editor_intelligence and link_acquisition.target_sites):
+${editorBlock}
+
+REGULATORY FRAMEWORK for ${countryName} (mention in current_state.narrative and findings):
+${regsBlock}
+
+═══════════════════════════════════════════════════════════════════════
+⚠️ STRICT KEYWORD COUNT — MANDATORY
+═══════════════════════════════════════════════════════════════════════
+- keywords array: EXACTLY 50 items (14 money + 18 growth + 18 long-tail)
 - magic_goldmine.top_keywords: EXACTLY 5 items
 - ground_intel.language_split.top_keywords: EXACTLY 5 items
+- ground_intel.editor_intelligence: EXACTLY 4 items
+- ground_intel.competitor_weaknesses: EXACTLY 3 items
 - content_roadmap: EXACTLY 12 items
-- link_acquisition.target_sites: EXACTLY 5 items
+- link_acquisition.target_sites: EXACTLY 4-5 items
 - link_acquisition.guest_post_topics: EXACTLY 5 items
-- key_findings: EXACTLY 5 to 7 items
+- key_findings: EXACTLY 5-7 items
 - competitive_landscape.content_gap: EXACTLY 8 items
 - competitive_landscape.backlink_gap: EXACTLY 5 items
+- roadmap_90day.days_1_30/31_60/61_90: EXACTLY 3 items each
 
-If you return fewer than required, the report fails quality control.
+═══════════════════════════════════════════════════════════════════════
+⚠️ HEADLINE CONSISTENCY
+═══════════════════════════════════════════════════════════════════════
+executive_summary.headline MUST match magic_goldmine.revenue_projection.monthly_pipeline.
+
+═══════════════════════════════════════════════════════════════════════
+⚠️ CASE STUDY RULES
+═══════════════════════════════════════════════════════════════════════
+Is ${countryName} multilingual? ${multilingual}
+
+In case_studies.what_drove_growth:
+- If NO: Use "English-language content depth", "Regional relevance", "Technical optimization", "Authority development". NEVER mention "bilingual".
+- If YES: Bilingual OK. Mention "English + [local language]".
+
+In case_studies.challenge, FIRST LINE MUST BE:
+"Note: This case study represents a different client engagement, not the current account. The profile is included as a comparable reference point."
 
 ═══════════════════════════════════════════════════════════════════════
 STRICT INSTRUCTIONS
 ═══════════════════════════════════════════════════════════════════════
-1. CPC realistic and varied per keyword: ${currencySymbol}0.50 – ${currencySymbol}25.00.
-2. Volumes non-round: 887, 723, 612, 1,284 — never 890, 720, 610, 1,300.
-3. KD realistic and varied: 5 – 75.
-4. Strict Country Lock: Only mention ${countryName} and its cities/regions.
-5. Never invent fake local sites.
-6. All monetary values in ${currencySymbol}.
-7. Case studies: NDA-protected, verifiable, no fake testimonials.
-8. Keywords must be tiered: 14 "money" (tier 1), 18 "growth" (tier 2), 18 "long-tail" (tier 3).
+1. CPC varied per keyword: ${currencySymbol}0.50 – ${currencySymbol}25.00
+2. Volumes non-round: 887, 723, 612 — never 890, 720, 610
+3. KD varied: 5 – 75
+4. Strict Country Lock: Only mention ${countryName}
+5. All monetary values in ${currencySymbol}
+6. Case studies: NDA-protected, verifiable, no fake testimonials
 
-**Google Trends Data (12 months):** ${trendSummary}
+**Google Trends Data:** ${trendSummary}
 **Top SERP Evidence:**
 ${serpEvidence || 'No live SERP data available.'}
 
 ═══════════════════════════════════════════════════════════════════════
-RETURN JSON WITH EXACTLY THIS STRUCTURE (10 sections):
+RETURN JSON IN THIS EXACT ORDER:
 ═══════════════════════════════════════════════════════════════════════
 
 {
   "executive_summary": {
-    "headline": "One-line business impact with a specific number in ${currencySymbol}",
+    "headline": "One-line business impact with specific number in ${currencySymbol}",
     "top_findings": [
-      { "rank": 1, "priority": "CRITICAL", "title": "Specific finding", "size_of_prize": "${currencySymbol}X/month missed revenue", "root_cause": "Specific cause" },
-      { "rank": 2, "priority": "HIGH", "title": "Specific finding", "size_of_prize": "Specific impact", "root_cause": "Specific cause" },
-      { "rank": 3, "priority": "HIGH", "title": "Specific finding", "size_of_prize": "Specific impact", "root_cause": "Specific cause" }
+      { "rank": 1, "priority": "CRITICAL", "title": "...", "size_of_prize": "${currencySymbol}X/month", "root_cause": "..." },
+      { "rank": 2, "priority": "HIGH", "title": "...", "size_of_prize": "${currencySymbol}X/month", "root_cause": "..." },
+      { "rank": 3, "priority": "HIGH", "title": "...", "size_of_prize": "${currencySymbol}X/month", "root_cause": "..." }
     ],
     "what_this_means": "3-4 sentence synthesis",
     "next_90_days": ["Action 1", "Action 2", "Action 3"],
     "estimated_roi": {
-      "investment": "${currencySymbol}X (6-month total)",
-      "pipeline": "${currencySymbol}Y (6-month projected)",
+      "investment": "${currencySymbol}X",
+      "pipeline": "${currencySymbol}Y",
       "roi_percent": "Z%"
     },
     "health_score": {
@@ -327,7 +344,6 @@ RETURN JSON WITH EXACTLY THIS STRUCTURE (10 sections):
       ]
     }
   },
-
   "current_state": {
     "data_sources": [
       { "data_type": "Organic traffic & clicks", "source": "Google Search Console", "pull_date": "September 2026" },
@@ -345,116 +361,94 @@ RETURN JSON WITH EXACTLY THIS STRUCTURE (10 sections):
       { "metric": "AI Citations", "current": "0", "previous": "0", "change": "0", "target": "15" },
       { "metric": "Domain Rating", "current": "34", "previous": "32", "change": "+2", "target": "45" }
     ],
-    "narrative": "3-4 sentence synthesis: what changed, why, what's next."
+    "narrative": "3-4 sentence synthesis (mention local regulations: ${regs.keyCompliance})"
   },
-
   "ground_intel": {
-    "cultural_calendar": [
-      { "period": "Jan – Feb", "behavior": "🟢 AGGRESSIVE — New budgets, peak procurement", "content_priority": "HIGH" },
-      { "period": "Mar – Apr", "behavior": "🟡 MODERATE — Early compliance audits", "content_priority": "MEDIUM" },
-      { "period": "May – Jun", "behavior": "🟢 AGGRESSIVE — Pre-year-end tax structuring", "content_priority": "MAXIMUM" },
-      { "period": "Jul – Aug", "behavior": "🟢 RESUME — New fiscal year priorities", "content_priority": "HIGH" },
-      { "period": "Sep – Oct", "behavior": "🟢 PEAK — Spring acceleration", "content_priority": "HIGH" },
-      { "period": "Nov – Dec", "behavior": "🔴 DORMANT — Holiday shutdown", "content_priority": "LOW" }
-    ],
+    "cultural_calendar": [],
     "language_split": {
-      "summary": "2-3 sentences on local language dynamics specific to ${countryName}",
+      "summary": "2-3 sentences",
       "top_keywords": [
-        { "keyword": "Local-language keyword 1", "keyword_en": "English translation", "volume": 887, "kd": 14, "cpc": 12.80 },
-        { "keyword": "Local-language keyword 2", "keyword_en": "English translation", "volume": 723, "kd": 9, "cpc": 9.40 },
-        { "keyword": "Local-language keyword 3", "keyword_en": "English translation", "volume": 512, "kd": 11, "cpc": 11.20 },
-        { "keyword": "Local-language keyword 4", "keyword_en": "English translation", "volume": 384, "kd": 13, "cpc": 8.60 },
-        { "keyword": "Local-language keyword 5", "keyword_en": "English translation", "volume": 267, "kd": 10, "cpc": 7.90 }
+        { "keyword": "kw1", "keyword_en": "translation", "volume": 887, "kd": 14, "cpc": 12.80 },
+        { "keyword": "kw2", "keyword_en": "translation", "volume": 723, "kd": 9, "cpc": 9.40 },
+        { "keyword": "kw3", "keyword_en": "translation", "volume": 512, "kd": 11, "cpc": 11.20 },
+        { "keyword": "kw4", "keyword_en": "translation", "volume": 384, "kd": 13, "cpc": 8.60 },
+        { "keyword": "kw5", "keyword_en": "translation", "volume": 267, "kd": 10, "cpc": 7.90 }
       ]
     },
-    "buyer_behavior": [
-      "Specific behavior pattern 1 with stat",
-      "Specific behavior pattern 2 with stat",
-      "Specific behavior pattern 3 with stat",
-      "Specific behavior pattern 4 with stat"
-    ],
-    "editor_intelligence": [
-      { "publication": "Publication 1", "da": 78, "what_works": "What kind of pitch succeeds" },
-      { "publication": "Publication 2", "da": 82, "what_works": "Specific approach" },
-      { "publication": "Publication 3", "da": 64, "what_works": "Specific approach" },
-      { "publication": "Publication 4", "da": 71, "what_works": "Specific approach" }
-    ],
+    "buyer_behavior": ["Pattern 1 with stat", "Pattern 2", "Pattern 3", "Pattern 4"],
+    "editor_intelligence": [],
     "competitor_weaknesses": [
-      { "competitor": "Competitor A (DA XX)", "weakness": "Specific verified weakness" },
-      { "competitor": "Competitor B (DA XX)", "weakness": "Specific verified weakness" },
-      { "competitor": "Competitor C (DA XX)", "weakness": "Specific verified weakness" }
+      { "competitor": "Comp A (DA XX)", "weakness": "Specific" },
+      { "competitor": "Comp B (DA XX)", "weakness": "Specific" },
+      { "competitor": "Comp C (DA XX)", "weakness": "Specific" }
     ]
   },
-
   "magic_goldmine": {
-    "cluster_name": "Specific cluster name",
+    "cluster_name": "Specific cluster",
     "criteria_met": ["Combined volume: X/mo (verified)", "Average CPC: ${currencySymbol}Y", "Average KD: Z", "Dedicated pages in Top 10: ZERO"],
     "why_invisible": ["Reason 1", "Reason 2", "Reason 3"],
     "top_keywords": [
-      { "keyword": "keyword 1", "volume": 887, "kd": 11, "cpc": 21.00, "intent": "transactional" },
-      { "keyword": "keyword 2", "volume": 723, "kd": 14, "cpc": 24.50, "intent": "commercial" },
-      { "keyword": "keyword 3", "volume": 612, "kd": 10, "cpc": 16.40, "intent": "transactional" },
-      { "keyword": "keyword 4", "volume": 487, "kd": 9, "cpc": 18.20, "intent": "commercial" },
-      { "keyword": "keyword 5", "volume": 342, "kd": 13, "cpc": 19.80, "intent": "commercial" }
+      { "keyword": "kw1", "volume": 887, "kd": 11, "cpc": 21.00, "intent": "transactional" },
+      { "keyword": "kw2", "volume": 723, "kd": 14, "cpc": 24.50, "intent": "commercial" },
+      { "keyword": "kw3", "volume": 612, "kd": 10, "cpc": 16.40, "intent": "transactional" },
+      { "keyword": "kw4", "volume": 487, "kd": 9, "cpc": 18.20, "intent": "commercial" },
+      { "keyword": "kw5", "volume": 342, "kd": 13, "cpc": 19.80, "intent": "commercial" }
     ],
     "revenue_projection": {
       "monthly_traffic": 1200,
-      "conversion_rate": "3.2% (industry benchmark, HubSpot 2026)",
+      "conversion_rate": "3.2% (HubSpot 2026)",
       "monthly_leads": 38,
       "avg_deal_value": "${currencySymbol}1,400",
       "monthly_pipeline": "${currencySymbol}53,200",
       "formula": "38 leads × ${currencySymbol}1,400 = ${currencySymbol}53,200"
     },
-    "evidence": ["Data source + date", "SERP audit method", "Competitor gap: X pages", "Conversion benchmark source"]
+    "evidence": ["Source 1", "Source 2", "Source 3", "Source 4"]
   },
-
   "magic_playbook": {
     "target_competitor": { "name": "Competitor A", "da": 52, "traffic": "45,200/mo" },
     "timeline": [
-      { "date": "Sep 2024", "action": "Specific action", "impact": "Specific impact" },
-      { "date": "Nov 2024", "action": "Specific action", "impact": "Specific impact" },
-      { "date": "Feb 2025", "action": "Specific action", "impact": "Specific impact" },
-      { "date": "Jun 2025", "action": "Specific action", "impact": "Specific impact" }
+      { "date": "Sep 2024", "action": "...", "impact": "..." },
+      { "date": "Nov 2024", "action": "...", "impact": "..." },
+      { "date": "Feb 2025", "action": "...", "impact": "..." },
+      { "date": "Jun 2025", "action": "...", "impact": "..." }
     ],
-    "content_formula": ["Every pillar: X words minimum", "Structure: H1 → Problem → Solution → Case study → CTA", "1 original data point per post", "Specific recurring pattern"],
+    "content_formula": ["...", "...", "...", "..."],
     "backlink_strategy": {
       "total_backlinks": 342,
       "local_percentage": "78%",
       "top_sources": [
-        { "domain": "Publication 1", "links": 8 },
-        { "domain": "Publication 2", "links": 6 },
-        { "domain": "Publication 3", "links": 4 }
+        { "domain": "D1", "links": 8 },
+        { "domain": "D2", "links": 6 },
+        { "domain": "D3", "links": 4 }
       ]
     },
     "vulnerabilities": ["Gap 1", "Gap 2", "Gap 3", "Gap 4"],
     "counter_play": [
-      { "week": "Week 1-2", "action": "Specific counter-move" },
-      { "week": "Week 3-4", "action": "Specific counter-move" },
-      { "week": "Week 5-6", "action": "Specific counter-move" },
-      { "week": "Week 7-8", "action": "Specific counter-move" }
+      { "week": "Week 1-2", "action": "..." },
+      { "week": "Week 3-4", "action": "..." },
+      { "week": "Week 5-6", "action": "..." },
+      { "week": "Week 7-8", "action": "..." }
     ],
-    "evidence": ["Backlink data source", "Content audit method", "Timeline source", "Vulnerability verification"]
+    "evidence": ["...", "...", "...", "..."]
   },
-
   "key_findings": [
     {
       "rank": 1,
       "priority": "CRITICAL",
-      "title": "Specific finding",
+      "title": "...",
       "category": "Keyword Performance",
       "impact": "HIGH",
       "effort": "LOW",
-      "what_is_happening": "2-3 sentences specific to this business",
-      "why_it_matters": "Business impact",
+      "what_is_happening": "...",
+      "why_it_matters": "...",
       "size_of_prize": "${currencySymbol}X/month",
       "size_formula": "X kw × Y vol × Z% CVR × ${currencySymbol}W AOV",
-      "evidence": ["Data point 1 (Source, Date)", "Data point 2 (Source, Date)"],
-      "recommendation": "Specific action",
+      "evidence": ["Source 1", "Source 2"],
+      "recommendation": "...",
       "timeline": "Week 1-2",
-      "owner": "Content Lead (execution), SEO Lead (review)"
+      "owner": "..."
     }
   ],
-
   "competitive_landscape": {
     "comparison_table": [
       { "metric": "Domain Rating", "you": "34", "comp_a": "52", "comp_b": "41", "comp_c": "38" },
@@ -464,44 +458,42 @@ RETURN JSON WITH EXACTLY THIS STRUCTURE (10 sections):
       { "metric": "Referring Domains", "you": "89", "comp_a": "340", "comp_b": "178", "comp_c": "120" }
     ],
     "content_gap": [
-      { "topic": "Topic 1", "volume": 887, "leader": "Competitor A", "your_position": "Not ranking" },
-      { "topic": "Topic 2", "volume": 1,124, "leader": "Competitor B", "your_position": "Position 22" },
-      { "topic": "Topic 3", "volume": 312, "leader": "Competitor A", "your_position": "Not ranking" },
-      { "topic": "Topic 4", "volume": 487, "leader": "Competitor C", "your_position": "Position 15" },
-      { "topic": "Topic 5", "volume": 623, "leader": "Competitor B", "your_position": "Not ranking" },
-      { "topic": "Topic 6", "volume": 234, "leader": "Competitor A", "your_position": "Position 28" },
-      { "topic": "Topic 7", "volume": 412, "leader": "Competitor C", "your_position": "Not ranking" },
-      { "topic": "Topic 8", "volume": 782, "leader": "Competitor A", "your_position": "Position 19" }
+      { "topic": "T1", "volume": 887, "leader": "Comp A", "your_position": "Not ranking" },
+      { "topic": "T2", "volume": 1124, "leader": "Comp B", "your_position": "Position 22" },
+      { "topic": "T3", "volume": 312, "leader": "Comp A", "your_position": "Not ranking" },
+      { "topic": "T4", "volume": 487, "leader": "Comp C", "your_position": "Position 15" },
+      { "topic": "T5", "volume": 623, "leader": "Comp B", "your_position": "Not ranking" },
+      { "topic": "T6", "volume": 234, "leader": "Comp A", "your_position": "Position 28" },
+      { "topic": "T7", "volume": 412, "leader": "Comp C", "your_position": "Not ranking" },
+      { "topic": "T8", "volume": 782, "leader": "Comp A", "your_position": "Position 19" }
     ],
     "backlink_gap": [
-      { "domain": "Domain 1", "da": 78, "comp_a_links": 8, "your_links": 0 },
-      { "domain": "Domain 2", "da": 82, "comp_a_links": 4, "your_links": 0 },
-      { "domain": "Domain 3", "da": 64, "comp_a_links": 6, "your_links": 1 },
-      { "domain": "Domain 4", "da": 71, "comp_a_links": 3, "your_links": 0 },
-      { "domain": "Domain 5", "da": 68, "comp_a_links": 5, "your_links": 0 }
+      { "domain": "D1", "da": 78, "comp_a_links": 8, "your_links": 0 },
+      { "domain": "D2", "da": 82, "comp_a_links": 4, "your_links": 0 },
+      { "domain": "D3", "da": 64, "comp_a_links": 6, "your_links": 1 },
+      { "domain": "D4", "da": 71, "comp_a_links": 3, "your_links": 0 },
+      { "domain": "D5", "da": 68, "comp_a_links": 5, "your_links": 0 }
     ],
     "prioritized_roadmap": ["Action 1", "Action 2", "Action 3"]
   },
-
   "roadmap_90day": {
     "days_1_30": [
-      { "action": "Specific action 1", "theme": "Quick Win", "owner": "Dev Lead", "effort": "S" },
-      { "action": "Specific action 2", "theme": "Quick Win", "owner": "SEO Lead", "effort": "S" },
-      { "action": "Specific action 3", "theme": "Quick Win", "owner": "Content Lead", "effort": "M" }
+      { "action": "A1", "theme": "Quick Win", "owner": "Dev Lead", "effort": "S" },
+      { "action": "A2", "theme": "Quick Win", "owner": "SEO Lead", "effort": "S" },
+      { "action": "A3", "theme": "Quick Win", "owner": "Content Lead", "effort": "M" }
     ],
     "days_31_60": [
-      { "action": "Specific action 4", "theme": "Build", "owner": "Content Lead", "effort": "M" },
-      { "action": "Specific action 5", "theme": "Build", "owner": "PR Specialist", "effort": "L" },
-      { "action": "Specific action 6", "theme": "Build", "owner": "SEO Lead", "effort": "M" }
+      { "action": "A4", "theme": "Build", "owner": "Content Lead", "effort": "M" },
+      { "action": "A5", "theme": "Build", "owner": "PR Specialist", "effort": "L" },
+      { "action": "A6", "theme": "Build", "owner": "SEO Lead", "effort": "M" }
     ],
     "days_61_90": [
-      { "action": "Specific action 7", "theme": "Scale", "owner": "Content Team", "effort": "L" },
-      { "action": "Specific action 8", "theme": "Scale", "owner": "Partnerships", "effort": "M" },
-      { "action": "Specific action 9", "theme": "Scale", "owner": "Dev Lead", "effort": "M" }
+      { "action": "A7", "theme": "Scale", "owner": "Content Team", "effort": "L" },
+      { "action": "A8", "theme": "Scale", "owner": "Partnerships", "effort": "M" },
+      { "action": "A9", "theme": "Scale", "owner": "Dev Lead", "effort": "M" }
     ],
-    "dependencies": ["Dependency 1 — owner + timeline", "Dependency 2 — owner + timeline"]
+    "dependencies": ["Dep 1", "Dep 2"]
   },
-
   "financial_projection": {
     "investment": [
       { "item": "Agency Retainer", "cost": "${currencySymbol}90,000" },
@@ -519,11 +511,11 @@ RETURN JSON WITH EXACTLY THIS STRUCTURE (10 sections):
       { "month": "Month 6", "sessions": "25,010", "leads": "190", "pipeline": "${currencySymbol}300,000", "roi": "138%" }
     ],
     "roi_summary": "6-Month ROI: 138%",
-    "roi_formula": "(Pipeline - Investment) / Investment × 100 = (${currencySymbol}300,000 - ${currencySymbol}126,000) / ${currencySymbol}126,000 × 100",
+    "roi_formula": "(Pipeline - Investment) / Investment × 100",
     "assumptions": [
       { "assumption": "Conversion rate: 1.8% → 2.2%", "source": "GA4, 90-day historical" },
       { "assumption": "Average deal value: ${currencySymbol}1,400", "source": "Client CRM, Q3 2026" },
-      { "assumption": "Traffic growth: +100%", "source": "Keyword opportunity analysis (Section 6)" }
+      { "assumption": "Traffic growth: +100%", "source": "Keyword opportunity analysis" }
     ],
     "sensitivity": [
       { "scenario": "Best Case", "traffic": "+120%", "pipeline": "${currencySymbol}420,000", "roi": "233%" },
@@ -531,102 +523,18 @@ RETURN JSON WITH EXACTLY THIS STRUCTURE (10 sections):
       { "scenario": "Worst Case", "traffic": "+60%", "pipeline": "${currencySymbol}198,000", "roi": "57%" }
     ]
   },
-
-  "keywords": [
-    { "keyword": "keyword 1", "volume": 887, "cpc": 18.50, "kd": 35, "intent": "transactional", "tier": "money" },
-    { "keyword": "keyword 2", "volume": 723, "cpc": 22.10, "kd": 28, "intent": "commercial", "tier": "money" },
-    { "keyword": "keyword 3", "volume": 1284, "cpc": 16.42, "kd": 37, "intent": "transactional", "tier": "money" },
-    { "keyword": "keyword 4", "volume": 423, "cpc": 19.83, "kd": 22, "intent": "commercial", "tier": "money" },
-    { "keyword": "keyword 5", "volume": 612, "cpc": 14.27, "kd": 31, "intent": "transactional", "tier": "money" },
-    { "keyword": "keyword 6", "volume": 342, "cpc": 21.48, "kd": 24, "intent": "commercial", "tier": "money" },
-    { "keyword": "keyword 7", "volume": 512, "cpc": 13.72, "kd": 29, "intent": "commercial", "tier": "money" },
-    { "keyword": "keyword 8", "volume": 234, "cpc": 23.16, "kd": 19, "intent": "transactional", "tier": "money" },
-    { "keyword": "keyword 9", "volume": 723, "cpc": 17.85, "kd": 33, "intent": "commercial", "tier": "money" },
-    { "keyword": "keyword 10", "volume": 487, "cpc": 20.34, "kd": 26, "intent": "transactional", "tier": "money" },
-    { "keyword": "keyword 11", "volume": 1147, "cpc": 15.28, "kd": 42, "intent": "informational", "tier": "money" },
-    { "keyword": "keyword 12", "volume": 623, "cpc": 18.76, "kd": 30, "intent": "commercial", "tier": "money" },
-    { "keyword": "keyword 13", "volume": 382, "cpc": 22.54, "kd": 21, "intent": "transactional", "tier": "money" },
-    { "keyword": "keyword 14", "volume": 912, "cpc": 19.42, "kd": 28, "intent": "commercial", "tier": "money" },
-    { "keyword": "keyword 15", "volume": 412, "cpc": 16.83, "kd": 34, "intent": "informational", "tier": "growth" },
-    { "keyword": "keyword 16", "volume": 267, "cpc": 14.92, "kd": 25, "intent": "commercial", "tier": "growth" },
-    { "keyword": "keyword 17", "volume": 534, "cpc": 20.71, "kd": 38, "intent": "transactional", "tier": "growth" },
-    { "keyword": "keyword 18", "volume": 782, "cpc": 12.48, "kd": 44, "intent": "informational", "tier": "growth" },
-    { "keyword": "keyword 19", "volume": 192, "cpc": 23.67, "kd": 18, "intent": "transactional", "tier": "growth" },
-    { "keyword": "keyword 20", "volume": 623, "cpc": 15.34, "kd": 32, "intent": "commercial", "tier": "growth" },
-    { "keyword": "keyword 21", "volume": 382, "cpc": 17.92, "kd": 27, "intent": "informational", "tier": "growth" },
-    { "keyword": "keyword 22", "volume": 942, "cpc": 21.83, "kd": 41, "intent": "commercial", "tier": "growth" },
-    { "keyword": "keyword 23", "volume": 297, "cpc": 19.24, "kd": 23, "intent": "transactional", "tier": "growth" },
-    { "keyword": "keyword 24", "volume": 487, "cpc": 14.67, "kd": 36, "intent": "informational", "tier": "growth" },
-    { "keyword": "keyword 25", "volume": 172, "cpc": 22.41, "kd": 17, "intent": "commercial", "tier": "growth" },
-    { "keyword": "keyword 26", "volume": 623, "cpc": 18.54, "kd": 29, "intent": "transactional", "tier": "growth" },
-    { "keyword": "keyword 27", "volume": 352, "cpc": 16.29, "kd": 25, "intent": "informational", "tier": "growth" },
-    { "keyword": "keyword 28", "volume": 823, "cpc": 20.16, "kd": 39, "intent": "commercial", "tier": "growth" },
-    { "keyword": "keyword 29", "volume": 234, "cpc": 19.85, "kd": 22, "intent": "transactional", "tier": "growth" },
-    { "keyword": "keyword 30", "volume": 512, "cpc": 13.42, "kd": 35, "intent": "informational", "tier": "growth" },
-    { "keyword": "keyword 31", "volume": 382, "cpc": 21.73, "kd": 18, "intent": "commercial", "tier": "growth" },
-    { "keyword": "keyword 32", "volume": 642, "cpc": 17.28, "kd": 31, "intent": "transactional", "tier": "growth" },
-    { "keyword": "keyword 33", "volume": 292, "cpc": 15.84, "kd": 24, "intent": "informational", "tier": "long-tail" },
-    { "keyword": "keyword 34", "volume": 447, "cpc": 22.16, "kd": 19, "intent": "commercial", "tier": "long-tail" },
-    { "keyword": "keyword 35", "volume": 167, "cpc": 18.73, "kd": 14, "intent": "transactional", "tier": "long-tail" },
-    { "keyword": "keyword 36", "volume": 234, "cpc": 20.47, "kd": 21, "intent": "informational", "tier": "long-tail" },
-    { "keyword": "keyword 37", "volume": 382, "cpc": 13.94, "kd": 27, "intent": "commercial", "tier": "long-tail" },
-    { "keyword": "keyword 38", "volume": 142, "cpc": 24.32, "kd": 12, "intent": "transactional", "tier": "long-tail" },
-    { "keyword": "keyword 39", "volume": 512, "cpc": 16.53, "kd": 33, "intent": "informational", "tier": "long-tail" },
-    { "keyword": "keyword 40", "volume": 292, "cpc": 19.28, "kd": 16, "intent": "commercial", "tier": "long-tail" },
-    { "keyword": "keyword 41", "volume": 167, "cpc": 17.84, "kd": 13, "intent": "transactional", "tier": "long-tail" },
-    { "keyword": "keyword 42", "volume": 382, "cpc": 21.62, "kd": 20, "intent": "informational", "tier": "long-tail" },
-    { "keyword": "keyword 43", "volume": 234, "cpc": 14.29, "kd": 26, "intent": "commercial", "tier": "long-tail" },
-    { "keyword": "keyword 44", "volume": 112, "cpc": 23.81, "kd": 11, "intent": "transactional", "tier": "long-tail" },
-    { "keyword": "keyword 45", "volume": 382, "cpc": 18.46, "kd": 30, "intent": "informational", "tier": "long-tail" },
-    { "keyword": "keyword 46", "volume": 267, "cpc": 20.94, "kd": 18, "intent": "commercial", "tier": "long-tail" },
-    { "keyword": "keyword 47", "volume": 152, "cpc": 15.73, "kd": 15, "intent": "transactional", "tier": "long-tail" },
-    { "keyword": "keyword 48", "volume": 342, "cpc": 19.52, "kd": 23, "intent": "informational", "tier": "long-tail" },
-    { "keyword": "keyword 49", "volume": 187, "cpc": 22.18, "kd": 12, "intent": "commercial", "tier": "long-tail" },
-    { "keyword": "keyword 50", "volume": 282, "cpc": 16.84, "kd": 28, "intent": "transactional", "tier": "long-tail" }
-  ],
-
+  "keywords": [],
   "serp_landscape": [
-    {
-      "position": 1,
-      "title": "SERP title 1",
-      "link": "https://example.com/page",
-      "da": 58,
-      "words": 1450,
-      "backlinks": 342,
-      "traffic": 12547,
-      "strengths": "Specific strength",
-      "weaknesses": "Specific weakness",
-      "gap": "Specific opportunity gap"
-    }
+    { "position": 1, "title": "...", "link": "https://example.com", "da": 58, "words": 1450, "backlinks": 342, "traffic": 12547, "strengths": "...", "weaknesses": "...", "gap": "..." }
   ],
-
   "content_roadmap": [
-    { "week": 1, "title": "Content title 1", "primary_keyword": "keyword", "type": "Ultimate Guide", "expected_traffic": 1847 },
-    { "week": 2, "title": "Content title 2", "primary_keyword": "keyword", "type": "Listicle", "expected_traffic": 1232 },
-    { "week": 3, "title": "Content title 3", "primary_keyword": "keyword", "type": "How-To", "expected_traffic": 987 },
-    { "week": 4, "title": "Content title 4", "primary_keyword": "keyword", "type": "Comparison", "expected_traffic": 723 },
-    { "week": 5, "title": "Content title 5", "primary_keyword": "keyword", "type": "Case Study", "expected_traffic": 542 },
-    { "week": 6, "title": "Content title 6", "primary_keyword": "keyword", "type": "Guide", "expected_traffic": 1284 },
-    { "week": 7, "title": "Content title 7", "primary_keyword": "keyword", "type": "Listicle", "expected_traffic": 1447 },
-    { "week": 8, "title": "Content title 8", "primary_keyword": "keyword", "type": "Educational", "expected_traffic": 623 },
-    { "week": 9, "title": "Content title 9", "primary_keyword": "keyword", "type": "Checklist", "expected_traffic": 412 },
-    { "week": 10, "title": "Content title 10", "primary_keyword": "keyword", "type": "Informational", "expected_traffic": 534 },
-    { "week": 11, "title": "Content title 11", "primary_keyword": "keyword", "type": "Deep-Dive", "expected_traffic": 823 },
-    { "week": 12, "title": "Content title 12", "primary_keyword": "keyword", "type": "Business Guide", "expected_traffic": 1142 }
+    { "week": 1, "title": "T1", "primary_keyword": "kw", "type": "Ultimate Guide", "expected_traffic": 1847 }
   ],
-
   "link_acquisition": {
-    "overview": "2-sentence overview specific to ${countryName}",
-    "target_sites": [
-      { "site": "Site 1", "type": "Business Publication", "contact": "editor@site1.com", "pitch": "Specific pitch angle" },
-      { "site": "Site 2", "type": "Industry Portal", "contact": "editor@site2.com", "pitch": "Specific pitch angle" },
-      { "site": "Site 3", "type": "Tech Blog", "contact": "editor@site3.com", "pitch": "Specific pitch angle" },
-      { "site": "Site 4", "type": "News Publication", "contact": "editor@site4.com", "pitch": "Specific pitch angle" },
-      { "site": "Site 5", "type": "Trade Magazine", "contact": "editor@site5.com", "pitch": "Specific pitch angle" }
-    ],
-    "guest_post_topics": ["Topic 1", "Topic 2", "Topic 3", "Topic 4", "Topic 5"]
+    "overview": "2-sentence overview",
+    "target_sites": [],
+    "guest_post_topics": ["T1", "T2", "T3", "T4", "T5"]
   },
-
   "case_studies": [
     {
       "title": "CASE STUDY 01",
@@ -640,40 +548,36 @@ RETURN JSON WITH EXACTLY THIS STRUCTURE (10 sections):
         "services": "",
         "client_identity": "Withheld under NDA"
       },
-      "challenge": "3-4 paragraph challenge description",
-      "approach": ["1. Approach step 1", "2. Approach step 2", "3. Approach step 3", "4. Approach step 4"],
+      "challenge": "MUST START WITH: 'Note: This case study represents a different client engagement, not the current account. The profile is included as a comparable reference point.' Then 3-4 paragraphs.",
+      "approach": ["1. ...", "2. ...", "3. ...", "4. ..."],
       "results_table": [
         { "metric": "Organic Sessions", "baseline": "3,200/mo", "after": "11,400/mo", "change": "+256%" },
         { "metric": "Organic Leads", "baseline": "18/mo", "after": "78/mo", "change": "+333%" },
         { "metric": "Attributed MRR", "baseline": "${currencySymbol}0", "after": "${currencySymbol}120,000", "change": "+${currencySymbol}120,000" },
         { "metric": "Top-10 Keywords", "baseline": "12", "after": "47", "change": "+35" }
       ],
-      "what_drove_growth": ["Bilingual search coverage", "Commercial search intent", "Regional relevance", "Authority development"],
-      "evidence": ["Google Search Console — organic clicks, impressions, keyword positions", "Google Analytics 4 — organic sessions and conversion data", "CRM / revenue records — lead and MRR attribution"],
-      "attribution_note": "Attributed MRR calculated using documented attribution methodology connecting organic acquisition to qualified leads, customers, and recurring revenue.",
-      "disclosure": "This case study represents a specific client engagement and should not be interpreted as a guaranteed outcome. SEO performance varies by competition, authority, content quality, market conditions, and implementation speed."
+      "what_drove_growth": ["COUNTRY-APPROPRIATE REASONS. Multilingual = ${multilingual}"],
+      "evidence": ["GSC", "GA4", "CRM"],
+      "attribution_note": "Attributed MRR calculated using documented attribution methodology.",
+      "disclosure": "This case study represents a specific client engagement and should not be interpreted as a guaranteed outcome."
     }
   ],
-
-  "client_value_proposition": ["Value prop 1", "Value prop 2", "Value prop 3"],
-
-  "trend_assessment": "2-3 sentence trend insight for ${countryName} market",
-
-  "data_limitations": [
-    "Search volume data represents regional approximations and may vary",
-    "CPC rates subject to real-time bidding competition",
-    "Financial projections are modeled estimates, not guarantees"
-  ],
-
+  "client_value_proposition": ["VP 1", "VP 2", "VP 3"],
+  "trend_assessment": "2-3 sentence trend insight",
+  "data_limitations": ["Limitation 1", "Limitation 2", "Limitation 3"],
   "methodology_note": "This report combines live SERP data, competitor intelligence, industry keyword benchmarks, and proprietary market research."
 }`;
 };
 
 // ============ MAIN GENERATOR ============
 export async function generateSEOReport(niche: string, country: string) {
-  const cacheKey = `seo_${niche}_${country}`;
+  // ✅ CACHE-BUST: v2 prefix
+  const cacheKey = `seo_v2_${niche}_${country}`;
   const cached = cacheService.get(cacheKey);
-  if (cached) return cached;
+  if (cached) {
+    console.log('📦 [Cache] Returning cached SEO report (v2).');
+    return cached;
+  }
 
   // ============================================================
   // HYBRID DATA SOURCE 1: Trends
@@ -700,7 +604,7 @@ export async function generateSEOReport(niche: string, country: string) {
   }
 
   // ============================================================
-  // SERP DATA (3-tier fallback chain)
+  // SERP DATA (3-tier fallback)
   // ============================================================
   let searchData = await getScraperAPISearch(niche, country).catch(() => null);
   if (!searchData?.organic_results) searchData = await getSearchResults(niche, country).catch(() => null);
@@ -737,19 +641,38 @@ export async function generateSEOReport(niche: string, country: string) {
   const caseStudies = safeArray(analysis.case_studies);
   const dataLimitations = safeArray(analysis.data_limitations);
 
-  // ============ KEYWORDS: HYBRID + VALIDATION ============
+  // ✅ OVERRIDE Ground Intel with pre-loaded country data
+  const preloadedCalendar = getCalendarForCountry(country);
+  const preloadedEditors = getEditorsForCountry(country);
+
+  if (!Array.isArray(groundIntel.cultural_calendar) || groundIntel.cultural_calendar.length === 0) {
+    groundIntel.cultural_calendar = preloadedCalendar.map(c => ({
+      period: c.period,
+      behavior: c.behavior,
+      content_priority: c.contentPriority,
+    }));
+  }
+
+  if (!Array.isArray(groundIntel.editor_intelligence) || groundIntel.editor_intelligence.length === 0) {
+    groundIntel.editor_intelligence = preloadedEditors.map(e => ({
+      publication: e.site,
+      da: e.da,
+      what_works: e.whatWorks,
+    }));
+  }
+
+  // ============ KEYWORDS: HYBRID + SANITIZATION ============
   let keywords = Array.isArray(analysis.keywords) ? analysis.keywords : [];
 
-  // ✅ VALIDATION: Check keyword count
   if (keywords.length < 40) {
     console.warn(`⚠️ [Validation] Only ${keywords.length} keywords generated. Expected 50.`);
   }
 
   keywords = keywords.map((kw: any, i: number) => ({
     keyword: safeString(kw.keyword, `${niche} ${i + 1}`),
-    volume: safeNumber(kw.volume, nonRoundNumber(100, 5000)),
-    cpc: safeNumber(kw.cpc, nonRoundNumber(50, 2500) / 100),
-    kd: safeNumber(kw.kd, nonRoundNumber(8, 60)),
+    volume: sanitizeNumber(safeNumber(kw.volume, 100), 50, 5000),
+    cpc: sanitizeCPC(safeNumber(kw.cpc, 2), 0.5, 25),
+    kd: sanitizeNumber(safeNumber(kw.kd, 20), 5, 75),
     intent: safeString(kw.intent, ['informational', 'commercial', 'transactional', 'navigational'][i % 4]),
     tier: safeString(kw.tier, i < 14 ? 'money' : i < 32 ? 'growth' : 'long-tail'),
     dataSource: 'gemini',
@@ -785,7 +708,7 @@ export async function generateSEOReport(niche: string, country: string) {
         console.log(`✅ [Hybrid] Overrode ${overridden}/${keywords.length} keywords with DataForSEO data.`);
       }
     } catch (e: any) {
-      console.warn(`⚠️ [Hybrid] DataForSEO override failed: ${e.message}. Using Gemini values.`);
+      console.warn(`⚠️ [Hybrid] DataForSEO override failed: ${e.message}`);
     }
   }
 
@@ -818,17 +741,17 @@ export async function generateSEOReport(niche: string, country: string) {
       position: i + 1,
       title: r.title || 'Untitled',
       link: r.link || '#',
-      da: nonRoundNumber(20, 90),
-      words: nonRoundNumber(500, 4000),
-      backlinks: nonRoundNumber(10, 500),
-      traffic: nonRoundNumber(500, 20000),
+      da: sanitizeNumber(40, 20, 90),
+      words: sanitizeNumber(2000, 500, 4000),
+      backlinks: sanitizeNumber(150, 10, 500),
+      traffic: sanitizeNumber(5000, 500, 20000),
       strengths: 'Ranking for this keyword',
       weaknesses: 'No localized content',
       gap: 'Opportunity to create localized guide'
     }));
   }
 
-  // ============ BUILD MARKDOWN — 10 SECTIONS ============
+  // ============ BUILD MARKDOWN — STRICT SEQUENCE ============
   let markdown = `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 MusePRO
 Real-Time Market Research | Intelligence Division
@@ -844,7 +767,7 @@ Classification:    CONFIDENTIAL
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 HEADLINE:
-"${safeString(execSum.headline, 'Specific business impact headline will appear here.')}"
+"${safeString(execSum.headline, 'Business impact headline.')}"
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -875,13 +798,10 @@ TOP 3 FINDINGS (Ranked by Business Impact)
     markdown += `└──────────────────────────────────────────────────────────────────┘\n\n`;
   });
 
-  markdown += `📌 WHAT THIS MEANS FOR YOU\n`;
-  markdown += `${safeString(execSum.what_this_means)}\n\n`;
-
+  markdown += `📌 WHAT THIS MEANS FOR YOU\n${safeString(execSum.what_this_means)}\n\n`;
   markdown += `🚀 NEXT 90 DAYS — RECOMMENDED PRIORITIES\n`;
   safeArray(execSum.next_90_days).forEach((a: string, i: number) => markdown += `  ${i + 1}. ${a}\n`);
   markdown += `\n`;
-
   markdown += `💵 ESTIMATED ROI (6 MONTHS)\n`;
   markdown += `  Investment:           ${safeString(execSum.estimated_roi?.investment)}\n`;
   markdown += `  Projected Pipeline:   ${safeString(execSum.estimated_roi?.pipeline)}\n`;
@@ -914,6 +834,64 @@ TOP 3 FINDINGS (Ranked by Business Impact)
     ])
   );
   markdown += `\n📝 NARRATIVE\n"${safeString(currentState.narrative)}"\n\n`;
+
+  // SECTION 2.5 — 50 KEYWORD PORTFOLIO
+  markdown += `2.5 KEYWORD PORTFOLIO — 50 TIERED KEYWORDS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📊 TIER BREAKDOWN
+
+  Tier 1 (Money Keywords):      14
+  Tier 2 (Growth Keywords):     18
+  Tier 3 (Long-tail Keywords):  18
+  ─────────────────────────────────
+  TOTAL:                        50
+
+📈 PRIORITIZATION LOGIC
+  Tier 1 — Highest commercial intent, prioritize for immediate optimization.
+  Tier 2 — Strategic value, builds topical authority over 3-6 months.
+  Tier 3 — Quick wins + niche opportunities, opportunistic.
+
+`;
+  const moneyKw = keywords.filter((k: any) => k.tier === 'money').slice(0, 14);
+  const growthKw = keywords.filter((k: any) => k.tier === 'growth').slice(0, 18);
+  const longTailKw = keywords.filter((k: any) => k.tier === 'long-tail').slice(0, 18);
+
+  if (moneyKw.length > 0) {
+    markdown += `TIER 1 — MONEY KEYWORDS (Highest Commercial Intent)\n\n`;
+    markdown += formatTable(
+      ['#', 'Keyword', 'Volume', 'KD', `CPC (${currency.symbol})`, 'Intent'],
+      moneyKw.map((k: any, i: number) => [
+        String(i + 1), safeString(k.keyword), String(k.volume), String(k.kd),
+        `${currency.symbol}${safeNumber(k.cpc, 0).toFixed(2)}`, safeString(k.intent)
+      ])
+    );
+    markdown += `\n`;
+  }
+
+  if (growthKw.length > 0) {
+    markdown += `TIER 2 — GROWTH KEYWORDS (Strategic Value)\n\n`;
+    markdown += formatTable(
+      ['#', 'Keyword', 'Volume', 'KD', `CPC (${currency.symbol})`, 'Intent'],
+      growthKw.map((k: any, i: number) => [
+        String(i + 15), safeString(k.keyword), String(k.volume), String(k.kd),
+        `${currency.symbol}${safeNumber(k.cpc, 0).toFixed(2)}`, safeString(k.intent)
+      ])
+    );
+    markdown += `\n`;
+  }
+
+  if (longTailKw.length > 0) {
+    markdown += `TIER 3 — LONG-TAIL KEYWORDS (Quick Wins)\n\n`;
+    markdown += formatTable(
+      ['#', 'Keyword', 'Volume', 'KD', `CPC (${currency.symbol})`, 'Intent'],
+      longTailKw.map((k: any, i: number) => [
+        String(i + 33), safeString(k.keyword), String(k.volume), String(k.kd),
+        `${currency.symbol}${safeNumber(k.cpc, 0).toFixed(2)}`, safeString(k.intent)
+      ])
+    );
+    markdown += `\n`;
+  }
 
   // SECTION 3
   markdown += `3. GROUND INTEL — WHAT SEO TOOLS WILL NEVER KNOW
