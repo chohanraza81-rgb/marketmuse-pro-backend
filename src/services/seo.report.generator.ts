@@ -1,9 +1,10 @@
 // seo.report.generator.ts
 // 10-SECTION + SECTION 2.5 (50 KEYWORDS) + REPORT STANDARDS + STRICT SEQUENCE
 // HYBRID: DataForSEO + Gemini fallback | Country-specific pre-loaded data (ALWAYS OVERRIDE)
-// Cache-bust key (v3)
+// Cache-bust key (v4)
 // FIXES: (1) Multilingual-aware Section 3.2 | (2) Tier 3 volume cap | (3) Magic keywords subset
-// FINAL FIX: (4) Intent classifier (keyword string-based)
+// FINAL FIX: (4) Intent classifier (keyword string-based) | (5) Niche-aware realistic fallback
+// NEW (v4): Niche-aware volume/CPC, country-specific trend patterns, honest data disclosure
 
 import { cacheService } from './cache';
 import { getGoogleTrends } from './trends';
@@ -147,6 +148,122 @@ const sanitizeCPC = (val: number, min: number = 0.5, max: number = 25): number =
   if (c > max) c = max - Math.random() * 2;
   return Number((Math.floor(c * 100) / 100).toFixed(2));
 };
+
+// ✅ NEW v4: Niche-aware realistic volume generator
+// Uses keyword words + country market size + tier to estimate volume
+const NICHE_VOLUME_MULTIPLIERS: Record<string, number> = {
+  // High-volume niches
+  'blogging': 1.2, 'make money': 1.3, 'seo': 1.1, 'crypto': 1.4, 'insurance': 1.3,
+  // Medium-volume niches
+  'ecommerce': 1.0, 'sourcing': 0.9, 'saas': 0.9, 'marketing': 1.0, 'finance': 1.1,
+  // Niche / low-volume
+  'crafts': 0.6, 'hobby': 0.5, 'local services': 0.4, 'pet care': 0.7, 'gardening': 0.6,
+};
+
+const COUNTRY_MARKET_SIZE: Record<string, number> = {
+  us: 1.0, gb: 0.7, ca: 0.5, au: 0.5, de: 0.8, sg: 0.3,
+  sa: 0.4, ae: 0.4, pk: 0.6, in: 1.2, tr: 0.7, my: 0.4,
+};
+
+function generateRealisticVolume(keyword: string, country: string, tier: string): number {
+  const kwLower = keyword.toLowerCase();
+  const words = kwLower.split(/\s+/).filter(w => w.length > 2);
+  const wordCount = words.length;
+
+  // Base volume by tier
+  let baseMin = 200, baseMax = 5000;
+  if (tier === 'long-tail') { baseMin = 50; baseMax = 800; }
+  else if (tier === 'growth') { baseMin = 200; baseMax = 3000; }
+
+  // Find niche multiplier
+  let nicheMultiplier = 1.0;
+  for (const [nicheKey, mult] of Object.entries(NICHE_VOLUME_MULTIPLIERS)) {
+    if (kwLower.includes(nicheKey)) {
+      nicheMultiplier = mult;
+      break;
+    }
+  }
+
+  const countryMultiplier = COUNTRY_MARKET_SIZE[country] || 1.0;
+
+  // Longer keywords = lower volume (long-tail effect)
+  const lengthFactor = wordCount <= 2 ? 1.2 : wordCount <= 4 ? 1.0 : wordCount <= 6 ? 0.7 : 0.4;
+
+  // Deterministic seed from keyword (same keyword = same volume, no random flicker)
+  const seed = keyword.split('').reduce((acc, ch) => acc + ch.charCodeAt(0), 0);
+  const seedRatio = (seed % 100) / 100; // 0-1
+
+  const adjustedMax = Math.round(baseMax * nicheMultiplier * countryMultiplier * lengthFactor);
+  const adjustedMin = Math.round(baseMin * nicheMultiplier * countryMultiplier * lengthFactor);
+
+  let volume = Math.round(adjustedMin + seedRatio * (adjustedMax - adjustedMin));
+
+  // Ensure no round numbers (887 not 890)
+  if (volume % 10 === 0) volume += (seed % 7) + 1;
+  if (volume % 100 === 0) volume += (seed % 13) + 3;
+
+  return Math.max(20, volume);
+}
+
+// ✅ NEW v4: Industry-based CPC generator
+const INDUSTRY_CPC_MULTIPLIERS: Record<string, { min: number; max: number }> = {
+  // High CPC (legal, finance, B2B)
+  'insurance': { min: 15, max: 45 }, 'lawyer': { min: 20, max: 60 }, 'mortgage': { min: 12, max: 35 },
+  'attorney': { min: 18, max: 55 }, 'loan': { min: 10, max: 30 }, 'crypto': { min: 8, max: 25 },
+  // Medium CPC (business, tech)
+  'seo': { min: 5, max: 20 }, 'marketing': { min: 4, max: 18 }, 'saas': { min: 6, max: 22 },
+  'hosting': { min: 5, max: 18 }, 'sourcing': { min: 3, max: 15 }, 'wholesale': { min: 2, max: 12 },
+  'ecommerce': { min: 3, max: 15 }, 'import': { min: 2, max: 12 },
+  // Low CPC (informational, hobby)
+  'how to': { min: 0.5, max: 5 }, 'guide': { min: 0.5, max: 4 }, 'tutorial': { min: 0.3, max: 3 },
+  'blogging': { min: 1, max: 8 }, 'recipe': { min: 0.3, max: 3 }, 'diy': { min: 0.5, max: 4 },
+};
+
+function generateRealisticCPC(keyword: string): number {
+  const kwLower = keyword.toLowerCase();
+
+  let cpcRange = { min: 2, max: 15 }; // default medium
+
+  for (const [industryKey, range] of Object.entries(INDUSTRY_CPC_MULTIPLIERS)) {
+    if (kwLower.includes(industryKey)) {
+      cpcRange = range;
+      break;
+    }
+  }
+
+  // Deterministic based on keyword
+  const seed = keyword.split('').reduce((acc, ch) => acc + ch.charCodeAt(0), 0);
+  const seedRatio = (seed % 1000) / 1000;
+
+  const cpc = cpcRange.min + seedRatio * (cpcRange.max - cpcRange.min);
+  return Number(cpc.toFixed(2));
+}
+
+// ✅ NEW v4: Country-specific trend patterns (seasonal)
+const COUNTRY_TREND_PATTERNS: Record<string, number[]> = {
+  us: [55, 50, 45, 50, 55, 60, 65, 70, 75, 85, 95, 100],   // Black Friday + Christmas
+  gb: [50, 45, 45, 50, 55, 60, 65, 70, 80, 90, 95, 100],   // Boxing Day + Christmas
+  ca: [60, 55, 50, 55, 60, 65, 70, 75, 80, 85, 90, 100],   // Christmas + Winter
+  au: [40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95],    // Southern hemisphere (reverse)
+  de: [55, 50, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95],    // Christmas markets
+  sg: [50, 55, 60, 65, 70, 75, 80, 80, 75, 70, 65, 60],    // Year-round stable
+  sa: [60, 65, 70, 75, 80, 85, 90, 85, 80, 75, 70, 65],    // Ramadan + Hajj effect
+  ae: [55, 60, 65, 70, 75, 80, 85, 80, 75, 70, 65, 60],    // Similar to SG
+  pk: [50, 55, 60, 65, 70, 85, 95, 90, 80, 75, 70, 65],    // Eid + Ramadan
+  in: [40, 45, 50, 55, 60, 70, 85, 95, 90, 75, 60, 50],    // Diwali (Oct-Nov)
+  tr: [50, 55, 60, 65, 70, 75, 80, 85, 80, 75, 70, 65],    // Stable
+  my: [50, 55, 60, 65, 70, 75, 80, 85, 80, 75, 70, 65],    // Hari Raya + CNY
+};
+
+function generateFallbackTrend(keyword: string, country: string): number[] {
+  const pattern = COUNTRY_TREND_PATTERNS[country] || COUNTRY_TREND_PATTERNS.us;
+  // Slight variation per keyword so charts don't look identical
+  const seed = keyword.split('').reduce((acc, ch) => acc + ch.charCodeAt(0), 0);
+  return pattern.map((v, i) => {
+    const variation = ((seed + i * 7) % 15) - 7; // -7 to +7
+    return Math.max(10, Math.min(100, v + variation));
+  });
+}
 
 // ✅ FINAL FIX: Keyword string-based intent classifier
 const classifyIntent = (keyword: string): 'informational' | 'commercial' | 'transactional' | 'navigational' => {
@@ -595,22 +712,25 @@ RETURN JSON IN THIS EXACT ORDER:
 
 // ============ MAIN GENERATOR ============
 export async function generateSEOReport(niche: string, country: string) {
-  const cacheKey = `seo_v3_${niche}_${country}`;
+  const cacheKey = `seo_v4_${niche}_${country}`;
   const cached = cacheService.get(cacheKey);
   if (cached) {
-    console.log('📦 [Cache] Returning cached SEO report (v3).');
+    console.log('📦 [Cache] Returning cached SEO report (v4).');
     return cached;
   }
 
   let trendData: number[] = [];
+  let trendSource: 'dataforseo' | 'google_trends' | 'pattern_fallback' = 'pattern_fallback';
   const dataForSEOAvailable = isDataForSEOAvailable();
 
+  // ✅ TRY 1: DataForSEO Trends (if credentials available)
   if (dataForSEOAvailable) {
     console.log('🔀 [Hybrid] DataForSEO available — attempting live trends...');
     try {
       const realTrends = await fetchRealTrends([niche], country);
       if (realTrends.length > 0 && realTrends[0].timeline.length > 0) {
         trendData = realTrends[0].timeline.map((t: { value: number }) => t.value);
+        trendSource = 'dataforseo';
         console.log(`✅ [Hybrid] Using DataForSEO trends (${trendData.length} points).`);
       }
     } catch (e) {
@@ -618,9 +738,20 @@ export async function generateSEOReport(niche: string, country: string) {
     }
   }
 
+  // ✅ TRY 2: Google Trends (free API)
   if (trendData.length === 0) {
     trendData = await getGoogleTrends(niche, country).catch(() => []);
-    console.log(`ℹ️ [Hybrid] Using Google Trends fallback (${trendData.length} points).`);
+    if (trendData.length > 0) {
+      trendSource = 'google_trends';
+      console.log(`ℹ️ [Hybrid] Using Google Trends fallback (${trendData.length} points).`);
+    }
+  }
+
+  // ✅ TRY 3: Country-specific pattern fallback (NEW v4)
+  if (trendData.length === 0) {
+    trendData = generateFallbackTrend(niche, country);
+    trendSource = 'pattern_fallback';
+    console.log(`ℹ️ [Hybrid] Using country-specific pattern fallback (12 points).`);
   }
 
   let searchData = await getScraperAPISearch(niche, country).catch(() => null);
@@ -672,34 +803,30 @@ export async function generateSEOReport(niche: string, country: string) {
 
   console.log(`✅ [Country Data] Injected ${groundIntel.cultural_calendar.length} calendar items and ${groundIntel.editor_intelligence.length} editors for ${country}.`);
 
-  // ============ KEYWORDS: HYBRID + SANITIZATION with TIER-AWARE CAPS + INTENT RECLASSIFY ============
+  // ============ KEYWORDS: HYBRID + SANITIZATION + INTENT RECLASSIFY ============
   let keywords = Array.isArray(analysis.keywords) ? analysis.keywords : [];
 
   if (keywords.length < 40) {
     console.warn(`⚠️ [Validation] Only ${keywords.length} keywords generated. Expected 50.`);
   }
 
+  // ✅ NEW v4: Niche-aware realistic fallback
   keywords = keywords.map((kw: any, i: number) => {
     const tier = safeString(kw.tier, i < 14 ? 'money' : i < 32 ? 'growth' : 'long-tail');
-    let volMin = 200, volMax = 5000;
-    if (tier === 'long-tail') { volMin = 50; volMax = 800; }
-    else if (tier === 'growth') { volMin = 200; volMax = 3000; }
-    else { volMin = 200; volMax = 5000; }
-
     const keywordStr = safeString(kw.keyword, `${niche} ${i + 1}`);
 
     return {
       keyword: keywordStr,
-      volume: sanitizeNumber(safeNumber(kw.volume, volMin + 100), volMin, volMax),
-      cpc: sanitizeCPC(safeNumber(kw.cpc, 2), 0.5, 25),
+      volume: generateRealisticVolume(keywordStr, country, tier),
+      cpc: generateRealisticCPC(keywordStr),
       kd: sanitizeNumber(safeNumber(kw.kd, 20), 5, 75),
-      // ✅ FINAL FIX: Reclassify intent from keyword string, not Gemini
       intent: classifyIntent(keywordStr),
       tier,
-      dataSource: 'gemini',
+      dataSource: 'modeled',
     };
   });
 
+  // ✅ DataForSEO override (if credentials available)
   if (dataForSEOAvailable && keywords.length > 0) {
     console.log('🔀 [Hybrid] DataForSEO available — attempting live keyword metrics...');
     try {
@@ -721,7 +848,6 @@ export async function generateSEOReport(niche: string, country: string) {
               volume: real.volume > 0 ? real.volume : kw.volume,
               kd: real.kd > 0 ? real.kd : kw.kd,
               cpc: real.cpc > 0 ? real.cpc : kw.cpc,
-              // ✅ Re-classify intent even after DataForSEO override
               intent: classifyIntent(kw.keyword),
               dataSource: 'dataforseo',
             };
@@ -735,6 +861,7 @@ export async function generateSEOReport(niche: string, country: string) {
     }
   }
 
+  // Currency conversion for DataForSEO CPC (USD → local)
   keywords = await mapWithConcurrency(keywords, 5, async (kw: any) => {
     try {
       const originalCpc = kw.cpc;
@@ -772,7 +899,6 @@ export async function generateSEOReport(niche: string, country: string) {
       }));
       console.log('✅ [Magic Goldmine] Replaced with top money keywords from main list.');
     } else {
-      // ✅ Re-classify intents in magic goldmine too
       magicGoldmine.top_keywords = validMagic.map((mk: any) => ({
         ...mk,
         intent: classifyIntent(mk.keyword),
@@ -799,7 +925,6 @@ export async function generateSEOReport(niche: string, country: string) {
     }));
   }
 
-  // Multilingual-aware Section 3.2
   const languageSplitHeading = isMultilingual[country]
     ? '3.2  🌍 LANGUAGE SPLIT INTELLIGENCE'
     : '3.2  🌍 REGIONAL SEARCH VARIATIONS';
@@ -1107,6 +1232,7 @@ Domain Rating: ${magicPlaybook.target_competitor?.da || 0} | Monthly Organic Tra
     markdown += `│ Priority:   ${safeString(f.priority)}\n`;
     markdown += `└──────────────────────────────────────────────────────────────────┘\n\n`;
     markdown += `💡 What is happening:\n   ${safeString(f.what_is_happening)}\n\n`;
+    markdown += `⚠️ Why it matters:\n   ${safeString(f.what_is_happening)}\n\n`;
     markdown += `⚠️ Why it matters:\n   ${safeString(f.why_it_matters)}\n\n`;
     markdown += `💰 Size of prize:\n   ${safeString(f.size_of_prize)}\n`;
     if (f.size_formula) markdown += `   Formula: ${safeString(f.size_formula)}\n`;
@@ -1282,16 +1408,25 @@ ${safeString(analysis.methodology_note)}
   markdown += `⚠️ DATA LIMITATIONS\n`;
   dataLimitations.forEach((d: string, i: number) => markdown += `  ${i + 1}. ${d}\n`);
 
-  const dataSourceLabel = keywords.some((k: any) => k.dataSource === 'dataforseo')
-    ? 'Live Keyword Data (DataForSEO API) + Google Trends'
-    : 'Industry-Standard Keyword Planners (Modeled) + Google Trends';
+  // ✅ UPDATED: Honest data source disclosure (v4)
+  const hasDataForSEO = keywords.some((k: any) => k.dataSource === 'dataforseo');
+  const keywordDataSource = hasDataForSEO
+    ? 'Live Keyword Data (DataForSEO API)'
+    : 'Modeled Estimates (Niche-Aware + Country-Adjusted)';
+
+  const trendSourceLabel = trendSource === 'dataforseo'
+    ? 'DataForSEO Google Trends API (Live 12-month)'
+    : trendSource === 'google_trends'
+    ? 'Google Trends API (Live 12-month)'
+    : 'Country-Specific Seasonal Pattern (Modeled)';
 
   markdown += `\n📡 DATA SOURCE DISCLOSURE\n`;
-  markdown += `  • Keyword Data:  ${dataSourceLabel}\n`;
+  markdown += `  • Keyword Data:  ${keywordDataSource}\n`;
   markdown += `  • SERP Data:     SerpAPI / ScraperAPI / Serper\n`;
-  markdown += `  • Trend Data:    Google Trends (12-month)\n`;
+  markdown += `  • Trend Data:    ${trendSourceLabel}\n`;
   markdown += `  • Currency:      Real-time exchange API\n`;
-  markdown += `  • Strategic Synthesis: MusePRO Senior Research Division\n\n`;
+  markdown += `  • Strategic Synthesis: MusePRO Senior Research Division\n`;
+  markdown += `  • Note: DataForSEO integration is ready. Live metrics will activate automatically once API credentials are configured.\n\n`;
 
   markdown += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ⚠️ DISCLAIMER
@@ -1317,9 +1452,10 @@ Generated by MusePRO Senior Research Division.
     serp_landscape: serp,
     markdown,
     trend_summary: safeString(analysis.trend_assessment, 'Steady market interest.'),
-    dataSource: keywords.some((k: any) => k.dataSource === 'dataforseo') ? 'dataforseo' : 'gemini',
+    dataSource: hasDataForSEO ? 'dataforseo' : 'modeled',
+    trendSource,
     chart_data: {
-      trend_12m: trendData.map((v: number, i: number) => ({ month: `M${i + 1}`, value: v })),
+      trend_12m: trendData.slice(0, 12).map((v: number, i: number) => ({ month: `M${i + 1}`, value: v })),
       traffic_forecast_6m: safeArray(analysis.content_roadmap).slice(0, 6).map((c: any, i: number) => ({ month: `M${i + 1}`, traffic: safeNumber(c.expected_traffic, 1000) })),
       market_share: []
     },
