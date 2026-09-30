@@ -9,7 +9,7 @@ import { Report } from '../models/Report';
  */
 export const createBrandProtectionReport = async (req: Request, res: Response) => {
   try {
-    const { brand, category, country, annualRevenue } = req.body;
+    const { brand, category, country } = req.body;
 
     // ── Validation ──
     if (!brand || !category || !country) {
@@ -26,8 +26,8 @@ export const createBrandProtectionReport = async (req: Request, res: Response) =
     // ── Save to Database ──
     const savedReport = await Report.create({
       type: 'brand_protection',
-      niche: reportData.niche || `${brand} — ${category}`,
-      country,
+      niche: reportData.niche,
+      country: reportData.country,
       data: reportData.data,
       markdown: reportData.markdown,
       trend_summary: reportData.trend_summary,
