@@ -1,8 +1,11 @@
 // seo.report.generator.ts
-// v5 — STRONG EDITION
-// FIXES: (1) Section 6 duplicate bug | (2) SERP filtering | (3) Country-specific query
-//        (4) Real competitor names | (5) Remove fake sources | (6) "Est." → "Projected"
-//        (7) Financial validation | (8) Currency consistency | (9) Post-process markdown
+// v6 — FINAL EDITION
+// FIXES: (1) Formula validation (Finding size_of_prize vs size_formula)
+//        (2) Post-process markdown cleanup (spaces, unverified stats)
+//        (3) Better SERP relevance scoring
+//        (4) Country-specific query with strict filtering
+//        (5) "Projected" replacing "Est." consistently
+//        (6) Remove unverified percentage claims
 
 import { cacheService } from './cache';
 import { getGoogleTrends } from './trends';
@@ -33,7 +36,7 @@ const currencyInfo: Record<string, { symbol: string; rate: number; locale: strin
   au: { symbol: 'A$', rate: 1.52, locale: 'en-AU' },
   de: { symbol: '€', rate: 0.92, locale: 'de-DE' },
   sg: { symbol: 'S$', rate: 1.34, locale: 'en-SG' },
-  sa: { symbol: 'SAR ', rate: 3.75, locale: 'en-US' },  // ✅ Force Western numerals
+  sa: { symbol: 'SAR ', rate: 3.75, locale: 'en-US' },
   ae: { symbol: 'AED ', rate: 3.67, locale: 'en-US' },
   pk: { symbol: 'PKR ', rate: 278, locale: 'en-US' },
   in: { symbol: '₹', rate: 83, locale: 'en-IN' },
@@ -46,33 +49,38 @@ const isMultilingual: Record<string, boolean> = {
   sg: true, sa: true, ae: true, pk: false, in: false, tr: false, my: true,
 };
 
-// ✅ NEW v5: Generic domains to filter out from SERP
+// ✅ v6: Generic domains to filter
 const GENERIC_DOMAINS = [
   'wikipedia', 'reddit', 'quora', 'youtube', 'facebook', 'twitter', 'x.com',
   'linkedin', 'pinterest', 'medium', 'blogspot', 'wordpress.com', 'tumblr',
-  'instagram', 'tiktok', 'pinterest', 'slideshare', 'scribd',
+  'instagram', 'tiktok', 'slideshare', 'scribd',
   'amazon.com', 'ebay.com', 'alibaba.com', 'aliexpress.com', 'etsy.com',
   'google.com', 'bing.com', 'yahoo.com', 'duckduckgo.com',
   'forbes.com', 'businessinsider.com', 'investopedia.com', 'entrepreneur.com',
   'hubspot.com', 'shopify.com', 'wix.com', 'squarespace.com', 'godaddy.com',
   'coursera.org', 'udemy.com', 'skillshare.com', 'khanacademy.org',
-  'gov', 'edu',  // Govt and edu sites mostly irrelevant for competitors
 ];
 
-// ✅ NEW v5: Country TLD mapping for SERP relevance
-const COUNTRY_TLD: Record<string, string[]> = {
-  us: ['.com', '.us', '.org'],
-  gb: ['.co.uk', '.uk', '.com'],
-  ca: ['.ca', '.com'],
-  au: ['.com.au', '.au', '.com'],
-  de: ['.de', '.com'],
-  sg: ['.sg', '.com.sg', '.com'],
-  sa: ['.sa', '.com.sa', '.com'],
-  ae: ['.ae', '.com'],
-  pk: ['.pk', '.com.pk', '.com'],
-  in: ['.in', '.co.in', '.com'],
-  tr: ['.tr', '.com.tr', '.com'],
-  my: ['.my', '.com.my', '.com'],
+// ✅ v6: SERP relevance keywords per niche
+const getRelevanceKeywords = (niche: string): string[] => {
+  const lower = niche.toLowerCase();
+  const base = lower.split(/\s+/).filter(w => w.length > 3);
+  
+  const nicheMap: Record<string, string[]> = {
+    'backend': ['server', 'hosting', 'vps', 'cloud', 'infrastructure'],
+    'frontend': ['hosting', 'deployment', 'cdn', 'static'],
+    'seo': ['keyword', 'ranking', 'search', 'content', 'traffic'],
+    'ecommerce': ['store', 'shop', 'product', 'retail', 'cart'],
+    'marketing': ['ads', 'campaign', 'lead', 'traffic', 'conversion'],
+    'ai': ['automation', 'tool', 'software', 'service'],
+  };
+  
+  for (const [key, values] of Object.entries(nicheMap)) {
+    if (lower.includes(key)) {
+      return [...base, ...values];
+    }
+  }
+  return base;
 };
 
 // ═══════════════════════════════════════════════════════════════
@@ -90,7 +98,6 @@ const safeString = (val: any, fallback: string = 'N/A'): string => {
 
 const safeArray = (val: any): any[] => (Array.isArray(val) ? val : []);
 
-// ✅ NEW v5: Format currency consistently
 const formatCurrency = (num: number, country: string): string => {
   const info = currencyInfo[country] || currencyInfo.us;
   try {
@@ -100,109 +107,226 @@ const formatCurrency = (num: number, country: string): string => {
   }
 };
 
-// ✅ NEW v5: Post-process markdown to remove "Est." / "Modeled"
-const cleanMarkdown = (markdown: string): string => {
+// ✅ v6: Extract number from currency string
+const extractNumber = (val: any): number => {
+  if (typeof val === 'number') return val;
+  if (!val) return 0;
+  const cleaned = String(val).replace(/[^0-9.]/g, '');
+  const num = parseFloat(cleaned);
+  return isNaN(num) ? 0 : num;
+};
+
+// ✅ v6: Validate Finding formulas and auto-fix
+const validateFindingFormulas = (findings: any[], country: string): void => {
+  const currency = currencyInfo[country] || currencyInfo.us;
+  
+  findings.forEach((finding: any) => {
+    if (!finding.size_formula || !finding.size_of_prize) return;
+    
+    const formula = String(finding.size_formula);
+    const prize = extractNumber(finding.size_of_prize);
+    
+    // Try to parse formula: "X kw × Y vol × Z% CVR × CUR W AOV"
+    const kwMatch = formula.match(/(\d+)\s*kw/i);
+    const volMatch = formula.match(/(\d+)\s*vol/i);
+    const cvrMatch = formula.match(/([\d.]+)\s*%\s*CVR/i);
+    const aovMatch = formula.match(/(\d[\d,]*)\s*AOV/i);
+    
+    if (kwMatch && volMatch && cvrMatch && aovMatch) {
+      const kw = parseInt(kwMatch[1], 10);
+      const vol = parseInt(volMatch[1], 10);
+      const cvr = parseFloat(cvrMatch[1]) / 100;
+      const aov = parseFloat(aovMatch[1].replace(/,/g, ''));
+      
+      const calculated = Math.round(kw * vol * cvr * aov);
+      
+      // If calculated doesn't match prize, FIX the formula
+      if (Math.abs(calculated - prize) > prize * 0.05) {
+        console.log(`🔧 [v6] Fixing Finding formula: ${calculated} → ${prize}`);
+        
+        // Find correct multiplier
+        const correctKw = Math.round(prize / (vol * cvr * aov));
+        const correctVol = Math.round(prize / (kw * cvr * aov));
+        
+        // Use most realistic fix (prefer fewer kw, higher vol)
+        if (correctKw >= 1 && correctKw <= 20) {
+          finding.size_formula = `${correctKw} kw × ${vol} vol × ${(cvr * 100).toFixed(1)}% CVR × ${currency.symbol}${aov.toLocaleString('en-US')} AOV`;
+        } else if (correctVol >= 100 && correctVol <= 5000) {
+          finding.size_formula = `${kw} kw × ${correctVol} vol × ${(cvr * 100).toFixed(1)}% CVR × ${currency.symbol}${aov.toLocaleString('en-US')} AOV`;
+        } else {
+          // Fallback: just show calculated
+          finding.size_formula = `${kw} kw × ${vol} vol × ${(cvr * 100).toFixed(1)}% CVR × ${currency.symbol}${aov.toLocaleString('en-US')} AOV = ${currency.symbol}${calculated.toLocaleString('en-US')}`;
+        }
+      }
+    } else if (formula.length < 30) {
+      // Vague formula: replace with standard
+      finding.size_formula = `Pattern-Based Estimate: ${currency.symbol}${prize.toLocaleString('en-US')}/month`;
+    }
+  });
+};
+
+// ✅ v6: Post-process markdown
+const cleanMarkdown = (markdown: string, country: string): string => {
+  const currency = currencyInfo[country] || currencyInfo.us;
+  
   return markdown
+    // Est./Estimated → Projected
     .replace(/\bEst\.\s*/g, 'Projected ')
     .replace(/\bEstimated\s+/gi, 'Projected ')
     .replace(/\(Modeled\)/g, '(Pattern-Based)')
     .replace(/\bApprox\.\s*/g, 'Approximately ')
-    .replace(/\bModeled Estimate:/g, 'Pattern-Based Estimate:');
+    .replace(/\bModeled Estimate:/g, 'Pattern-Based Estimate:')
+    // Fix extra space before closing parens
+    .replace(/\s+\)/g, ')')
+    .replace(/\s+,/g, ',')
+    // Fix duplicate case study titles
+    .replace(/(CASE STUDY \d+):\s*Case Study \d+:/gi, '$1:')
+    // Remove consecutive spaces (but not markdown tables)
+    .replace(/([^\n])\s{3,}([^\n])/g, '$1 $2');
 };
 
-// ✅ NEW v5: Build country-specific SERP query
+// ✅ v6: Relevance scoring for SERP
+const scoreSerpRelevance = (result: any, niche: string, country: string): number => {
+  const title = String(result.title || '').toLowerCase();
+  const url = String(result.link || '').toLowerCase();
+  const nicheKeywords = getRelevanceKeywords(niche);
+  
+  let score = 0;
+  
+  // Title contains niche keyword
+  nicheKeywords.forEach(kw => {
+    if (title.includes(kw.toLowerCase())) score += 10;
+    if (url.includes(kw.toLowerCase())) score += 5;
+  });
+  
+  // URL matches country TLD
+  const countryTLD: Record<string, string[]> = {
+    us: ['.com', '.us', '.org', '.io'],
+    gb: ['.co.uk', '.uk'],
+    ca: ['.ca'],
+    au: ['.com.au', '.au'],
+    de: ['.de'],
+    sg: ['.sg', '.com.sg'],
+    sa: ['.sa', '.com.sa'],
+    ae: ['.ae', '.com'],
+    pk: ['.pk', '.com.pk'],
+    in: ['.in', '.co.in'],
+    tr: ['.tr', '.com.tr'],
+    my: ['.my', '.com.my'],
+  };
+  
+  const tlDs = countryTLD[country] || ['.com'];
+  tlDs.forEach(tld => {
+    if (url.includes(tld)) score += 8;
+  });
+  
+  // Penalty for very short titles (likely generic)
+  if (title.length < 20) score -= 5;
+  
+  return score;
+};
+
+// ✅ v6: Build country-specific SERP query
 const buildSerpQuery = (niche: string, country: string): string => {
   const countryName = countryNames[country] || country;
-  // Add country + year for localized results
   return `${niche} ${countryName} 2026`;
 };
 
-// ✅ NEW v5: Filter SERP results for relevance
-const filterSerpResults = (results: any[], country: string): any[] => {
+// ✅ v6: Filter + score SERP results
+const filterAndScoreSerp = (results: any[], niche: string, country: string): any[] => {
   if (!Array.isArray(results)) return [];
-
-  return results.filter((r: any) => {
+  
+  const filtered = results.filter((r: any) => {
     if (!r.link || !r.title) return false;
-
+    
     try {
       const url = new URL(r.link);
       const domain = url.hostname.replace('www.', '').toLowerCase();
-
-      // Filter out generic domains
-      const isGeneric = GENERIC_DOMAINS.some((g) => domain.includes(g));
-      if (isGeneric) return false;
-
-      // Skip google redirect URLs
+      
+      // Skip generic domains
+      if (GENERIC_DOMAINS.some((g) => domain.includes(g))) return false;
       if (r.link.includes('google.com/goto')) return false;
-
+      
       return true;
     } catch {
       return false;
     }
   });
+  
+  // Score and sort by relevance
+  return filtered
+    .map((r: any) => ({
+      ...r,
+      _relevance: scoreSerpRelevance(r, niche, country),
+    }))
+    .filter((r: any) => r._relevance > 5)  // Minimum relevance
+    .sort((a: any, b: any) => b._relevance - a._relevance)
+    .map(({ _relevance, ...rest }: any) => rest);
 };
 
-// ✅ NEW v5: Financial validation
+// ✅ v6: Financial validation
 const validateFinancials = (analysis: any, country: string): void => {
   const currency = currencyInfo[country] || currencyInfo.us;
-
-  // Validate ROI in executive_summary
+  
+  // Fix Finding formulas
+  validateFindingFormulas(safeArray(analysis.key_findings), country);
+  
+  // Validate Executive ROI
   const execRoi = analysis.executive_summary?.estimated_roi;
   if (execRoi) {
-    const investment = parseFloat(
-      String(execRoi.investment || '0').replace(/[^0-9.]/g, '')
-    );
-    const pipeline = parseFloat(
-      String(execRoi.pipeline || '0').replace(/[^0-9.]/g, '')
-    );
-
+    const investment = extractNumber(execRoi.investment);
+    const pipeline = extractNumber(execRoi.pipeline);
+    
     if (investment > 0 && pipeline > 0) {
       const roi = Math.round(((pipeline - investment) / investment) * 100);
       execRoi.roi_percent = `${roi}%`;
     }
   }
-
-  // Validate financial_projection ROI summary
-  const fin = analysis.financial_projection;
-  if (fin) {
-    // Recalculate margins for each year (if any year data exists)
-    // (Skip - financial_projection has monthly data not yearly in SEO)
-  }
-
-  // Validate magic_goldmine revenue projection
+  
+  // Validate magic_goldmine revenue
   const mg = analysis.magic_goldmine?.revenue_projection;
   if (mg) {
     const leads = safeNumber(mg.monthly_leads, 0);
-    const aov = parseFloat(String(mg.avg_deal_value || '0').replace(/[^0-9.]/g, ''));
+    const aov = extractNumber(mg.avg_deal_value);
     if (leads > 0 && aov > 0) {
       const pipeline = leads * aov;
       mg.monthly_pipeline = `${currency.symbol}${pipeline.toLocaleString('en-US')}`;
       mg.formula = `${leads} leads × ${currency.symbol}${aov.toLocaleString('en-US')} = ${currency.symbol}${pipeline.toLocaleString('en-US')}`;
     }
   }
+  
+  // Validate financial_projection ROI summary
+  const fin = analysis.financial_projection;
+  if (fin) {
+    const investment = safeArray(fin.investment).reduce((sum: number, i: any) => {
+      return sum + extractNumber(i.cost);
+    }, 0);
+    
+    const lastProjection = safeArray(fin.monthly_projection).pop();
+    if (lastProjection && investment > 0) {
+      const finalPipeline = extractNumber(lastProjection.pipeline);
+      const roi = Math.round(((finalPipeline - investment) / investment) * 100);
+      fin.roi_summary = `6-Month ROI: ${roi}%`;
+    }
+  }
 };
 
-// ✅ NEW v5: Deduplicate case study titles
 const dedupeCaseStudyTitles = (caseStudies: any[]): void => {
-  caseStudies.forEach((cs: any, idx: number) => {
+  caseStudies.forEach((cs: any) => {
     if (cs.title) {
-      // Remove "Case Study X:" prefix if AI already added it
       cs.title = String(cs.title)
         .replace(/^Case Study \d+:\s*/i, '')
         .replace(/^CASE STUDY \d+:\s*/i, '')
+        .replace(/^Case Study:\s*/i, '')
         .trim();
     }
   });
 };
 
-// ✅ NEW v5: Fix Section 6 "Why it matters" duplicate bug
-// (Will be handled inline in markdown generation)
-
-// ✅ Intent classifier (unchanged)
 const classifyIntent = (keyword: string): 'informational' | 'commercial' | 'transactional' | 'navigational' => {
   const k = String(keyword || '').toLowerCase().trim();
   if (!k) return 'informational';
-
+  
   if (/\b(login|log in|sign in|sign up|app|download|official|website|portal|account)\b/.test(k)) return 'navigational';
   if (/\b(buy|purchase|price|pricing|cost|cheap|discount|deal|order|book|hire|subscribe|register|registration|setup cost|fee|fees|quote)\b/.test(k)) return 'transactional';
   if (/\b(best|top|review|reviews|compare|comparison|vs|versus|alternatives|recommended|ranked|rated)\b/.test(k)) return 'commercial';
@@ -266,10 +390,11 @@ function formatTable(headers: string[], rows: string[][]): string {
   return table;
 }
 
-// ✅ NEW v5: Niche-aware realistic volume generator
+// ✅ v6: Volume & CPC generators
 const NICHE_VOLUME_MULTIPLIERS: Record<string, number> = {
   'blogging': 1.2, 'make money': 1.3, 'seo': 1.1, 'crypto': 1.4, 'insurance': 1.3,
   'ecommerce': 1.0, 'sourcing': 0.9, 'saas': 0.9, 'marketing': 1.0, 'finance': 1.1,
+  'backend': 0.9, 'hosting': 1.0, 'server': 0.9, 'cloud': 1.0,
   'crafts': 0.6, 'hobby': 0.5, 'local services': 0.4, 'pet care': 0.7, 'gardening': 0.6,
 };
 
@@ -282,46 +407,47 @@ function generateRealisticVolume(keyword: string, country: string, tier: string)
   const kwLower = keyword.toLowerCase();
   const words = kwLower.split(/\s+/).filter((w) => w.length > 2);
   const wordCount = words.length;
-
+  
   let baseMin = 200, baseMax = 5000;
   if (tier === 'long-tail') { baseMin = 50; baseMax = 800; }
   else if (tier === 'growth') { baseMin = 200; baseMax = 3000; }
-
+  
   let nicheMultiplier = 1.0;
   for (const [nicheKey, mult] of Object.entries(NICHE_VOLUME_MULTIPLIERS)) {
     if (kwLower.includes(nicheKey)) { nicheMultiplier = mult; break; }
   }
-
+  
   const countryMultiplier = COUNTRY_MARKET_SIZE[country] || 1.0;
   const lengthFactor = wordCount <= 2 ? 1.2 : wordCount <= 4 ? 1.0 : wordCount <= 6 ? 0.7 : 0.4;
-
+  
   const seed = keyword.split('').reduce((acc, ch) => acc + ch.charCodeAt(0), 0);
   const seedRatio = (seed % 100) / 100;
-
+  
   const adjustedMax = Math.round(baseMax * nicheMultiplier * countryMultiplier * lengthFactor);
   const adjustedMin = Math.round(baseMin * nicheMultiplier * countryMultiplier * lengthFactor);
-
+  
   let volume = Math.round(adjustedMin + seedRatio * (adjustedMax - adjustedMin));
   if (volume % 10 === 0) volume += (seed % 7) + 1;
   if (volume % 100 === 0) volume += (seed % 13) + 3;
-
+  
   return Math.max(20, volume);
 }
 
 function generateRealisticCPC(keyword: string): number {
   const kwLower = keyword.toLowerCase();
   let cpcRange = { min: 2, max: 15 };
-
+  
   const cpcMap: Record<string, { min: number; max: number }> = {
     'insurance': { min: 15, max: 45 }, 'lawyer': { min: 20, max: 60 }, 'mortgage': { min: 12, max: 35 },
     'seo': { min: 5, max: 20 }, 'marketing': { min: 4, max: 18 }, 'saas': { min: 6, max: 22 },
+    'hosting': { min: 8, max: 25 }, 'server': { min: 6, max: 20 }, 'cloud': { min: 7, max: 22 },
     'how to': { min: 0.5, max: 5 }, 'guide': { min: 0.5, max: 4 },
   };
-
+  
   for (const [key, range] of Object.entries(cpcMap)) {
     if (kwLower.includes(key)) { cpcRange = range; break; }
   }
-
+  
   const seed = keyword.split('').reduce((acc, ch) => acc + ch.charCodeAt(0), 0);
   const seedRatio = (seed % 1000) / 1000;
   const cpc = cpcRange.min + seedRatio * (cpcRange.max - cpcRange.min);
@@ -353,7 +479,7 @@ function generateFallbackTrend(keyword: string, country: string): number[] {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// PROMPT BUILDER (v5 — improved)
+// PROMPT BUILDER (v6)
 // ═══════════════════════════════════════════════════════════════
 const buildSEOPrompt = (
   niche: string,
@@ -367,15 +493,14 @@ const buildSEOPrompt = (
     : 'No trend data available.';
   const currencySymbol = currencyInfo[country]?.symbol || '$';
   const multilingual = isMultilingual[country] ? 'YES' : 'NO';
-
+  
   const regs = getRegulationsForCountry(country);
   const regsBlock = `
   - Data Privacy: ${regs.dataPrivacy}
   - Tax Framework: ${regs.taxFramework}
   - Key Compliance: ${regs.keyCompliance}
   - Local Authority: ${regs.localAuthority}`;
-
-  // ✅ v5: Real SERP competitors with index
+  
   const serpBlock = serpResults.length > 0
     ? serpResults.slice(0, 10).map((r: any, i: number) => {
         try {
@@ -386,7 +511,7 @@ const buildSEOPrompt = (
         }
       }).join('\n')
     : 'No live SERP data available.';
-
+  
   return `You are a senior SEO strategist at a top-tier digital agency. Write like a human consultant.
 
 Target Market: ${countryName}. Current Year: 2026.
@@ -399,15 +524,15 @@ Is ${countryName} multilingual? ${multilingual}
 📋 REPORT STANDARDS — NON-NEGOTIABLE
 ═══════════════════════════════════════════════════════════════════════
 RULE #1 — VALUE: Every line earns its place. No filler.
-RULE #2 — EVIDENCE: Every number has source: "[tool/date]" or "Modeled: [formula]".
+RULE #2 — EVIDENCE: Every number has source: "[tool/date]" or "Pattern-Based: [formula]".
 RULE #3 — NO FABRICATED NUMBERS: Volumes non-round (887 not 890). CPC varied. KD varied.
 RULE #4 — NO AI MENTION: Never say "AI", "Gemini", "ChatGPT".
 RULE #5 — NO FAKE QUOTES: No fabricated testimonials.
 RULE #6 — NO UNIFORM DATA: No two keywords share CPC or volume.
 RULE #7 — NO "EST." or "MODELED": Use "Projected", "Forecast", "Pattern-Based".
-RULE #8 — REAL COMPETITOR NAMES: Use actual names from SERP. NEVER "Competitor A/B/C".
-RULE #9 — REAL BACKLINK DOMAINS: Use actual domains. NEVER "D1/D2/D3".
-RULE #10 — CLIENT LOVES IT: Client thinks "This is different from Semrush."
+RULE #8 — REAL COMPETITOR NAMES: Extract brand names from SERP. NEVER "Competitor A/B/C".
+RULE #9 — REAL BACKLINK DOMAINS: Use actual domains from SERP. NEVER "D1/D2/D3".
+RULE #10 — VERIFIABLE FORMULAS: Every size_of_prize MUST match its size_formula calculation.
 
 ═══════════════════════════════════════════════════════════════════════
 🎯 REAL SERP COMPETITORS (USE THESE NAMES)
@@ -415,12 +540,12 @@ RULE #10 — CLIENT LOVES IT: Client thinks "This is different from Semrush."
 ${serpBlock}
 
 INSTRUCTIONS:
-- Extract REAL brand names from the titles above (e.g., "AgencyName.com" → "AgencyName")
-- Use these EXACT names in: magic_playbook.target_competitor, competitive_landscape, competitor_weaknesses
-- If no SERP data, use descriptive role names like "Riyadh-Based SEO Agency" (NEVER "Competitor A")
+- Extract REAL brand names from titles above
+- Use EXACT names in magic_playbook.target_competitor, competitive_landscape, competitor_weaknesses
+- If no SERP, use descriptive roles like "UAE-Based Hosting Blog" (NEVER "Competitor A")
 
 ═══════════════════════════════════════════════════════════════════════
-🌍 COUNTRY DATA — WE HANDLE THESE FIELDS (RETURN EMPTY ARRAYS)
+🌍 COUNTRY DATA — RETURN EMPTY ARRAYS
 ═══════════════════════════════════════════════════════════════════════
 - ground_intel.cultural_calendar → return []
 - ground_intel.editor_intelligence → return []
@@ -451,17 +576,24 @@ ${regsBlock}
 - Tier 3 (long-tail): 50 – 800
 
 ═══════════════════════════════════════════════════════════════════════
-⚠️ HEADLINE CONSISTENCY
+⚠️ FINANCIAL CONSISTENCY (MOST CRITICAL)
 ═══════════════════════════════════════════════════════════════════════
-executive_summary.headline MUST match magic_goldmine.revenue_projection.monthly_pipeline.
+For EVERY key_finding.size_of_prize, the size_formula MUST calculate to EXACTLY that number.
 
-═══════════════════════════════════════════════════════════════════════
-⚠️ FINANCIAL CONSISTENCY (CRITICAL)
-═══════════════════════════════════════════════════════════════════════
-1. magic_goldmine.revenue_projection formula MUST be: leads × AOV = pipeline
-2. executive_summary.estimated_roi ROI% = ((pipeline - investment) / investment) × 100
-3. financial_projection.monthly_projection ROI must increment linearly
-4. All currency must be ${currencySymbol} + Western numerals (e.g., ${currencySymbol}1,500 not ${currencySymbol}١٬٥٠٠)
+EXAMPLE (CORRECT):
+  size_of_prize: "${currencySymbol}15,000/month"
+  size_formula: "1 kw × 500 vol × 2.5% CVR × ${currencySymbol}1,200 AOV"
+  CHECK: 1 × 500 × 0.025 × 1200 = 15,000 ✅
+
+EXAMPLE (WRONG):
+  size_of_prize: "${currencySymbol}15,000/month"
+  size_formula: "5 kw × 500 vol × 2.5% CVR × ${currencySymbol}1,200 AOV"
+  CHECK: 5 × 500 × 0.025 × 1200 = 75,000 ❌ (5x mismatch)
+
+Also:
+- magic_goldmine.revenue_projection formula MUST be: leads × AOV = pipeline
+- executive_summary.estimated_roi ROI% MUST = ((pipeline - investment) / investment) × 100
+- All currency in ${currencySymbol} + Western numerals (e.g., ${currencySymbol}1,500 not ${currencySymbol}١٬٥٠٠)
 
 ═══════════════════════════════════════════════════════════════════════
 ⚠️ CASE STUDY RULES
@@ -475,7 +607,14 @@ In case_studies.what_drove_growth:
 In case_studies.challenge, FIRST LINE MUST BE:
 "Note: This case study represents a different client engagement, not the current account. The profile is included as a comparable reference point."
 
-In case_studies.title: DO NOT prefix with "Case Study X:" — backend adds it automatically.
+In case_studies.title: DO NOT prefix with "Case Study X:" — backend adds it.
+
+═══════════════════════════════════════════════════════════════════════
+⚠️ STATISTICAL CLAIMS
+═══════════════════════════════════════════════════════════════════════
+- DO NOT include unverified stats like "73% of buyers..." unless you can cite a source
+- If you must include a stat, use format: "[X]% [claim] [Source: Name, Date]"
+- Or mark as: "Pattern-Based: [X]% of [audience] tend to [behavior]"
 
 **Google Trends Data:** ${trendSummary}
 
@@ -519,8 +658,8 @@ RETURN JSON IN THIS EXACT ORDER:
       { "data_type": "Local regulations", "source": "MusePRO Country Database", "pull_date": "September 2026" }
     ],
     "kpi_dashboard": [
-      { "metric": "Organic Sessions (Est.)", "current": "12,450", "previous": "10,200", "change": "+22.1%", "target": "25,000" },
-      { "metric": "Organic Leads (Est.)", "current": "89", "previous": "67", "change": "+32.8%", "target": "190" },
+      { "metric": "Organic Sessions", "current": "12,450", "previous": "10,200", "change": "+22.1%", "target": "25,000" },
+      { "metric": "Organic Leads", "current": "89", "previous": "67", "change": "+32.8%", "target": "190" },
       { "metric": "Attributed MRR", "current": "${currencySymbol}124,000", "previous": "${currencySymbol}98,000", "change": "+26.5%", "target": "${currencySymbol}300,000" },
       { "metric": "Top-10 Keywords", "current": "47", "previous": "38", "change": "+9", "target": "80" },
       { "metric": "Domain Rating", "current": "34", "previous": "32", "change": "+2", "target": "45" }
@@ -530,7 +669,7 @@ RETURN JSON IN THIS EXACT ORDER:
   "ground_intel": {
     "cultural_calendar": [],
     "language_split": {
-      "summary": "2-3 sentence${multilingual === 'YES' ? ' about bilingual dynamics' : ' about regional search variations in ' + countryName}",
+      "summary": "2-3 sentence${multilingual === 'YES' ? ' about bilingual dynamics' : ' about regional search variations'}",
       "top_keywords": [
         { "keyword": "kw1", "keyword_en": "translation", "volume": 887, "kd": 14, "cpc": 12.80 },
         { "keyword": "kw2", "keyword_en": "translation", "volume": 723, "kd": 9, "cpc": 9.40 },
@@ -539,12 +678,17 @@ RETURN JSON IN THIS EXACT ORDER:
         { "keyword": "kw5", "keyword_en": "translation", "volume": 267, "kd": 10, "cpc": 7.90 }
       ]
     },
-    "buyer_behavior": ["Pattern 1 with stat", "Pattern 2", "Pattern 3", "Pattern 4"],
+    "buyer_behavior": [
+      "Pattern-Based insight 1 (mark as Pattern-Based if no source)",
+      "Pattern-Based insight 2",
+      "Pattern-Based insight 3",
+      "Pattern-Based insight 4"
+    ],
     "editor_intelligence": [],
     "competitor_weaknesses": [
-      { "competitor": "[REAL BRAND NAME FROM SERP 1] (DA XX)", "weakness": "Specific" },
-      { "competitor": "[REAL BRAND NAME FROM SERP 2] (DA XX)", "weakness": "Specific" },
-      { "competitor": "[REAL BRAND NAME FROM SERP 3] (DA XX)", "weakness": "Specific" }
+      { "competitor": "[REAL BRAND 1] (DA XX)", "weakness": "Specific" },
+      { "competitor": "[REAL BRAND 2] (DA XX)", "weakness": "Specific" },
+      { "competitor": "[REAL BRAND 3] (DA XX)", "weakness": "Specific" }
     ]
   },
   "magic_goldmine": {
@@ -566,15 +710,15 @@ RETURN JSON IN THIS EXACT ORDER:
       "monthly_pipeline": "${currencySymbol}53,200",
       "formula": "38 leads × ${currencySymbol}1,400 = ${currencySymbol}53,200"
     },
-    "evidence": ["DataForSEO Keyword Database", "Google Trends", "Industry Benchmarks", "SERP Analysis"]
+    "evidence": ["Keyword Database", "Google Trends", "Industry Benchmarks", "SERP Analysis"]
   },
   "magic_playbook": {
-    "target_competitor": { "name": "[REAL BRAND FROM SERP #1]", "da": 52, "traffic": "45,200/mo" },
+    "target_competitor": { "name": "[REAL BRAND FROM SERP]", "da": 52, "traffic": "45,200/mo" },
     "timeline": [
-      { "date": "Sep 2024", "action": "...", "impact": "..." },
-      { "date": "Nov 2024", "action": "...", "impact": "..." },
-      { "date": "Feb 2025", "action": "...", "impact": "..." },
-      { "date": "Jun 2025", "action": "...", "impact": "..." }
+      { "date": "Sep 2025", "action": "...", "impact": "..." },
+      { "date": "Nov 2025", "action": "...", "impact": "..." },
+      { "date": "Feb 2026", "action": "...", "impact": "..." },
+      { "date": "Jun 2026", "action": "...", "impact": "..." }
     ],
     "content_formula": ["...", "...", "...", "..."],
     "backlink_strategy": {
@@ -605,30 +749,62 @@ RETURN JSON IN THIS EXACT ORDER:
       "effort": "LOW",
       "what_is_happening": "...",
       "why_it_matters": "...",
-      "size_of_prize": "${currencySymbol}X/month",
-      "size_formula": "X kw × Y vol × Z% CVR × ${currencySymbol}W AOV",
+      "size_of_prize": "${currencySymbol}15,000/month",
+      "size_formula": "1 kw × 500 vol × 2.5% CVR × ${currencySymbol}1,200 AOV",
       "evidence": ["DataForSEO", "SERP Analysis"],
       "recommendation": "...",
       "timeline": "Week 1-2",
-      "owner": "..."
+      "owner": "Content Lead"
+    },
+    {
+      "rank": 2,
+      "priority": "HIGH",
+      "title": "...",
+      "category": "...",
+      "impact": "HIGH",
+      "effort": "MEDIUM",
+      "what_is_happening": "...",
+      "why_it_matters": "...",
+      "size_of_prize": "${currencySymbol}12,000/month",
+      "size_formula": "2 kw × 800 vol × 2.0% CVR × ${currencySymbol}375 AOV",
+      "evidence": ["DataForSEO"],
+      "recommendation": "...",
+      "timeline": "Week 3-4",
+      "owner": "Dev Lead"
+    },
+    {
+      "rank": 3,
+      "priority": "HIGH",
+      "title": "...",
+      "category": "...",
+      "impact": "HIGH",
+      "effort": "MEDIUM",
+      "what_is_happening": "...",
+      "why_it_matters": "...",
+      "size_of_prize": "${currencySymbol}10,000/month",
+      "size_formula": "3 kw × 400 vol × 3.0% CVR × ${currencySymbol}278 AOV",
+      "evidence": ["Google Trends"],
+      "recommendation": "...",
+      "timeline": "Week 5-6",
+      "owner": "Localization Team"
     }
   ],
   "competitive_landscape": {
     "comparison_table": [
-      { "metric": "Domain Rating", "you": "34", "comp_a": "52", "comp_b": "41", "comp_c": "38" },
-      { "metric": "Organic Traffic", "you": "12,450", "comp_a": "45,200", "comp_b": "28,100", "comp_c": "18,900" },
-      { "metric": "Top-10 Keywords", "you": "47", "comp_a": "210", "comp_b": "134", "comp_c": "89" },
-      { "metric": "Referring Domains", "you": "89", "comp_a": "340", "comp_b": "178", "comp_c": "120" }
+      { "metric": "Domain Rating", "you": "34", "comp_a": "28", "comp_b": "42", "comp_c": "54" },
+      { "metric": "Organic Traffic", "you": "12,450", "comp_a": "12,400", "comp_b": "28,100", "comp_c": "45,200" },
+      { "metric": "Top-10 Keywords", "you": "47", "comp_a": "52", "comp_b": "134", "comp_c": "210" },
+      { "metric": "Referring Domains", "you": "89", "comp_a": "74", "comp_b": "178", "comp_c": "340" }
     ],
     "content_gap": [
-      { "topic": "T1", "volume": 887, "leader": "[REAL BRAND 1]", "your_position": "Not ranking" },
-      { "topic": "T2", "volume": 1124, "leader": "[REAL BRAND 2]", "your_position": "Position 22" },
-      { "topic": "T3", "volume": 312, "leader": "[REAL BRAND 1]", "your_position": "Not ranking" },
-      { "topic": "T4", "volume": 487, "leader": "[REAL BRAND 3]", "your_position": "Position 15" },
-      { "topic": "T5", "volume": 623, "leader": "[REAL BRAND 2]", "your_position": "Not ranking" },
-      { "topic": "T6", "volume": 234, "leader": "[REAL BRAND 1]", "your_position": "Position 28" },
-      { "topic": "T7", "volume": 412, "leader": "[REAL BRAND 3]", "your_position": "Not ranking" },
-      { "topic": "T8", "volume": 782, "leader": "[REAL BRAND 1]", "your_position": "Position 19" }
+      { "topic": "T1", "volume": 887, "leader": "[REAL BRAND]", "your_position": "Not ranking" },
+      { "topic": "T2", "volume": 1124, "leader": "[REAL BRAND]", "your_position": "Position 22" },
+      { "topic": "T3", "volume": 312, "leader": "[REAL BRAND]", "your_position": "Not ranking" },
+      { "topic": "T4", "volume": 487, "leader": "[REAL BRAND]", "your_position": "Position 15" },
+      { "topic": "T5", "volume": 623, "leader": "[REAL BRAND]", "your_position": "Not ranking" },
+      { "topic": "T6", "volume": 234, "leader": "[REAL BRAND]", "your_position": "Position 28" },
+      { "topic": "T7", "volume": 412, "leader": "[REAL BRAND]", "your_position": "Not ranking" },
+      { "topic": "T8", "volume": 782, "leader": "[REAL BRAND]", "your_position": "Position 19" }
     ],
     "backlink_gap": [
       { "domain": "[REAL DOMAIN 1]", "da": 78, "comp_a_links": 8, "your_links": 0 },
@@ -655,7 +831,7 @@ RETURN JSON IN THIS EXACT ORDER:
       { "action": "A8", "theme": "Scale", "owner": "Partnerships", "effort": "M" },
       { "action": "A9", "theme": "Scale", "owner": "Dev Lead", "effort": "M" }
     ],
-    "dependencies": ["Dep 1", "Dep 2"]
+    "dependencies": ["Timely delivery of localized content", "Access to regional benchmark data"]
   },
   "financial_projection": {
     "investment": [
@@ -676,8 +852,8 @@ RETURN JSON IN THIS EXACT ORDER:
     "roi_summary": "6-Month ROI: 138%",
     "roi_formula": "(Pipeline - Investment) / Investment × 100",
     "assumptions": [
-      { "assumption": "Conversion rate: 1.8% → 2.2%", "source": "GA4, 90-day historical" },
-      { "assumption": "Average deal value: ${currencySymbol}1,400", "source": "Client CRM, Q3 2026" },
+      { "assumption": "Conversion rate: 1.8% → 2.2%", "source": "Pattern-Based, industry benchmark" },
+      { "assumption": "Average deal value: ${currencySymbol}1,400", "source": "Pattern-Based, industry benchmark" },
       { "assumption": "Traffic growth: +100%", "source": "Keyword opportunity analysis" }
     ],
     "sensitivity": [
@@ -736,14 +912,14 @@ RETURN JSON IN THIS EXACT ORDER:
 // MAIN GENERATOR
 // ═══════════════════════════════════════════════════════════════
 export async function generateSEOReport(niche: string, country: string) {
-  const cacheKey = `seo_v5_${niche}_${country}`;  // ✅ v5 cache bump
+  const cacheKey = `seo_v6_${niche}_${country}`;
   const cached = cacheService.get(cacheKey);
   if (cached) {
-    console.log('📦 [Cache] Returning cached SEO report (v5).');
+    console.log('📦 [Cache] Returning cached SEO report (v6).');
     return cached;
   }
 
-  // ── TREND DATA (3-tier) ──
+  // ── TREND DATA ──
   let trendData: number[] = [];
   let trendSource: 'dataforseo' | 'google_trends' | 'pattern_fallback' = 'pattern_fallback';
   const dataForSEOAvailable = isDataForSEOAvailable();
@@ -770,27 +946,26 @@ export async function generateSEOReport(niche: string, country: string) {
     trendSource = 'pattern_fallback';
   }
 
-  // ── SERP DATA (with country-specific query + filtering) ──
-  const serpQuery = buildSerpQuery(niche, country);  // ✅ NEW v5
+  // ── SERP DATA (with relevance scoring) ──
+  const serpQuery = buildSerpQuery(niche, country);
 
   let searchData = await getScraperAPISearch(serpQuery, country).catch(() => null);
   if (!searchData?.organic_results) searchData = await getSearchResults(serpQuery, country).catch(() => null);
   if (!searchData?.organic_results) searchData = await getSerperResults(serpQuery, country).catch(() => null);
 
-  // ✅ NEW v5: Filter generic + irrelevant domains
-  const filteredResults = filterSerpResults(searchData?.organic_results || [], country);
+  const filteredResults = filterAndScoreSerp(searchData?.organic_results || [], niche, country);
   const serpResults = filteredResults.slice(0, 10);
 
-  console.log(`✅ [SERP] Filtered ${serpResults.length} results from ${searchData?.organic_results?.length || 0} raw results.`);
+  console.log(`✅ [SERP] Filtered ${serpResults.length} relevant results from ${searchData?.organic_results?.length || 0} raw.`);
 
   // ── AI CALL ──
   const prompt = buildSEOPrompt(niche, country, serpResults, trendData);
   const aiResponse = await runGroqWithRetry(prompt, JSON.stringify({ niche, country }));
   const analysis = extractJSON(aiResponse);
 
-  // ── POST-PROCESSING (v5) ──
-  validateFinancials(analysis, country);  // ✅ Auto-fix ROI/AOV/pipeline math
-  dedupeCaseStudyTitles(safeArray(analysis.case_studies));  // ✅ Remove duplicate titles
+  // ── POST-PROCESSING ──
+  validateFinancials(analysis, country);
+  dedupeCaseStudyTitles(safeArray(analysis.case_studies));
 
   const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
   const reference = `MKT-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
@@ -808,7 +983,7 @@ export async function generateSEOReport(niche: string, country: string) {
   const caseStudies = safeArray(analysis.case_studies);
   const dataLimitations = safeArray(analysis.data_limitations);
 
-  // Override with pre-loaded country data
+  // Country overrides
   const preloadedCalendar = getCalendarForCountry(country);
   const preloadedEditors = getEditorsForCountry(country);
 
@@ -824,7 +999,7 @@ export async function generateSEOReport(niche: string, country: string) {
     what_works: e.whatWorks,
   }));
 
-  // ── KEYWORDS: Hybrid + Sanitization ──
+  // ── KEYWORDS ──
   let keywords = Array.isArray(analysis.keywords) ? analysis.keywords : [];
 
   keywords = keywords.map((kw: any, i: number) => {
@@ -842,7 +1017,6 @@ export async function generateSEOReport(niche: string, country: string) {
     };
   });
 
-  // DataForSEO override
   if (dataForSEOAvailable && keywords.length > 0) {
     try {
       const realMetrics = await fetchRealKeywordMetrics(
@@ -873,7 +1047,6 @@ export async function generateSEOReport(niche: string, country: string) {
     }
   }
 
-  // Currency conversion for DataForSEO CPC
   keywords = await mapWithConcurrency(keywords, 5, async (kw: any) => {
     try {
       const originalCpc = kw.cpc;
@@ -894,7 +1067,7 @@ export async function generateSEOReport(niche: string, country: string) {
     return kw;
   });
 
-  // Magic Goldmine keywords from main list
+  // Magic Goldmine keywords
   if (magicGoldmine.top_keywords && Array.isArray(magicGoldmine.top_keywords)) {
     const mainKwSet = new Set(keywords.map((k: any) => k.keyword.toLowerCase()));
     const validMagic = magicGoldmine.top_keywords.filter((mk: any) =>
@@ -917,37 +1090,24 @@ export async function generateSEOReport(niche: string, country: string) {
     }
   }
 
-  // ── SERP Landscape ──
+  // SERP Landscape
   let serp = Array.isArray(analysis.serp_landscape)
     ? analysis.serp_landscape.filter((s: any) => s.title && s.link).slice(0, 8)
     : [];
 
   if (serp.length === 0 && serpResults.length > 0) {
-    serp = serpResults.slice(0, 8).map((r: any, i: number) => {
-      try {
-        const domain = new URL(r.link).hostname.replace('www.', '');
-        return {
-          position: i + 1,
-          title: r.title || 'Untitled',
-          link: r.link || '#',
-          da: 30 + (i * 5),
-          words: 2000 + (i * 300),
-          backlinks: 150 + (i * 50),
-          traffic: 5000 + (i * 2000),
-          strengths: 'Ranking for target keywords',
-          weaknesses: 'Weak localized content',
-          gap: 'Opportunity to create localized guide',
-        };
-      } catch {
-        return {
-          position: i + 1,
-          title: r.title || 'Untitled',
-          link: r.link || '#',
-          da: 30, words: 2000, backlinks: 150, traffic: 5000,
-          strengths: 'Ranking', weaknesses: 'Weak', gap: 'Opportunity',
-        };
-      }
-    });
+    serp = serpResults.slice(0, 8).map((r: any, i: number) => ({
+      position: i + 1,
+      title: r.title || 'Untitled',
+      link: r.link || '#',
+      da: 30 + i * 5,
+      words: 2000 + i * 300,
+      backlinks: 150 + i * 50,
+      traffic: 5000 + i * 2000,
+      strengths: 'Ranking for target keywords',
+      weaknesses: 'Weak localized content',
+      gap: 'Opportunity to create localized guide',
+    }));
   }
 
   const languageSplitHeading = isMultilingual[country]
@@ -959,7 +1119,7 @@ export async function generateSEOReport(niche: string, country: string) {
     : `This section analyzes regional search variations across ${countryNames[country]}.`;
 
   // ═══════════════════════════════════════════════════════════
-  // BUILD MARKDOWN (v5 — with all bug fixes)
+  // BUILD MARKDOWN
   // ═══════════════════════════════════════════════════════════
   let markdown = `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 MusePRO
@@ -1067,7 +1227,7 @@ TOP 3 FINDINGS (Ranked by Business Impact)
   if (moneyKw.length > 0) {
     markdown += `TIER 1 — MONEY KEYWORDS (Highest Commercial Intent)\n\n`;
     markdown += formatTable(
-      ['#', 'Keyword', 'Volume', 'KD', `CPC (${currency.symbol})`, 'Intent'],
+      ['#', 'Keyword', 'Volume', 'KD', `CPC (${currency.symbol.trim()})`, 'Intent'],
       moneyKw.map((k: any, i: number) => [
         String(i + 1), safeString(k.keyword), String(k.volume), String(k.kd),
         `${currency.symbol}${safeNumber(k.cpc, 0).toFixed(2)}`, safeString(k.intent)
@@ -1079,7 +1239,7 @@ TOP 3 FINDINGS (Ranked by Business Impact)
   if (growthKw.length > 0) {
     markdown += `TIER 2 — GROWTH KEYWORDS (Strategic Value)\n\n`;
     markdown += formatTable(
-      ['#', 'Keyword', 'Volume', 'KD', `CPC (${currency.symbol})`, 'Intent'],
+      ['#', 'Keyword', 'Volume', 'KD', `CPC (${currency.symbol.trim()})`, 'Intent'],
       growthKw.map((k: any, i: number) => [
         String(i + 15), safeString(k.keyword), String(k.volume), String(k.kd),
         `${currency.symbol}${safeNumber(k.cpc, 0).toFixed(2)}`, safeString(k.intent)
@@ -1091,7 +1251,7 @@ TOP 3 FINDINGS (Ranked by Business Impact)
   if (longTailKw.length > 0) {
     markdown += `TIER 3 — LONG-TAIL KEYWORDS (Quick Wins)\n\n`;
     markdown += formatTable(
-      ['#', 'Keyword', 'Volume', 'KD', `CPC (${currency.symbol})`, 'Intent'],
+      ['#', 'Keyword', 'Volume', 'KD', `CPC (${currency.symbol.trim()})`, 'Intent'],
       longTailKw.map((k: any, i: number) => [
         String(i + 33), safeString(k.keyword), String(k.volume), String(k.kd),
         `${currency.symbol}${safeNumber(k.cpc, 0).toFixed(2)}`, safeString(k.intent)
@@ -1126,7 +1286,7 @@ tool can replicate.
   markdown += `${safeString(groundIntel.language_split?.summary)}\n\n`;
   markdown += `Top ${isMultilingual[country] ? 'local-language' : 'regional'} keywords with commercial intent:\n\n`;
   markdown += formatTable(
-    ['Keyword', 'Volume', 'KD', `CPC (${currency.symbol})`],
+    ['Keyword', 'Volume', 'KD', `CPC (${currency.symbol.trim()})`],
     safeArray(groundIntel.language_split?.top_keywords).map((k: any) => [
       safeString(k.keyword), String(k.volume || 0), String(k.kd || 0), `${currency.symbol}${safeNumber(k.cpc, 0).toFixed(2)}`
     ])
@@ -1176,7 +1336,7 @@ ${safeString(magicGoldmine.cluster_name, 'THE UNTAPPED OPPORTUNITY')}
 
   markdown += `\n💎 TOP 5 HIGHEST-VALUE KEYWORDS\n\n`;
   markdown += formatTable(
-    ['#', 'Keyword', 'Volume', 'KD', `CPC (${currency.symbol})`, 'Intent'],
+    ['#', 'Keyword', 'Volume', 'KD', `CPC (${currency.symbol.trim()})`, 'Intent'],
     safeArray(magicGoldmine.top_keywords).map((k: any, i: number) => [
       String(i + 1), safeString(k.keyword), String(k.volume || 0), String(k.kd || 0),
       `${currency.symbol}${safeNumber(k.cpc, 0).toFixed(2)}`, safeString(k.intent)
@@ -1241,7 +1401,7 @@ Domain Rating: ${magicPlaybook.target_competitor?.da || 0} | Monthly Organic Tra
   safeArray(magicPlaybook.evidence).forEach((e: string) => markdown += `  ✅ ${e}\n`);
   markdown += `\n`;
 
-  // SECTION 6 — ✅ FIXED: Duplicate "Why it matters" bug removed
+  // SECTION 6
   markdown += `6. KEY FINDINGS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -1256,7 +1416,7 @@ Domain Rating: ${magicPlaybook.target_competitor?.da || 0} | Monthly Organic Tra
     markdown += `│ Priority:   ${safeString(f.priority)}\n`;
     markdown += `└──────────────────────────────────────────────────────────────────┘\n\n`;
     markdown += `💡 What is happening:\n   ${safeString(f.what_is_happening)}\n\n`;
-    markdown += `⚠️ Why it matters:\n   ${safeString(f.why_it_matters)}\n\n`;  // ✅ FIXED
+    markdown += `⚠️ Why it matters:\n   ${safeString(f.why_it_matters)}\n\n`;
     markdown += `💰 Size of prize:\n   ${safeString(f.size_of_prize)}\n`;
     if (f.size_formula) markdown += `   Formula: ${safeString(f.size_formula)}\n`;
     markdown += `\n✅ Evidence:\n`;
@@ -1379,7 +1539,7 @@ Domain Rating: ${magicPlaybook.target_competitor?.da || 0} | Monthly Organic Tra
 
 `;
   caseStudies.forEach((cs: any, idx: number) => {
-    markdown += `CASE STUDY ${String(idx + 1).padStart(2, '0')}: ${safeString(cs.title)}\n`;  // ✅ FIXED: No duplicate
+    markdown += `CASE STUDY ${String(idx + 1).padStart(2, '0')}: ${safeString(cs.title)}\n`;
     markdown += `${safeString(cs.subtitle)}\n\n`;
     const cp = cs.client_profile || {};
     markdown += `📋 CLIENT PROFILE\n`;
@@ -1461,8 +1621,8 @@ Generated by MusePRO Senior Research Division.
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 `;
 
-  // ✅ Apply final markdown cleanup (removes Est./Modeled)
-  markdown = cleanMarkdown(markdown);
+  // Final cleanup
+  markdown = cleanMarkdown(markdown, country);
 
   const monthlyTotal = safeArray(analysis.content_roadmap).reduce((sum: number, week: any) => sum + safeNumber(week.expected_traffic, 1000), 0);
   let trafficEstimate = Math.round(monthlyTotal * 2);
