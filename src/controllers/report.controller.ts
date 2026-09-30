@@ -1,3 +1,11 @@
+// src/controllers/report.controller.ts
+// v2 — ALL REPORT TYPES SUPPORTED
+// FIXES:
+//   (1) Include brand_protection and technical_seo in all endpoints
+//   (2) Return nested data.subtype for frontend tech SEO detection
+//   (3) Update stats to count all 4 types
+//   (4) Bulk operations work for all types
+
 import { Request, Response, NextFunction } from 'express';
 import { Report } from '../models/Report';
 import { reportQuerySchema } from '../validators/report';
@@ -6,12 +14,14 @@ import { ZodError } from 'zod';
 // ✅ v2: ALL report types supported
 const ALL_REPORT_TYPES = ['product', 'seo', 'technical_seo', 'brand_protection'];
 
+// ═══════════════════════════════════════════════════════════════════════════
 // GET /api/reports - List reports with pagination & filters
+// ═══════════════════════════════════════════════════════════════════════════
 export const getReports = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const query = reportQuerySchema.parse(req.query);
-    
-    // ✅ FIX #1: Include ALL report types (was: ['product', 'seo'])
+
+    // ✅ FIX #1: Include ALL report types
     const filter: any = { type: { $in: ALL_REPORT_TYPES } };
     if (query.type) filter.type = query.type;
     if (query.country) filter.country = query.country.toLowerCase();
@@ -26,7 +36,7 @@ export const getReports = async (req: Request, res: Response, next: NextFunction
       .sort({ createdAt: -1 })
       .skip((query.page - 1) * query.limit)
       .limit(query.limit)
-      // ✅ FIX #2: Include data.subtype (minimal payload — only this nested field)
+      // ✅ Include data.subtype for frontend tech SEO detection
       .select('_id type niche country clientName value createdAt updatedAt remark data.subtype')
       .lean();
 
@@ -34,36 +44,57 @@ export const getReports = async (req: Request, res: Response, next: NextFunction
       reports: reports.map((r: any) => ({
         _id: r._id,
         type: r.type,
-        subtype: r.data?.subtype || null, // ✅ Top-level for easy frontend access
+        // ✅ FIX #2: Return NESTED data.subtype for frontend
+        data: { subtype: r.data?.subtype || null },
         niche: r.niche,
         country: r.country,
         clientName: r.clientName || 'Client Name',
-        value: r.type === 'brand_protection' ? '$999' : r.type === 'product' ? '$149' : '$99',
+        value:
+          r.type === 'brand_protection'
+            ? '$999'
+            : r.type === 'product'
+            ? '$149'
+            : '$99',
         createdAt: r.createdAt,
         updatedAt: r.updatedAt,
-        remark: r.remark || ''
+        remark: r.remark || '',
       })),
-      pagination: { total, page: query.page, limit: query.limit, pages: Math.ceil(total / query.limit) },
+      pagination: {
+        total,
+        page: query.page,
+        limit: query.limit,
+        pages: Math.ceil(total / query.limit),
+      },
     });
   } catch (err) {
-    if (err instanceof ZodError) return res.status(400).json({ error: 'Invalid query', details: err.errors });
+    if (err instanceof ZodError)
+      return res.status(400).json({ error: 'Invalid query', details: err.errors });
     next(err);
   }
 };
 
+// ═══════════════════════════════════════════════════════════════════════════
 // GET /api/reports/stats
+// ═══════════════════════════════════════════════════════════════════════════
 export const getReportStats = async (req: Request, res: Response, next: NextFunction) => {
   try {
     // ✅ FIX: Include all report types
     const filter = { type: { $in: ALL_REPORT_TYPES } };
-    const [totalReports, productReports, seoReports, brandReports, technicalReports] = await Promise.all([
-      Report.countDocuments(filter),
-      Report.countDocuments({ ...filter, type: 'product' }),
-      Report.countDocuments({ ...filter, type: 'seo' }),
-      Report.countDocuments({ ...filter, type: 'brand_protection' }),
-      // Technical SEO is type 'seo' with subtype 'technical-business'
-      Report.countDocuments({ ...filter, type: 'seo', 'data.subtype': 'technical-business' }),
-    ]);
+
+    const [totalReports, productReports, seoReports, brandReports, technicalReports] =
+      await Promise.all([
+        Report.countDocuments(filter),
+        Report.countDocuments({ ...filter, type: 'product' }),
+        Report.countDocuments({ ...filter, type: 'seo' }),
+        Report.countDocuments({ ...filter, type: 'brand_protection' }),
+        // Technical SEO is type 'seo' with subtype 'technical-business'
+        Report.countDocuments({
+          ...filter,
+          type: 'seo',
+          'data.subtype': 'technical-business',
+        }),
+      ]);
+
     res.json({
       totalReports,
       totalValue: `$${totalReports * 99}`,
@@ -72,12 +103,16 @@ export const getReportStats = async (req: Request, res: Response, next: NextFunc
         seo: seoReports - technicalReports, // ✅ Exclude technical from SEO count
         technical: technicalReports,
         brand_protection: brandReports,
-      }
+      },
     });
-  } catch (err) { next(err); }
+  } catch (err) {
+    next(err);
+  }
 };
 
+// ═══════════════════════════════════════════════════════════════════════════
 // GET /api/reports/:id
+// ═══════════════════════════════════════════════════════════════════════════
 export const getReportById = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const report = await Report.findById(req.params.id);
@@ -86,15 +121,22 @@ export const getReportById = async (req: Request, res: Response, next: NextFunct
     const returnReport = {
       ...report.toObject(),
       remark: report.remark || '',
-      sixMonthTrafficEstimate: (report as any).traffic_estimate || (report as any).sixMonthTrafficEstimate || 0,
+      sixMonthTrafficEstimate:
+        (report as any).traffic_estimate ||
+        (report as any).sixMonthTrafficEstimate ||
+        0,
       trendSummary: (report as any).trend_summary || 'Steady trend detected.',
       chartData: (report as any).chart_data || {},
     };
     res.json(returnReport);
-  } catch (err) { next(err); }
+  } catch (err) {
+    next(err);
+  }
 };
 
+// ═══════════════════════════════════════════════════════════════════════════
 // PUT /api/reports/:id - Update report metadata and/or markdown
+// ═══════════════════════════════════════════════════════════════════════════
 export const updateReport = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { clientName, markdown, remark } = req.body;
@@ -104,76 +146,129 @@ export const updateReport = async (req: Request, res: Response, next: NextFuncti
     if (markdown) updateData.markdown = markdown;
     if (remark !== undefined) updateData.remark = remark;
 
-    const report = await Report.findByIdAndUpdate(req.params.id, updateData, { new: true });
+    const report = await Report.findByIdAndUpdate(req.params.id, updateData, {
+      new: true,
+    });
     if (!report) return res.status(404).json({ error: 'Report not found' });
     res.json(report);
-  } catch (err) { next(err); }
+  } catch (err) {
+    next(err);
+  }
 };
 
+// ═══════════════════════════════════════════════════════════════════════════
 // DELETE /api/reports/:id
+// ═══════════════════════════════════════════════════════════════════════════
 export const deleteReport = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const report = await Report.findByIdAndDelete(req.params.id);
     if (!report) return res.status(404).json({ error: 'Report not found' });
     res.json({ message: 'Report deleted', id: report._id });
-  } catch (err) { next(err); }
+  } catch (err) {
+    next(err);
+  }
 };
 
+// ═══════════════════════════════════════════════════════════════════════════
 // POST /api/reports/export-zip
+// ═══════════════════════════════════════════════════════════════════════════
 export const bulkExportZip = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { ids } = req.body;
-    if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: 'Provide array of report IDs' });
-    if (ids.length > 50) return res.status(400).json({ error: 'Maximum 50 reports per export' });
+    if (!Array.isArray(ids) || ids.length === 0)
+      return res.status(400).json({ error: 'Provide array of report IDs' });
+    if (ids.length > 50)
+      return res.status(400).json({ error: 'Maximum 50 reports per export' });
 
     // ✅ FIX: Include all types
-    const reports = await Report.find({ _id: { $in: ids }, type: { $in: ALL_REPORT_TYPES } }).lean();
-    if (reports.length === 0) return res.status(404).json({ error: 'No valid reports found' });
+    const reports = await Report.find({
+      _id: { $in: ids },
+      type: { $in: ALL_REPORT_TYPES },
+    }).lean();
+
+    if (reports.length === 0)
+      return res.status(404).json({ error: 'No valid reports found' });
 
     const JSZip = require('jszip');
     const zip = new JSZip();
+
     reports.forEach((report: any) => {
       const content = report.markdown || JSON.stringify(report.data, null, 2);
-      zip.file(`report_${report.niche}_${report.country}_${report._id}.md`, content);
+      zip.file(
+        `report_${report.niche}_${report.country}_${report._id}.md`,
+        content
+      );
     });
 
     const zipBuffer = await zip.generateAsync({ type: 'nodebuffer' });
-    res.set({ 'Content-Type': 'application/zip', 'Content-Disposition': `attachment; filename=marketmuse_reports_${Date.now()}.zip` });
+    res.set({
+      'Content-Type': 'application/zip',
+      'Content-Disposition': `attachment; filename=marketmuse_reports_${Date.now()}.zip`,
+    });
     res.send(zipBuffer);
-  } catch (err) { next(err); }
+  } catch (err) {
+    next(err);
+  }
 };
 
+// ═══════════════════════════════════════════════════════════════════════════
 // DELETE /api/reports/cleanup
+// ═══════════════════════════════════════════════════════════════════════════
 export const cleanupOldReports = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const result = await (Report as any).cleanupInvalid();
-    res.json({ success: true, message: 'Database cleaned successfully', deletedCount: result.deletedCount || 0, timestamp: new Date().toISOString() });
-  } catch (err) { next(err); }
+    res.json({
+      success: true,
+      message: 'Database cleaned successfully',
+      deletedCount: result.deletedCount || 0,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err) {
+    next(err);
+  }
 };
 
+// ═══════════════════════════════════════════════════════════════════════════
 // DELETE /api/reports/bulk-delete
+// ═══════════════════════════════════════════════════════════════════════════
 export const bulkDeleteReports = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { ids } = req.body;
-    if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: 'Provide array of report IDs' });
-    if (ids.length > 100) return res.status(400).json({ error: 'Maximum 100 reports per bulk delete' });
+    if (!Array.isArray(ids) || ids.length === 0)
+      return res.status(400).json({ error: 'Provide array of report IDs' });
+    if (ids.length > 100)
+      return res.status(400).json({ error: 'Maximum 100 reports per bulk delete' });
 
     // ✅ FIX: Include all types
-    const result = await Report.deleteMany({ _id: { $in: ids }, type: { $in: ALL_REPORT_TYPES } });
-    res.json({ success: true, message: `${result.deletedCount} reports deleted successfully`, deletedCount: result.deletedCount });
-  } catch (err) { next(err); }
+    const result = await Report.deleteMany({
+      _id: { $in: ids },
+      type: { $in: ALL_REPORT_TYPES },
+    });
+    res.json({
+      success: true,
+      message: `${result.deletedCount} reports deleted successfully`,
+      deletedCount: result.deletedCount,
+    });
+  } catch (err) {
+    next(err);
+  }
 };
 
+// ═══════════════════════════════════════════════════════════════════════════
 // GET /api/reports/search
+// ═══════════════════════════════════════════════════════════════════════════
 export const searchReports = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { q, limit = 20 } = req.query;
-    if (!q || typeof q !== 'string' || q.length < 2) return res.status(400).json({ error: 'Search query must be at least 2 characters' });
+    if (!q || typeof q !== 'string' || q.length < 2)
+      return res.status(400).json({
+        error: 'Search query must be at least 2 characters',
+      });
 
-    // ✅ FIX: Include all types + include subtype in projection
+    // ✅ FIX: Include all types + nested data.subtype
     const reports = await Report.find({
       niche: { $regex: q, $options: 'i' },
-      type: { $in: ALL_REPORT_TYPES }
+      type: { $in: ALL_REPORT_TYPES },
     })
       .sort({ createdAt: -1 })
       .limit(Number(limit))
@@ -186,13 +281,21 @@ export const searchReports = async (req: Request, res: Response, next: NextFunct
       reports: reports.map((r: any) => ({
         _id: r._id,
         type: r.type,
-        subtype: r.data?.subtype || null,
+        // ✅ FIX: Nested data
+        data: { subtype: r.data?.subtype || null },
         niche: r.niche,
         country: r.country,
-        value: r.type === 'brand_protection' ? '$999' : r.type === 'product' ? '$149' : '$99',
+        value:
+          r.type === 'brand_protection'
+            ? '$999'
+            : r.type === 'product'
+            ? '$149'
+            : '$99',
         createdAt: r.createdAt,
-        remark: r.remark || ''
+        remark: r.remark || '',
       })),
     });
-  } catch (err) { next(err); }
+  } catch (err) {
+    next(err);
+  }
 };
