@@ -4,6 +4,7 @@ import mongoose from 'mongoose';
 import { createProductReport, getProductReport } from '../controllers/product.controller';
 import { createSEOReport, getSEOReport } from '../controllers/seo.controller';
 import { createTechnicalSEOReport, getTechnicalSEOReport } from '../controllers/technical-seo.controller';
+import { createBrandProtectionReport, getBrandProtectionReport } from '../controllers/brand-protection.controller';
 import {
   getReports,
   getReportStats,
@@ -26,11 +27,11 @@ const router = Router();
 
 // ============ Health Check ============
 router.get('/health', (req, res) => {
-  res.json({ 
-    status: 'ok', 
-    timestamp: new Date().toISOString(), 
-    service: 'MusePRO', 
-    version: '1.0.0' 
+  res.json({
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    service: 'MusePRO',
+    version: '1.0.0'
   });
 });
 
@@ -45,6 +46,10 @@ router.get('/seo-report/:id', getSEOReport);
 // ============ Technical SEO Audit ============
 router.post('/technical-seo', createTechnicalSEOReport);
 router.get('/technical-seo/:id', getTechnicalSEOReport);
+
+// ============ Brand Protection (NEW) ============
+router.post('/brand-protection', createBrandProtectionReport);
+router.get('/brand-protection/:id', getBrandProtectionReport);
 
 // ============ Reports (CRUD) ============
 router.get('/reports/search', searchReports);
@@ -65,7 +70,7 @@ router.put('/agency-settings', updateAgencySettings);
 router.post('/send-report', async (req, res, next) => {
   try {
     const { email, reportId, subject, body, attachments } = req.body;
-    
+
     if (!email || !reportId) {
       return res.status(400).json({ error: 'Email and reportId are required' });
     }
@@ -104,7 +109,7 @@ router.post('/reports/:id/share', async (req, res, next) => {
     const { expiresInHours = 24, password = null } = req.body;
     const token = crypto.randomBytes(32).toString('hex');
     const expiresAt = new Date(Date.now() + expiresInHours * 60 * 60 * 1000);
-    
+
     const shared = await SharedReport.create({
       reportId: req.params.id,
       token,
@@ -112,9 +117,9 @@ router.post('/reports/:id/share', async (req, res, next) => {
       password: password ? bcrypt.hashSync(password, 10) : null,
     });
 
-    res.json({ 
-      link: `/api/reports/share/${token}`, 
-      expiresAt 
+    res.json({
+      link: `/api/reports/share/${token}`,
+      expiresAt
     });
   } catch (err: unknown) {
     const errorMessage = err instanceof Error ? err.message : 'Failed to create share link';
@@ -128,7 +133,7 @@ router.get('/reports/share/:token', async (req, res, next) => {
     const shared = await SharedReport.findOne({ token: req.params.token });
     if (!shared) return res.status(404).json({ error: 'Invalid link' });
     if (shared.expiresAt < new Date()) return res.status(410).json({ error: 'Link expired' });
-    
+
     if (shared.password) {
       const { password } = req.query;
       if (!password || !bcrypt.compareSync(password as string, shared.password)) {
