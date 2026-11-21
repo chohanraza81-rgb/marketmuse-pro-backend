@@ -1,29 +1,14 @@
 // seo.report.generator.ts
 // ═══════════════════════════════════════════════════════════════════════════
-// v12 — EVIDENCE-GATED EDITION (NO SYNTHETIC METRICS OR COUNTRY FX RATES)
+// v13 — EVIDENCE-GATED + KEYWORD FALLBACK EDITION (12 COUNTRIES)
 // ═══════════════════════════════════════════════════════════════════════════
-// BASE: v9
-// v12 — CLIENT-FACING GUARANTEES:
-//   (1) Finding formulas — size_of_prize ONLY from formula. AI discarded.
-//   (2) Canonical keyword array — single source of truth. Every section
-//       (3.2, 4, 7.5-E) pulls from it. No same-kw-different-values.
-//   (3) Financial outputs require explicit client business_inputs; no defaults.
-//   (4) ROI is calculated only from supplied pipeline and investment inputs.
-//   (5) LTV:CAC — always recomputed. Payback always recomputed.
-//   (6) Backlinks/competitor metrics are never fabricated as fallback data.
-//   (7) Top-5 magic keywords — sorted by CPC (highest value).
-//   (8) Gap labels are only calculated for comparable, directionally valid metrics.
-//   (9) Calendar quarters — fixed strings.
-//  (10) Health score uses clamped, supplied SWOT scores only.
-//  (11) "TOP 3" label — max 3 shown.
-//  (12) Currency-aware CPC cap.
-//  (13) Pull date = report date.
-//  (14) Dynamic year everywhere.
-//  (15) Generic domains (printful.com etc) filtered from competitor selection.
-//  (16) Missing evidence gets an explicit reason; no fabricated metrics or case studies.
-//  (17) No synthetic keyword volumes, CPC, trend curves, market-size multipliers or FX constants.
-//  (18) Country-aware currency codes and locale formatting.
-//  (19) Empty report tables carry an evidence-status row instead of appearing blank.
+// CHANGES FROM v12:
+//   (20) magic_goldmine.top_keywords never empty if money keywords exist
+//   (21) Regional/language table never empty (monolingual fallback)
+//   (22) CPC never silently nulled; safe format with "No provider metric"
+//   (23) Health score status text improved with explicit reasons
+//   (24) Keyword metric status carries provenance per field
+//   (25) 12-country currency locale safety (try/catch fallback)
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { cacheService } from './cache';
@@ -40,7 +25,7 @@ import { getEditorsForCountry } from '../data/country-editors';
 import { getRegulationsForCountry } from '../data/country-regulations';
 
 // ═══════════════════════════════════════════════════════════════════════════
-// CONFIG
+// CONFIG — 12 COUNTRIES
 // ═══════════════════════════════════════════════════════════════════════════
 
 const countryNames: Record<string, string> = {
@@ -64,30 +49,6 @@ const currencyInfo: Record<string, { symbol: string; code: string; locale: strin
   my: { symbol: 'RM ', code: 'MYR', locale: 'ms-MY' },
 };
 
-// Client economics must be supplied in the report currency; no country-level multiplier is applied.
-// Client economics must be supplied in analysis.business_inputs in the report currency.
-// Expected fields: aov, cac, lifetime_value, monthly_contribution_per_customer,
-// six_month_investment, six_month_pipeline, six_month_attributed_gross_profit, monthly_fixed_cost, variable_cost_per_customer.
-// Rate inputs organic_click_capture_rate and lead_conversion_rate are decimals (e.g. 0.26, 0.032).
-// No country-level currency multiplier is applied to client economics.
-const getEconomics = (country: string, analysis?: any) => {
-  const input = analysis?.business_inputs || {};
-  const AOV = safeNumber(input.aov, 0);
-  const CAC = safeNumber(input.cac, 0);
-  const LTV = safeNumber(input.lifetime_value, 0); // Do not infer LTV from AOV × months; order frequency/margin would be missing.
-  const MONTHLY_REVENUE = safeNumber(input.monthly_contribution_per_customer, 0);
-  const INVESTMENT = safeNumber(input.six_month_investment, 0);
-  const PIPELINE_6MO = safeNumber(input.six_month_pipeline, 0);
-  const GROSS_PROFIT_6MO = input.six_month_attributed_gross_profit === null || input.six_month_attributed_gross_profit === undefined || input.six_month_attributed_gross_profit === '' ? null : safeNumber(input.six_month_attributed_gross_profit, 0);
-  const configured = AOV > 0 && INVESTMENT > 0;
-  return {
-    AOV, CAC, LTV, MONTHLY_REVENUE, INVESTMENT, PIPELINE_6MO, GROSS_PROFIT_6MO, configured,
-    MONTHLY_FIXED_COST: safeNumber(input.monthly_fixed_cost, 0),
-    VARIABLE_COST_PER_UNIT: safeNumber(input.variable_cost_per_customer, 0),
-    LIFETIME_MONTHS: safeNumber(input.lifetime_months, 0),
-  };
-};
-
 const isMultilingual: Record<string, boolean> = {
   us: false, gb: false, ca: true, au: false, de: false,
   sg: true, sa: true, ae: true, pk: true, in: true, tr: false, my: true,
@@ -102,13 +63,11 @@ const GENERIC_DOMAINS = [
   'forbes.com', 'businessinsider.com', 'investopedia.com', 'entrepreneur.com',
   'hubspot.com', 'shopify.com', 'wix.com', 'squarespace.com', 'godaddy.com',
   'coursera.org', 'udemy.com', 'skillshare.com', 'khanacademy.org',
-  // ✅ v10: exclude generic e-comm / POD / global blogging blogs that
-  //      don't belong as "local tech monetization competitors"
   'printful.com', 'printify.com', 'teespring.com',
 ];
 
 // ═══════════════════════════════════════════════════════════════════════════
-// HELPERS
+// SAFE HELPERS
 // ═══════════════════════════════════════════════════════════════════════════
 
 const safeNumber = (val: any, fallback: number = 0): number => {
@@ -134,213 +93,190 @@ const safeString = (val: any, fallback: string = 'Evidence not supplied'): strin
 
 const safeArray = (val: any): any[] => (Array.isArray(val) ? val : []);
 
+const formatCurrency = (num: number, country: string): string => {
+  const info = currencyInfo[country] || currencyInfo.us;
+  try {
+    return new Intl.NumberFormat(info.locale, { style: 'currency', currency: info.code, maximumFractionDigits: 2 }).format(num);
+  } catch {
+    return `${info.symbol}${num.toFixed(2)}`;
+  }
+};
+
+const formatCpcSafe = (cpc: any, country: string): string => {
+  const num = safeNumber(cpc, -1);
+  if (num <= 0) return 'No provider metric';
+  return formatCurrency(num, country);
+};
+
 const extractNumber = (val: any): number => {
   if (typeof val === 'number') return val;
   if (!val) return 0;
-  const cleaned = String(val)
-    .replace(/[٠-٩]/g, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d)))
-    .replace(/[^0-9.]/g, '');
+  const cleaned = String(val).replace(/[٠-٩]/g, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d))).replace(/[^0-9.]/g, '');
   const num = parseFloat(cleaned);
   return isNaN(num) ? 0 : num;
 };
 
-const formatCurrency = (num: number, country: string): string => {
-  const info = currencyInfo[country] || currencyInfo.us;
-  return new Intl.NumberFormat(info.locale, { style: 'currency', currency: info.code, maximumFractionDigits: 2 }).format(num);
-};
-
-const cleanMarkdown = (markdown: string, country: string): string => {
+const cleanMarkdown = (markdown: string): string => {
   return markdown
     .replace(/[٠-٩]/g, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d)))
-    .replace(/٫/g, '.')
-    .replace(/٬/g, ',')
     .replace(/\bEst\.\s*/g, 'Projected ')
     .replace(/\bEstimated\s+/gi, 'Projected ')
     .replace(/\(Modeled\)/g, '(Pattern-Based)')
     .replace(/\bModeled\s+/g, 'Pattern-Based ')
-    .replace(/(CASE STUDY \d+):\s*Case Study \d+:/gi, '$1:')
-    .replace(/(CASE STUDY \d+):\s*CASE STUDY \d+:/gi, '$1:')
-    .replace(/\bInsight \d+:\s*/gi, '')
     .replace(/\s+\)/g, ')')
     .replace(/\s+,/g, ',')
-    .replace(/\s+\./g, '.')
     .replace(/([^\n])\s{2,}([^\n])/g, '$1 $2');
 };
 
-// ✅ v10: GAP LABEL LOGIC — ratio based, always correct
-const calcGapLabel = (you: number, comp: number): string => {
-  if (!Number.isFinite(you) || !Number.isFinite(comp) || you <= 0 || comp < 0) return 'Not comparable';
-  const ratio = comp / you;
-  if (ratio >= 3) return '🔴 Large';
-  if (ratio >= 1.5) return '🟡 Medium';
-  return '🟢 Small';
+// ═══════════════════════════════════════════════════════════════════════════
+// v13: KEYWORD FALLBACK BUILDERS
+// ═══════════════════════════════════════════════════════════════════════════
+
+const buildTopGoldmineKeywords = (keywords: any[]): any[] => {
+  const moneyKeywords = keywords.filter((k: any) => k.tier === 'money');
+  if (moneyKeywords.length === 0) return [];
+  const verified = moneyKeywords.filter(
+    (k: any) => k.dataSource === 'dataforseo' && safeNumber(k.volume, 0) > 0 && safeNumber(k.cpc, 0) > 0
+  );
+  if (verified.length > 0) {
+    return [...verified]
+      .sort((a, b) => safeNumber(b.cpc, 0) - safeNumber(a.cpc, 0))
+      .slice(0, 5)
+      .map((k: any) => ({
+        keyword: k.keyword,
+        volume: k.volume,
+        kd: k.kd,
+        cpc: k.cpc,
+        intent: k.intent,
+        status: 'verified (DataForSEO)',
+      }));
+  }
+  return moneyKeywords.slice(0, 5).map((k: any) => ({
+    keyword: k.keyword,
+    volume: null,
+    kd: null,
+    cpc: null,
+    intent: k.intent,
+    status: 'Metrics unverified — DataForSEO returned no volume/CPC/KD. Keyword retained as intent candidate.',
+  }));
 };
 
-// ═══════════════════════════════════════════════════════════════════════════
-// ✅ v10: TRUTH RECONCILIATION — THE CORE POST-PROCESSOR
-// Runs after all AI data + fallbacks. Guarantees internal consistency.
-// ═══════════════════════════════════════════════════════════════════════════
-
-const reconcileAll = (analysis: any, keywords: any[], country: string): any => {
-  const currency = currencyInfo[country] || currencyInfo.us;
-  const economics = getEconomics(country, analysis);
-  const AOV = economics.AOV;
-  const suppliedSwot = safeArray(analysis.competitor_teardown?.swot_scored);
-  suppliedSwot.forEach((item: any) => { item.score = Math.min(10, Math.max(0, safeNumber(item.score, 0))); });
-  if (analysis.executive_summary?.health_score) {
-    const hs = analysis.executive_summary.health_score;
-    if (typeof hs.overall === 'number') hs.overall = Math.min(100, Math.max(0, hs.overall));
-    safeArray(hs.breakdown).forEach((item: any) => { if (typeof item.score === 'number') item.score = Math.min(100, Math.max(0, item.score)); });
-  }
-  if (!suppliedSwot.length && analysis.executive_summary) {
-    analysis.executive_summary.health_score = { overall: null, status: 'NOT SCORED — site audit evidence required', breakdown: [] };
-  }
-
-  if (!economics.configured) {
-    if (!analysis.executive_summary) analysis.executive_summary = {};
-    analysis.executive_summary.estimated_roi = { investment: 'Not supplied', pipeline: 'Not supplied', roi_percent: 'Not calculated — provide business_inputs', pipeline_to_investment_ratio: 'Not calculated' };
-    safeArray(analysis.key_findings).forEach((f: any) => { f.size_of_prize = 'Not calculated — client conversion and value inputs required'; f.size_formula = 'Requires verified keyword volume, click capture rate, lead conversion rate and AOV'; });
-    safeArray(analysis.executive_summary.top_findings).forEach((f: any) => { f.size_of_prize = 'Not calculated'; });
-    if (analysis.current_state) { analysis.current_state.kpi_dashboard = []; analysis.current_state.data_sources = []; }
-    if (analysis.competitive_landscape) { analysis.competitive_landscape.comparison_table = []; analysis.competitive_landscape.backlink_gap = []; }
-    if (analysis.competitor_forensics) analysis.competitor_forensics.top_3_competitors = [];
-    if (analysis.competitor_teardown) { analysis.competitor_teardown.feature_matrix = []; analysis.competitor_teardown.swot_scored = []; analysis.competitor_teardown.pricing_deconstruction = []; }
-
-    analysis.financial_projection = {
-      investment: [], roi_summary: 'Not calculated — client investment and pipeline inputs are required',
-      roi_formula: 'Requires business_inputs.six_month_pipeline and business_inputs.six_month_investment',
-      monthly_projection: [],
-    };
-    analysis.unit_economics = {
-      cac: { value: 'Not supplied' }, ltv: { value: 'Not supplied' },
-      ltv_cac_ratio: { value: 'Not calculated' }, payback_period: { months: 'Not calculated' },
-      gross_margin_per_tier: [],
-    };
-    analysis.break_even_analysis = {
-      fixed_costs: 'Not supplied', revenue_per_unit: 'Not supplied', variable_cost_per_unit: 'Not supplied',
-      contribution_margin: 'Not calculated', units_required: 'Not calculated', traffic_required: 'Not calculated',
-      months_to_breakeven: 'Not calculated', formula: 'Requires client fixed costs, AOV and variable cost inputs',
-    };
-    analysis.sensitivity_analysis = {
-      best_case: { scenario: 'Best Case', pipeline: 'Not modeled', roi: 'Not calculated', ltv_cac: 'Not calculated', breakeven_months: 'Not calculated' },
-      expected_case: { scenario: 'Expected', pipeline: 'Not modeled', roi: 'Not calculated', ltv_cac: 'Not calculated', breakeven_months: 'Not calculated' },
-      worst_case: { scenario: 'Worst Case', pipeline: 'Not modeled', roi: 'Not calculated', ltv_cac: 'Not calculated', breakeven_months: 'Not calculated' },
-    };
-    analysis.magic_goldmine = analysis.magic_goldmine || {};
-    analysis.magic_goldmine.revenue_projection = { monthly_traffic: 'Not forecast', conversion_rate: 'Not supplied', monthly_leads: 'Not forecast', avg_deal_value: 'Not supplied', monthly_pipeline: 'Not calculated', formula: 'Requires validated keyword volume, capture rate, conversion rate and AOV' };
-    analysis.competitive_landscape = analysis.competitive_landscape || {};
-    analysis.competitive_landscape.backlink_gap = [];
-    if (analysis.magic_playbook?.backlink_strategy) {
-      analysis.magic_playbook.backlink_strategy.total_backlinks = 'Not verified';
-      analysis.magic_playbook.backlink_strategy.local_percentage = 'Not verified';
-      analysis.magic_playbook.backlink_strategy.top_sources = [];
+const buildRegionalKeywordTable = (keywords: any[], country: string): any[] => {
+  if (isMultilingual[country]) {
+    const languagePattern = country === 'my'
+      ? /cara |dengan |untuk |jana |buat |daftar |teknologi/i
+      : country === 'ae' || country === 'sa' || country === 'pk'
+        ? /[\u0600-\u06FF]/
+        : country === 'in'
+          ? /[\u0900-\u097F]|[\u0A00-\u0A7F]|[\u0B00-\u0B7F]|[\u0C00-\u0C7F]|[\u0D00-\u0D7F]/
+          : country === 'ca'
+            ? /[àâçéèêëîïôûùüÿœæ]|\b(meilleur|prix|comment|logiciel|référencement)\b/i
+            : /[\u0600-\u06FF]|[\u4E00-\u9FFF]|[\u0B80-\u0BFF]/;
+    const local = keywords.filter((k: any) => languagePattern.test(String(k.keyword || ''))).slice(0, 5);
+    if (local.length > 0) {
+      return local.map((k: any) => ({ keyword: k.keyword, volume: k.volume, kd: k.kd, cpc: k.cpc, scope: 'local-language' }));
     }
-    analysis.data_limitations = [...safeArray(analysis.data_limitations), 'Financial projections, unit economics and break-even outputs are withheld until client-specific commercial inputs are provided.'];
-    return analysis;
   }
-
-  // ────────────────────────────────────────────────────────────────
-  // STEP 1: MAGIC KEYWORDS = TOP 5 MONEY KEYWORDS BY CPC (highest value)
-  // ────────────────────────────────────────────────────────────────
-  const moneyKeywords = keywords.filter((k: any) => k.tier === 'money' && safeNumber(k.volume, 0) > 0 && safeNumber(k.cpc, 0) > 0 && k.dataSource === 'dataforseo');
-  const topMoneyByCpc = [...moneyKeywords]
-    .sort((a, b) => safeNumber(b.cpc, 0) - safeNumber(a.cpc, 0))
-    .slice(0, 5);
-
-  if (!analysis.magic_goldmine) analysis.magic_goldmine = {};
-  analysis.magic_goldmine.top_keywords = topMoneyByCpc.map((k: any) => ({
+  return keywords.slice(0, 5).map((k: any) => ({
     keyword: k.keyword,
     volume: k.volume,
     kd: k.kd,
     cpc: k.cpc,
-    intent: k.intent,
+    scope: 'regional-intent candidate (no measured regional split)',
   }));
+};
 
-  // Use the highest single-keyword volume, not a sum of overlapping query variants.
-  const magicTotalVol = topMoneyByCpc.reduce((max, k) => Math.max(max, safeNumber(k.volume, 0)), 0);
-  const captureRateRaw = safeNumber(analysis.business_inputs?.organic_click_capture_rate, 0);
-  const leadConversionRateRaw = safeNumber(analysis.business_inputs?.lead_conversion_rate, 0);
-  const captureRate = captureRateRaw > 0 && captureRateRaw <= 1 ? captureRateRaw : 0;
-  const leadConversionRate = leadConversionRateRaw > 0 && leadConversionRateRaw <= 1 ? leadConversionRateRaw : 0;
-  const magicTraffic = captureRate > 0 ? Math.round(magicTotalVol * captureRate) : 0;
-  const magicLeads = leadConversionRate > 0 ? Math.round(magicTraffic * leadConversionRate) : 0;
+const buildHealthStatus = (overall: number | null, swotCount: number): string => {
+  if (overall !== null) {
+    if (overall >= 75) return '🟢 HEALTHY';
+    if (overall >= 55) return '🟡 NEEDS ATTENTION';
+    return '🔴 CRITICAL';
+  }
+  if (swotCount === 0) return 'NOT SCORED — site audit and SWOT evidence required (no crawl or provider export supplied)';
+  return 'NOT SCORED — full site audit required to finalize score';
+};
 
-  analysis.magic_goldmine.revenue_projection = {
-    monthly_traffic: captureRate > 0 ? magicTraffic : 'Not calculated — organic_click_capture_rate required',
-    conversion_rate: leadConversionRate > 0 ? `${(leadConversionRate * 100).toFixed(2)}%` : 'Not supplied',
-    monthly_leads: leadConversionRate > 0 && captureRate > 0 ? magicLeads : 'Not calculated',
-    avg_deal_value: AOV > 0 ? formatCurrency(AOV, country) : 'Not supplied',
-    monthly_pipeline: 'Not calculated — a qualified-lead-to-customer close rate and deal value are required',
-    formula: 'Monthly traffic = highest single verified keyword volume × client-supplied organic_click_capture_rate; leads = traffic × client-supplied lead_conversion_rate. Keyword variants are not summed to avoid overlap.',
+// ═══════════════════════════════════════════════════════════════════════════
+// ECONOMICS
+// ═══════════════════════════════════════════════════════════════════════════
+
+const getEconomics = (country: string, analysis?: any) => {
+  const input = analysis?.business_inputs || {};
+  const AOV = safeNumber(input.aov, 0);
+  const CAC = safeNumber(input.cac, 0);
+  const LTV = safeNumber(input.lifetime_value, 0);
+  const MONTHLY_REVENUE = safeNumber(input.monthly_contribution_per_customer, 0);
+  const INVESTMENT = safeNumber(input.six_month_investment, 0);
+  const PIPELINE_6MO = safeNumber(input.six_month_pipeline, 0);
+  const GROSS_PROFIT_6MO = input.six_month_attributed_gross_profit === null || input.six_month_attributed_gross_profit === undefined || input.six_month_attributed_gross_profit === '' ? null : safeNumber(input.six_month_attributed_gross_profit, 0);
+  const configured = AOV > 0 && INVESTMENT > 0;
+  return {
+    AOV, CAC, LTV, MONTHLY_REVENUE, INVESTMENT, PIPELINE_6MO, GROSS_PROFIT_6MO, configured,
+    MONTHLY_FIXED_COST: safeNumber(input.monthly_fixed_cost, 0),
+    VARIABLE_COST_PER_UNIT: safeNumber(input.variable_cost_per_customer, 0),
+    LIFETIME_MONTHS: safeNumber(input.lifetime_months, 0),
   };
+};
 
-  // ────────────────────────────────────────────────────────────────
-  // STEP 2: SECTION 3.2 LANGUAGE SPLIT — pull from canonical keywords
-  // ────────────────────────────────────────────────────────────────
-  if (isMultilingual[country]) {
-    const languagePattern = country === 'my'
-      ? /cara |dengan |untuk |jana |buat |daftar |teknologi/i
-      : country === 'ae' || country === 'sa'
-        ? /[\u0600-\u06FF]/
-        : country === 'pk'
-          ? /[\u0600-\u06FF]/
-          : country === 'in'
-            ? /[\u0900-\u097F]|[\u0A00-\u0A7F]|[\u0B00-\u0B7F]|[\u0C00-\u0C7F]|[\u0D00-\u0D7F]/
-            : country === 'ca'
-              ? /[àâçéèêëîïôûùüÿœæ]|\b(meilleur|prix|comment|logiciel|référencement)\b/i
-              : /[\u0600-\u06FF]|[\u4E00-\u9FFF]|[\u0B80-\u0BFF]/;
-    const localLanguageKeywords = keywords.filter((k: any) => languagePattern.test(String(k.keyword || ''))).slice(0, 5);
+// ═══════════════════════════════════════════════════════════════════════════
+// RECONCILE ALL (v13)
+// ═══════════════════════════════════════════════════════════════════════════
 
-    if (localLanguageKeywords.length > 0) {
-      if (!analysis.ground_intel) analysis.ground_intel = {};
-      analysis.ground_intel.language_split = {
-        summary: safeString(
-          analysis.ground_intel.language_split?.summary,
-          `Local-language keyword candidates were detected for ${countryNames[country]}. Market language context: ${({ ca: 'English and French', sg: 'English, Mandarin, Malay and Tamil', sa: 'Arabic and English', ae: 'Arabic and English', pk: 'Urdu and English', in: 'English and relevant regional languages', my: 'Malay and English' } as Record<string, string>)[country] || 'English and relevant local languages'}. This is a language-scope note, not a measured language-demand share.`
-        ),
-        top_keywords: localLanguageKeywords.map((k: any) => ({
-          keyword: k.keyword,
-          volume: k.volume,
-          kd: k.kd,
-          cpc: k.cpc,
-        })),
-      };
+const reconcileAll = (analysis: any, keywords: any[], country: string): any => {
+  const economics = getEconomics(country, analysis);
+  const AOV = economics.AOV;
+  const suppliedSwot = safeArray(analysis.competitor_teardown?.swot_scored);
+  suppliedSwot.forEach((item: any) => { item.score = Math.min(10, Math.max(0, safeNumber(item.score, 0))); });
+
+  if (!analysis.executive_summary) analysis.executive_summary = {};
+  if (!analysis.magic_goldmine) analysis.magic_goldmine = {};
+  if (!analysis.ground_intel) analysis.ground_intel = {};
+
+  // Always populate top_keywords
+  analysis.magic_goldmine.top_keywords = buildTopGoldmineKeywords(keywords);
+
+  // Always populate regional table
+  const regionalKeywords = buildRegionalKeywordTable(keywords, country);
+  if (regionalKeywords.length > 0) {
+    if (!analysis.ground_intel.language_split) analysis.ground_intel.language_split = {};
+    if (!safeArray(analysis.ground_intel.language_split.top_keywords).length) {
+      analysis.ground_intel.language_split.top_keywords = regionalKeywords.map((k: any) => ({
+        keyword: k.keyword, volume: k.volume, kd: k.kd, cpc: k.cpc, scope: k.scope,
+      }));
+    }
+    if (!analysis.ground_intel.language_split.summary) {
+      analysis.ground_intel.language_split.summary = isMultilingual[country]
+        ? `Local-language keyword candidates were detected for ${countryNames[country]}. This is a language-scope note, not a measured language-demand share.`
+        : `${countryNames[country]} is a primarily monolingual search market. The keywords below are regional-intent candidates from the canonical keyword portfolio; no measured regional volume split is available from the connected providers.`;
     }
   }
 
-  // ────────────────────────────────────────────────────────────────
-  // STEP 3: KEY FINDINGS — size_of_prize RECOMPUTED from formula
-  // Formula is authoritative. AI's value discarded.
-  // ────────────────────────────────────────────────────────────────
-  const findings = safeArray(analysis.key_findings);
-  findings.forEach((f: any) => {
-    f.size_of_prize = 'Not calculated — validated cluster forecast required';
-    f.size_formula = 'Requires verified keyword set and client-supplied click capture, conversion and AOV inputs';
-  });
+  if (!economics.configured) {
+    analysis.executive_summary.estimated_roi = { investment: 'Not supplied', pipeline: 'Not supplied', roi_percent: 'Not calculated — provide business_inputs', pipeline_to_investment_ratio: 'Not calculated' };
+    safeArray(analysis.key_findings).forEach((f: any) => { f.size_of_prize = 'Not calculated — client conversion and value inputs required'; f.size_formula = 'Requires verified keyword volume, click capture rate, lead conversion rate and AOV'; });
+    safeArray(analysis.executive_summary.top_findings).forEach((f: any) => { f.size_of_prize = 'Not calculated'; });
+    if (analysis.current_state) { analysis.current_state.kpi_dashboard = []; }
+    if (analysis.competitive_landscape) { analysis.competitive_landscape.comparison_table = []; analysis.competitive_landscape.backlink_gap = []; }
+    if (analysis.competitor_teardown) { analysis.competitor_teardown.feature_matrix = []; analysis.competitor_teardown.swot_scored = []; analysis.competitor_teardown.pricing_deconstruction = []; }
 
-  // Ensure exactly 3 findings shown in executive summary
-  if (analysis.executive_summary) {
-    const execFindings = safeArray(analysis.executive_summary.top_findings);
-    if (execFindings.length > 3) {
-      analysis.executive_summary.top_findings = execFindings.slice(0, 3);
-    }
-    // Make exec top_findings consistent with key_findings values
-    analysis.executive_summary.top_findings.forEach((ef: any, i: number) => {
-      const kf = findings[i];
-      if (kf && kf.size_of_prize) ef.size_of_prize = kf.size_of_prize;
-    });
+    analysis.financial_projection = { investment: [], roi_summary: 'Not calculated — client investment and pipeline inputs are required', roi_formula: 'Requires business_inputs.six_month_pipeline and business_inputs.six_month_investment', monthly_projection: [] };
+    analysis.unit_economics = { cac: { value: 'Not supplied' }, ltv: { value: 'Not supplied' }, ltv_cac_ratio: { value: 'Not calculated' }, payback_period: { months: 'Not calculated' }, gross_margin_per_tier: [] };
+    analysis.break_even_analysis = { fixed_costs: 'Not supplied', revenue_per_unit: 'Not supplied', variable_cost_per_unit: 'Not supplied', contribution_margin: 'Not calculated', units_required: 'Not calculated', traffic_required: 'Not calculated', months_to_breakeven: 'Not calculated', formula: 'Requires client fixed costs, AOV and variable cost inputs' };
+    analysis.sensitivity_analysis = { best_case: { scenario: 'Best Case', pipeline: 'Not modeled', roi: 'Not calculated', ltv_cac: 'Not calculated', breakeven_months: 'Not calculated' }, expected_case: { scenario: 'Expected', pipeline: 'Not modeled', roi: 'Not calculated', ltv_cac: 'Not calculated', breakeven_months: 'Not calculated' }, worst_case: { scenario: 'Worst Case', pipeline: 'Not modeled', roi: 'Not calculated', ltv_cac: 'Not calculated', breakeven_months: 'Not calculated' } };
+    analysis.magic_goldmine.revenue_projection = { monthly_traffic: 'Not forecast', conversion_rate: 'Not supplied', monthly_leads: 'Not forecast', avg_deal_value: 'Not supplied', monthly_pipeline: 'Not calculated', formula: 'Requires validated keyword volume, capture rate, conversion rate and AOV' };
+    if (analysis.magic_playbook?.backlink_strategy) { analysis.magic_playbook.backlink_strategy.total_backlinks = 'Not verified'; analysis.magic_playbook.backlink_strategy.local_percentage = 'Not verified'; analysis.magic_playbook.backlink_strategy.top_sources = []; }
+    analysis.data_limitations = [...safeArray(analysis.data_limitations), 'Financial projections, unit economics and break-even outputs are withheld until client-specific commercial inputs are provided.'];
+    analysis.executive_summary.health_score = { overall: null, status: buildHealthStatus(null, suppliedSwot.length), breakdown: [] };
+    return analysis;
   }
 
-  // ────────────────────────────────────────────────────────────────
-  // STEP 4: FINANCIAL PROJECTION — full recompute
-  // ────────────────────────────────────────────────────────────────
+  // Finance recompute
   const investment = economics.INVESTMENT;
   const pipeline6mo = economics.PIPELINE_6MO;
   const grossProfit6mo = economics.GROSS_PROFIT_6MO;
   const roiPercent = grossProfit6mo !== null ? Math.round(((grossProfit6mo - investment) / investment) * 100) : null;
   const pipelineCoverage = pipeline6mo > 0 ? (pipeline6mo / investment).toFixed(2) : null;
 
-  if (!analysis.executive_summary) analysis.executive_summary = {};
   analysis.executive_summary.estimated_roi = {
     investment: formatCurrency(investment, country),
     pipeline: pipeline6mo > 0 ? formatCurrency(pipeline6mo, country) : 'Not supplied',
@@ -349,82 +285,77 @@ const reconcileAll = (analysis: any, keywords: any[], country: string): any => {
   };
 
   if (!analysis.financial_projection) analysis.financial_projection = {};
-  const invBreakdown = [{ item: 'Total 6-Month Investment (client supplied)', cost: formatCurrency(investment, country) }];
-  analysis.financial_projection.investment = invBreakdown;
-  analysis.financial_projection.roi_summary = roiPercent === null
-    ? 'ROI is not calculated: realized six-month attributed gross profit was not supplied.'
-    : `6-Month ROI on attributed gross profit: ${roiPercent}%`;
-  analysis.financial_projection.roi_formula = grossProfit6mo === null
-    ? 'ROI = (attributed gross profit − investment) ÷ investment × 100; attributed gross profit input is required.'
-    : `(${formatCurrency(grossProfit6mo, country)} Attributed Gross Profit − ${formatCurrency(investment, country)} Investment) ÷ ${formatCurrency(investment, country)} × 100 = ${roiPercent}%`;
-
-  // No monthly ramp curve is invented. A month-by-month forecast requires a client-approved schedule.
+  analysis.financial_projection.investment = [{ item: 'Total 6-Month Investment (client supplied)', cost: formatCurrency(investment, country) }];
+  analysis.financial_projection.roi_summary = roiPercent === null ? 'ROI is not calculated: realized six-month attributed gross profit was not supplied.' : `6-Month ROI on attributed gross profit: ${roiPercent}%`;
+  analysis.financial_projection.roi_formula = grossProfit6mo === null ? 'ROI = (attributed gross profit − investment) ÷ investment × 100; attributed gross profit input is required.' : `(${formatCurrency(grossProfit6mo, country)} − ${formatCurrency(investment, country)}) ÷ ${formatCurrency(investment, country)} × 100 = ${roiPercent}%`;
   analysis.financial_projection.monthly_projection = [];
 
-  // Sensitivity scenarios require client-approved scenario multipliers; do not invent them.
-  analysis.sensitivity_analysis = {
-    best_case: { scenario: 'Best Case', pipeline: 'Requires approved scenario inputs', roi: 'Not calculated', ltv_cac: 'Not calculated', breakeven_months: 'Not calculated' },
-    expected_case: { scenario: 'Expected', pipeline: pipeline6mo > 0 ? formatCurrency(pipeline6mo, country) : 'Not supplied', roi: roiPercent === null ? 'Not calculated — gross profit required' : `${roiPercent}%`, pipeline_to_investment_ratio: pipelineCoverage === null ? 'Not calculated' : `${pipelineCoverage}x`, ltv_cac: 'Calculated from supplied unit economics', breakeven_months: 'Not calculated without monthly fixed-cost and margin inputs' },
-    worst_case: { scenario: 'Worst Case', pipeline: 'Requires approved scenario inputs', roi: 'Not calculated', ltv_cac: 'Not calculated', breakeven_months: 'Not calculated' },
-  };
-
-  // ────────────────────────────────────────────────────────────────
-  // STEP 5: UNIT ECONOMICS — always recomputed
-  // ────────────────────────────────────────────────────────────────
+  // Unit economics
   const CAC = economics.CAC;
   const LTV = economics.LTV;
   const MONTHLY_REVENUE = economics.MONTHLY_REVENUE;
   const ltvCacRatio = LTV > 0 && CAC > 0 ? (LTV / CAC).toFixed(1) : 'N/A';
   const paybackMonths = CAC > 0 && MONTHLY_REVENUE > 0 ? Math.ceil(CAC / MONTHLY_REVENUE) : 0;
 
-  if (!analysis.unit_economics) analysis.unit_economics = {};
-  analysis.unit_economics.cac = {
-    value: CAC > 0 ? formatCurrency(CAC, country) : 'Not supplied',
-    calculation: `Blended organic acquisition spend ÷ customers acquired`,
-    benchmark: 'Not supplied — no benchmark source attached',
+  analysis.unit_economics = {
+    cac: { value: CAC > 0 ? formatCurrency(CAC, country) : 'Not supplied', calculation: 'Blended organic acquisition spend ÷ customers acquired', benchmark: 'Not supplied — no benchmark source attached' },
+    ltv: { value: LTV > 0 ? formatCurrency(LTV, country) : 'Not supplied', calculation: LTV > 0 ? 'Client-supplied lifetime_value' : 'Cannot derive LTV from AOV and lifetime duration alone', benchmark: 'Not supplied' },
+    ltv_cac_ratio: { value: ltvCacRatio === 'N/A' ? 'Not calculated' : `${ltvCacRatio}:1`, health: ltvCacRatio === 'N/A' ? 'Not calculated' : parseFloat(ltvCacRatio) >= 3 ? '🟢 Healthy' : parseFloat(ltvCacRatio) >= 1.5 ? '🟡 Moderate' : '🔴 Critical', benchmark: 'Interpret using gross margin, retention and payback context' },
+    payback_period: { months: paybackMonths > 0 ? String(paybackMonths) : 'Not calculated', calculation: `${formatCurrency(CAC, country)} CAC ÷ ${formatCurrency(MONTHLY_REVENUE, country)} monthly contribution`, benchmark: 'Agree target with client finance team' },
+    gross_margin_per_tier: [],
   };
-  analysis.unit_economics.ltv = {
-    value: LTV > 0 ? formatCurrency(LTV, country) : 'Not supplied',
-    calculation: economics.LTV > 0 ? 'Client-supplied lifetime_value' : 'Cannot derive LTV from AOV and lifetime duration alone; order frequency or contribution-based cohort data is required',
-    benchmark: 'Not supplied — use an agreed cohort-based LTV methodology',
-  };
-  analysis.unit_economics.ltv_cac_ratio = {
-    value: ltvCacRatio === 'N/A' ? 'Not calculated' : `${ltvCacRatio}:1`,
-    health: ltvCacRatio === 'N/A' ? 'Not calculated' : parseFloat(ltvCacRatio) >= 3 ? '🟢 Healthy' : parseFloat(ltvCacRatio) >= 1.5 ? '🟡 Moderate' : '🔴 Critical',
-    benchmark: 'Not supplied — interpret using gross margin, retention and payback context',
-  };
-  analysis.unit_economics.payback_period = {
-    months: paybackMonths > 0 ? String(paybackMonths) : 'Not calculated',
-    calculation: `${formatCurrency(CAC, country)} CAC ÷ ${formatCurrency(MONTHLY_REVENUE, country)} monthly gross contribution`,
-    benchmark: 'Not supplied — agree target with client finance team',
-  };
-  analysis.unit_economics.gross_margin_per_tier = [];
 
-  // ────────────────────────────────────────────────────────────────
-  // STEP 6: BREAK-EVEN — mathematically consistent
-  // ────────────────────────────────────────────────────────────────
+  // Break-even
   const fixedCostsMonthly = economics.MONTHLY_FIXED_COST;
-  const revenuePerUnit = AOV;
   const variableCostPerUnit = economics.VARIABLE_COST_PER_UNIT;
-  const contributionMargin = revenuePerUnit - variableCostPerUnit;
+  const contributionMargin = AOV - variableCostPerUnit;
   const unitsRequired = fixedCostsMonthly > 0 && contributionMargin > 0 ? Math.ceil(fixedCostsMonthly / contributionMargin) : 0;
-  const monthsToBreakeven = 'Not calculated';
-
   analysis.break_even_analysis = {
     fixed_costs: fixedCostsMonthly > 0 ? formatCurrency(fixedCostsMonthly, country) : 'Not supplied',
-    revenue_per_unit: formatCurrency(revenuePerUnit, country),
+    revenue_per_unit: formatCurrency(AOV, country),
     variable_cost_per_unit: variableCostPerUnit > 0 ? formatCurrency(variableCostPerUnit, country) : 'Not supplied',
     contribution_margin: contributionMargin > 0 ? formatCurrency(contributionMargin, country) : 'Not calculated',
     units_required: unitsRequired > 0 ? String(unitsRequired) : 'Not calculated',
     traffic_required: 'Not calculated — visitor-to-customer conversion rate required',
-    months_to_breakeven: monthsToBreakeven,
+    months_to_breakeven: 'Not calculated',
     formula: 'Monthly fixed costs ÷ contribution margin; traffic requires a measured visitor-to-customer conversion rate',
   };
 
-  // ────────────────────────────────────────────────────────────────
-  // STEP 7: BACKLINKS — single dataset for Section 5 & Section 7
-  // ────────────────────────────────────────────────────────────────
-  const canonicalBacklinks: any[] = [];
+  analysis.sensitivity_analysis = {
+    best_case: { scenario: 'Best Case', pipeline: 'Requires approved scenario inputs', roi: 'Not calculated', ltv_cac: 'Not calculated', breakeven_months: 'Not calculated' },
+    expected_case: { scenario: 'Expected', pipeline: pipeline6mo > 0 ? formatCurrency(pipeline6mo, country) : 'Not supplied', roi: roiPercent === null ? 'Not calculated — gross profit required' : `${roiPercent}%`, ltv_cac: 'Calculated from supplied unit economics', breakeven_months: 'Not calculated without monthly fixed-cost and margin inputs' },
+    worst_case: { scenario: 'Worst Case', pipeline: 'Requires approved scenario inputs', roi: 'Not calculated', ltv_cac: 'Not calculated', breakeven_months: 'Not calculated' },
+  };
+
+  // Health score
+  const swot = safeArray(analysis.competitor_teardown?.swot_scored);
+  const swotAvg = swot.length > 0
+    ? Math.round((swot.reduce((s: number, x: any) => s + Math.min(10, Math.max(0, safeNumber(x.score, 0))), 0) / swot.length) * 10)
+    : null;
+  analysis.executive_summary.health_score = swotAvg === null
+    ? { overall: null, status: buildHealthStatus(null, 0), breakdown: [] }
+    : { overall: swotAvg, status: buildHealthStatus(swotAvg, swot.length), breakdown: [{ category: 'Evidence-backed SWOT average', score: swotAvg, status: swotAvg >= 70 ? '🟢' : swotAvg >= 50 ? '🟡' : '🔴' }] };
+
+  // Magic goldmine revenue projection
+  const verifiedTop = analysis.magic_goldmine.top_keywords.filter((k: any) => k.status === 'verified (DataForSEO)');
+  const magicTotalVol = verifiedTop.length > 0 ? verifiedTop.reduce((max: number, k: any) => Math.max(max, safeNumber(k.volume, 0)), 0) : 0;
+  const captureRateRaw = safeNumber(analysis.business_inputs?.organic_click_capture_rate, 0);
+  const leadConversionRateRaw = safeNumber(analysis.business_inputs?.lead_conversion_rate, 0);
+  const captureRate = captureRateRaw > 0 && captureRateRaw <= 1 ? captureRateRaw : 0;
+  const leadConversionRate = leadConversionRateRaw > 0 && leadConversionRateRaw <= 1 ? leadConversionRateRaw : 0;
+  const magicTraffic = captureRate > 0 && magicTotalVol > 0 ? Math.round(magicTotalVol * captureRate) : 0;
+  const magicLeads = leadConversionRate > 0 && magicTraffic > 0 ? Math.round(magicTraffic * leadConversionRate) : 0;
+
+  analysis.magic_goldmine.revenue_projection = {
+    monthly_traffic: magicTraffic > 0 ? magicTraffic : (magicTotalVol === 0 ? 'Not calculated — no verified keyword volume available' : 'Not calculated — organic_click_capture_rate required'),
+    conversion_rate: leadConversionRate > 0 ? `${(leadConversionRate * 100).toFixed(2)}%` : 'Not supplied',
+    monthly_leads: magicLeads > 0 ? magicLeads : 'Not calculated',
+    avg_deal_value: AOV > 0 ? formatCurrency(AOV, country) : 'Not supplied',
+    monthly_pipeline: 'Not calculated — a qualified-lead-to-customer close rate and deal value are required',
+    formula: 'Monthly traffic = highest single verified keyword volume × client-supplied organic_click_capture_rate; leads = traffic × client-supplied lead_conversion_rate.',
+  };
+
+  // Backlinks
   if (!analysis.magic_playbook) analysis.magic_playbook = {};
   if (!analysis.magic_playbook.backlink_strategy) analysis.magic_playbook.backlink_strategy = {};
   analysis.magic_playbook.backlink_strategy.total_backlinks = 'Not verified — backlink provider export required';
@@ -432,148 +363,38 @@ const reconcileAll = (analysis: any, keywords: any[], country: string): any => {
   analysis.magic_playbook.backlink_strategy.top_sources = [];
   if (!analysis.competitive_landscape) analysis.competitive_landscape = {};
   analysis.competitive_landscape.backlink_gap = [];
-  analysis.competitive_landscape.comparison_table = [];
   analysis.magic_playbook.target_competitor = { name: 'Not identified — product competitor research required', da: null, traffic: null };
 
-  // ────────────────────────────────────────────────────────────────
-  // STEP 8: HEALTH SCORE — derived from SWOT average
-  // ────────────────────────────────────────────────────────────────
-  const swot = safeArray(analysis.competitor_teardown?.swot_scored);
-  const swotAvg = swot.length > 0
-    ? Math.round((swot.reduce((s: number, x: any) => s + Math.min(10, Math.max(0, safeNumber(x.score, 0))), 0) / swot.length) * 10)
-    : null;
-
-  if (!analysis.executive_summary) analysis.executive_summary = {};
-  analysis.executive_summary.health_score = swotAvg === null
-    ? { overall: null, status: 'Not scored: a measured website audit is required', breakdown: [] }
-    : { overall: swotAvg, status: swotAvg >= 75 ? '🟢 HEALTHY' : swotAvg >= 55 ? '🟡 NEEDS ATTENTION' : '🔴 CRITICAL', breakdown: [{ category: 'Evidence-backed SWOT average', score: swotAvg, status: swotAvg >= 70 ? '🟢' : swotAvg >= 50 ? '🟡' : '🔴' }] };
-
-  // ────────────────────────────────────────────────────────────────
-  // STEP 9: CONTENT GAP SCORED — reconcile with Tier list volumes
-  // ────────────────────────────────────────────────────────────────
-  const kwByLower = new Map(keywords.map((k: any) => [k.keyword.toLowerCase(), k]));
-  const contentGapScored = safeArray(analysis.competitor_teardown?.content_gap_scored);
-  contentGapScored.forEach((c: any) => {
-    const match = kwByLower.get(String(c.topic || '').toLowerCase());
-    if (match) {
-      c.volume = match.volume;
-      c.expected_traffic = null; // CTR/position baseline is not available; do not assume a universal 30% capture rate.
-    }
-  });
-
-  // ────────────────────────────────────────────────────────────────
-  // Gap labels are preserved only when supplied with a documented comparable metric methodology.
-  // Mixed dimensions (e.g. LCP, where lower is better) are never inferred from a generic ratio.
-
-  // ────────────────────────────────────────────────────────────────
-  // STEP 11: DATA SOURCES PULL DATE = today
-  // ────────────────────────────────────────────────────────────────
-  const today = new Date().toLocaleDateString((currencyInfo[country] || currencyInfo.us).locale, { year: 'numeric', month: 'long', day: 'numeric' });
-  if (!analysis.current_state) analysis.current_state = {};
-  analysis.current_state.data_sources = []; // populated only by integrations that return source metadata
-
-  // ────────────────────────────────────────────────────────────────
-  // STEP 12: CALENDAR QUARTERS FIXED
-  // ────────────────────────────────────────────────────────────────
-  if (analysis.ground_intel) {
-    const calendar = safeArray(analysis.ground_intel.cultural_calendar);
-    const quarterMap: Record<string, string> = {
-      'Jan – Feb': 'Jan – Feb',
-      'Mar – Apr': 'Mar – Apr',
-      'May – Jun': 'May – Jun',
-      'Jul – Aug': 'Jul – Aug',
-      'Sep – Oct': 'Sep – Oct',
-      'Nov – Dec': 'Nov – Dec',
-    };
-    calendar.forEach((c: any) => {
-      const period = safeString(c.period, '');
-      const fixed = quarterMap[period] || period;
-      c.behavior = String(c.behavior || '')
-        .replace(/mid-Q1 review/gi, 'Q1 close / Q2 start')
-        .replace(/mid-Q4/gi, 'Q3 close / Q4 start');
-      c.period = fixed;
-    });
-  }
-
-  // ────────────────────────────────────────────────────────────────
-  // STEP 13: EXEC TOP FINDINGS — max 3
-  // ────────────────────────────────────────────────────────────────
-  if (analysis.executive_summary?.top_findings) {
-    analysis.executive_summary.top_findings = analysis.executive_summary.top_findings.slice(0, 3);
-  }
-
-  // ────────────────────────────────────────────────────────────────
-  // Keep only client-supplied KPI baselines; never invent dashboard values.
-  if (analysis.current_state && !Array.isArray(analysis.current_state.kpi_dashboard)) analysis.current_state.kpi_dashboard = [];
+  if (analysis.executive_summary.top_findings) analysis.executive_summary.top_findings = analysis.executive_summary.top_findings.slice(0, 3);
 
   return analysis;
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
-// COMPETITOR TEARDOWN VALIDATION
-// ═══════════════════════════════════════════════════════════════════════════
-
-const validateCompetitorTeardown = (analysis: any, country: string, serpResults: any[]): void => {
-  const currency = currencyInfo[country] || currencyInfo.us;
-  const economics = getEconomics(country, analysis);
-
-  if (!analysis.competitor_teardown) analysis.competitor_teardown = {};
-  const ct = analysis.competitor_teardown;
-
-  // AI-written competitor metrics are not accepted as measurements without a provider export.
-  ct.feature_matrix = [];
-  ct.swot_scored = [];
-  ct.competitor_data_status = 'Not verified — connect a licensed backlink/traffic provider and attach dated exports';
-  ct.pricing_deconstruction = []; // Only populate from public, dated pricing-page evidence.
-  if (!ct.ux_audit) ct.ux_audit = { design_score: null, performance_score: null, mobile_score: null, accessibility_score: null, strengths: [], weaknesses: [], status: 'Not audited — requires site crawl and field data' };
-
-  ct.content_gap_scored = []; // Content gaps must be built from verified query-to-URL and SERP evidence.
-
-  if (!safeArray(ct.action_plan).length) {
-    const year = new Date().getFullYear();
-    const nextQuarter = `Q${Math.ceil((new Date().getMonth() + 4) / 3)} ${year}`;
-    ct.action_plan = [
-      { action: 'Confirm the target keyword set using a country-specific keyword data export', stakeholder: 'SEO Lead', timeline: nextQuarter, expected_impact: 'Baseline and target to be set after measurement' },
-      { action: 'Audit Core Web Vitals using field data and representative mobile devices', stakeholder: 'Engineering Lead', timeline: nextQuarter, expected_impact: 'Set after baseline audit' },
-      { action: 'Review localized landing-page coverage and translation quality', stakeholder: 'Content Director', timeline: nextQuarter, expected_impact: 'Set after content inventory' },
-      { action: 'Run referring-domain gap analysis using a licensed backlink provider', stakeholder: 'Digital PR Lead', timeline: nextQuarter, expected_impact: 'Set after verified backlink export' },
-    ];
-  }
-};
-
-// ═══════════════════════════════════════════════════════════════════════════
-// OTHER VALIDATIONS
+// OTHER HELPERS
 // ═══════════════════════════════════════════════════════════════════════════
 
 const dedupeCaseStudyTitles = (caseStudies: any[]): void => {
   caseStudies.forEach((cs: any) => {
-    if (cs.title) {
-      cs.title = String(cs.title).replace(/^Case Study \d+:\s*/i, '').replace(/^CASE STUDY \d+:\s*/i, '').trim();
-    }
+    if (cs.title) cs.title = String(cs.title).replace(/^Case Study \d+:\s*/i, '').replace(/^CASE STUDY \d+:\s*/i, '').trim();
   });
 };
 
 const cleanInsightPrefixes = (analysis: any): void => {
   if (Array.isArray(analysis.key_insights)) {
-    analysis.key_insights = analysis.key_insights.map((insight: string) =>
-      String(insight).replace(/^Insight \d+:\s*/i, '').trim()
-    );
+    analysis.key_insights = analysis.key_insights.map((insight: string) => String(insight).replace(/^Insight \d+:\s*/i, '').trim());
   }
 };
-
-// ═══════════════════════════════════════════════════════════════════════════
-// SERP FILTERING
-// ═══════════════════════════════════════════════════════════════════════════
 
 const getRelevanceKeywords = (niche: string): string[] => {
   const lower = niche.toLowerCase();
   const base = lower.split(/\s+/).filter((w) => w.length > 3);
   const nicheMap: Record<string, string[]> = {
-    'video': ['production', 'vlog', 'filming', 'editing', 'content', 'youtube'],
-    'backend': ['server', 'hosting', 'vps', 'cloud', 'infrastructure'],
-    'seo': ['keyword', 'ranking', 'search', 'content', 'traffic'],
-    'blog': ['blogging', 'content', 'writing', 'publishing'],
-    'hosting': ['server', 'cloud', 'vps', 'infrastructure'],
+    video: ['production', 'vlog', 'filming', 'editing', 'content', 'youtube'],
+    backend: ['server', 'hosting', 'vps', 'cloud', 'infrastructure'],
+    seo: ['keyword', 'ranking', 'search', 'content', 'traffic'],
+    blog: ['blogging', 'content', 'writing', 'publishing'],
+    hosting: ['server', 'cloud', 'vps', 'infrastructure'],
   };
   for (const [key, values] of Object.entries(nicheMap)) {
     if (lower.includes(key)) return [...base, ...values];
@@ -584,17 +405,12 @@ const getRelevanceKeywords = (niche: string): string[] => {
 const scoreSerpRelevance = (result: any, niche: string, country: string): number => {
   const title = String(result.title || '').toLowerCase();
   const url = String(result.link || '').toLowerCase();
-  const nicheKeywords = getRelevanceKeywords(niche);
   let score = 0;
-  nicheKeywords.forEach((kw) => {
+  getRelevanceKeywords(niche).forEach((kw) => {
     if (title.includes(kw.toLowerCase())) score += 10;
     if (url.includes(kw.toLowerCase())) score += 5;
   });
-  const countryTLD: Record<string, string> = {
-    us: '.com', gb: '.co.uk', ca: '.ca', au: '.com.au',
-    de: '.de', sg: '.sg', sa: '.sa', ae: '.ae',
-    pk: '.pk', in: '.in', tr: '.tr', my: '.my',
-  };
+  const countryTLD: Record<string, string> = { us: '.com', gb: '.co.uk', ca: '.ca', au: '.com.au', de: '.de', sg: '.sg', sa: '.sa', ae: '.ae', pk: '.pk', in: '.in', tr: '.tr', my: '.my' };
   if (url.includes(countryTLD[country] || '.com')) score += 8;
   if (title.length < 20) score -= 5;
   return score;
@@ -602,8 +418,7 @@ const scoreSerpRelevance = (result: any, niche: string, country: string): number
 
 const buildSerpQuery = (niche: string, country: string): string => {
   const countryName = countryNames[country] || country;
-  const year = new Date().getFullYear();
-  return `${niche} ${countryName} ${year}`;
+  return `${niche} ${countryName} ${new Date().getFullYear()}`;
 };
 
 const filterAndScoreSerp = (results: any[], niche: string, country: string): any[] => {
@@ -612,11 +427,9 @@ const filterAndScoreSerp = (results: any[], niche: string, country: string): any
     .filter((r: any) => {
       if (!r.link || !r.title) return false;
       try {
-        const url = new URL(r.link);
-        const domain = url.hostname.replace('www.', '').toLowerCase();
+        const domain = new URL(r.link).hostname.replace('www.', '').toLowerCase();
         if (GENERIC_DOMAINS.some((g) => domain.includes(g))) return false;
-        if (r.link.includes('google.com/goto')) return false;
-        return true;
+        return !r.link.includes('google.com/goto');
       } catch { return false; }
     })
     .map((r: any) => ({ ...r, _score: scoreSerpRelevance(r, niche, country) }))
@@ -624,10 +437,6 @@ const filterAndScoreSerp = (results: any[], niche: string, country: string): any
     .sort((a: any, b: any) => b._score - a._score)
     .map(({ _score, ...rest }: any) => rest);
 };
-
-// ═══════════════════════════════════════════════════════════════════════════
-// UTILS
-// ═══════════════════════════════════════════════════════════════════════════
 
 const classifyIntent = (keyword: string): 'informational' | 'commercial' | 'transactional' | 'navigational' => {
   const k = String(keyword || '').toLowerCase().trim();
@@ -653,13 +462,11 @@ const extractJSON = (raw: string): any => {
   const start = cleaned.indexOf('{');
   const end = cleaned.lastIndexOf('}');
   if (start !== -1 && end !== -1 && end > start) cleaned = cleaned.substring(start, end + 1);
-  try {
-    return JSON.parse(cleaned);
-  } catch {
+  try { return JSON.parse(cleaned); }
+  catch {
     const fixed = cleaned.replace(/,\s*}/g, '}').replace(/,\s*]/g, ']');
-    try {
-      return JSON.parse(fixed);
-    } catch {
+    try { return JSON.parse(fixed); }
+    catch {
       let completed = cleaned;
       let braceCount = (completed.match(/{/g) || []).length;
       let closeCount = (completed.match(/}/g) || []).length;
@@ -673,10 +480,7 @@ async function mapWithConcurrency<T>(items: T[], limit: number, fn: (item: T) =>
   const results: any[] = [];
   const executing: Promise<any>[] = [];
   for (const item of items) {
-    const p = fn(item).then((result) => {
-      executing.splice(executing.indexOf(p), 1);
-      return result;
-    });
+    const p = fn(item).then((result) => { executing.splice(executing.indexOf(p), 1); return result; });
     results.push(p);
     executing.push(p);
     if (executing.length >= limit) await Promise.race(executing);
@@ -688,10 +492,7 @@ function formatTable(headers: string[], rows: string[][]): string {
   const escape = (v: any) => String(v ?? '').replace(/\|/g, '\\|').replace(/\n/g, ' ');
   let table = `| ${headers.map(escape).join(' | ')} |\n`;
   table += `|${headers.map(() => '---').join('|')}|\n`;
-  const visibleRows = rows.length ? rows : [[
-    'No verified source evidence supplied for this section',
-    ...headers.slice(1).map(() => 'Not measured / not supplied'),
-  ]];
+  const visibleRows = rows.length ? rows : [['No verified source evidence supplied for this section', ...headers.slice(1).map(() => 'Not measured / not supplied')]];
   visibleRows.forEach((row) => {
     table += `| ${headers.map((_, i) => escape(row[i] ?? 'Not measured / not supplied')).join(' | ')} |\n`;
   });
@@ -706,27 +507,21 @@ const buildSEOPrompt = (niche: string, country: string, serpResults: any[], tren
   const countryName = countryNames[country] || country;
   const currentYear = new Date().getFullYear();
   const trendSummary = trendData.length > 0
-    ? `Provider-returned search trend observations (relative interest 0-100; use supplied order and source dates): ${trendData.join(', ')}`
+    ? `Provider-returned search trend observations (relative interest 0-100): ${trendData.join(', ')}`
     : 'No provider-backed trend observations returned. Do not infer seasonality or trend direction.';
   const currencySymbol = currencyInfo[country]?.symbol || '$';
   const multilingual = isMultilingual[country] ? 'YES' : 'NO';
-  const economics = getEconomics(country);
-
   const regs = getRegulationsForCountry(country);
   const regsBlock = `- Data Privacy: ${regs.dataPrivacy}\n  - Tax Framework: ${regs.taxFramework}\n  - Key Compliance: ${regs.keyCompliance}\n  - Local Authority: ${regs.localAuthority}`;
 
   const serpBlock = serpResults.length > 0
     ? serpResults.slice(0, 10).map((r: any, i: number) => {
-        try {
-          const domain = new URL(r.link).hostname.replace('www.', '');
-          return `${i + 1}. ${r.title} | ${domain} | ${r.link}`;
-        } catch {
-          return `${i + 1}. ${r.title} | ${r.link}`;
-        }
+        try { return `${i + 1}. ${r.title} | ${new URL(r.link).hostname.replace('www.', '')} | ${r.link}`; }
+        catch { return `${i + 1}. ${r.title} | ${r.link}`; }
       }).join('\n')
     : 'No live SERP data available.';
 
-  return `You are a senior SEO strategist at a top-tier digital agency (McKinsey/KPMG calibre). Write like a human consultant.
+  return `You are a senior SEO strategist at a top-tier digital agency. Write like a human consultant.
 
 Target Market: ${countryName}. Current Year: ${currentYear}.
 Local Currency: ${currencySymbol}
@@ -740,15 +535,15 @@ Is ${countryName} multilingual? ${multilingual}
 RULE #1 — VALUE: Every line earns its place. No filler.
 RULE #1A — SCOPE: No target website is supplied unless passed by the caller. Never claim client rankings, traffic, technical defects, backlink metrics, conversion rates or site-specific findings without a crawl / first-party data source.
 RULE #2 — EVIDENCE: Every quantitative claim must have a named source, timestamp and scope; otherwise return null / "Not verified".
-RULE #3 — NO FABRICATED NUMBERS: Never invent volumes, CPC, KD, competitor metrics, conversion rates, financial inputs, case studies or market-share percentages. Return null and explain the exact missing evidence when no source supports a value; never fabricate a substitute.
+RULE #3 — NO FABRICATED NUMBERS: Never invent volumes, CPC, KD, competitor metrics, conversion rates, financial inputs, case studies or market-share percentages.
 RULE #4 — NO AI MENTION.
 RULE #5 — NO FAKE QUOTES.
 RULE #6 — NO UNIFORM DATA.
 RULE #7 — Distinguish observed, provider-estimated, model-generated and client-supplied values.
 RULE #8 — REAL COMPETITOR NAMES: Extract brand names from SERP.
-RULE #9 — Do not create backlink metrics or backlink-domain lists; no backlink provider is connected in this workflow.
+RULE #9 — Do not create backlink metrics or backlink-domain lists.
 RULE #10 — SIZE-OF-PRIZE: calculate only when verified keyword volumes and client-supplied conversion/AOV inputs exist; otherwise return "Not calculated".
-RULE #11 — CURRENCY CONSISTENCY: Use the report currency only when source currency and conversion are documented; never use fixed exchange-rate constants.
+RULE #11 — CURRENCY CONSISTENCY: Use the report currency only when source currency and conversion are documented.
 
 ═══════════════════════════════════════════════════════════════════════
 🎯 REAL SERP COMPETITORS (USE THESE NAMES)
@@ -756,7 +551,7 @@ RULE #11 — CURRENCY CONSISTENCY: Use the report currency only when source curr
 ${serpBlock}
 
 ═══════════════════════════════════════════════════════════════════════
-🌍 COUNTRY DATA — RETURN EMPTY ARRAYS
+🌍 COUNTRY DATA
 ═══════════════════════════════════════════════════════════════════════
 - ground_intel.cultural_calendar → []
 - ground_intel.editor_intelligence → []
@@ -770,7 +565,7 @@ REGULATORY FRAMEWORK for ${countryName}:
 - keywords: EXACTLY 50 (14 money + 18 growth + 18 long-tail)
 - magic_goldmine.top_keywords: up to 5; [] if no verified metrics
 - key_findings: EXACTLY 5
-- executive_summary.top_findings: EXACTLY 3 (not 5)
+- executive_summary.top_findings: EXACTLY 3
 - competitor_teardown.feature_matrix: [] unless backed by verified provider/page evidence
 - competitor_teardown.swot_scored: [] unless an actual site audit has been completed
 - competitor_teardown.pricing_deconstruction: [] unless dated public pricing evidence is supplied
@@ -778,52 +573,26 @@ REGULATORY FRAMEWORK for ${countryName}:
 - competitor_teardown.action_plan: evidence-based actions; no invented uplift percentages
 
 ═══════════════════════════════════════════════════════════════════════
-⚠️ MATH REFERENCE — USE THESE BASE VALUES
+⚠️ MATH REFERENCE
 ═══════════════════════════════════════════════════════════════════════
-For this market (${countryName}):
-  BUSINESS ECONOMICS     = NOT PROVIDED. Do not invent AOV, CAC, LTV, MRR, investment, pipeline, ROI or break-even values.
-  If client business_inputs are supplied, use only those values and preserve their currency. Otherwise return null / "Not supplied".
-
-ALL ratios in your output MUST match these base values.
+BUSINESS ECONOMICS = NOT PROVIDED. Do not invent AOV, CAC, LTV, MRR, investment, pipeline, ROI or break-even values.
+If client business_inputs are supplied, use only those values and preserve their currency. Otherwise return null / "Not supplied".
 
 ═══════════════════════════════════════════════════════════════════════
-⚠️ CRITICAL: SIZE-OF-PRIZE FORMULA
+⚠️ SIZE-OF-PRIZE FORMULA
 ═══════════════════════════════════════════════════════════════════════
 For EVERY key_finding:
   size_of_prize = N kw × V vol × C% CVR × ${currencySymbol}A AOV
   Show the arithmetic. The result MUST equal the product.
   NO division by 10. NO shortcuts.
-
 If any required input is missing, return null / "Not calculated" and explain which input is missing.
-
-═══════════════════════════════════════════════════════════════════════
-⚠️ SECTION 7.5 — COMPETITOR TEARDOWN
-═══════════════════════════════════════════════════════════════════════
-{
-  "feature_matrix": [],
-  "swot_scored": [],
-  "pricing_deconstruction": [],
-  "ux_audit": { "design_score": null, "performance_score": null, "mobile_score": null, "accessibility_score": null, "strengths": [], "weaknesses": [] },
-  "content_gap_scored": [],
-  "action_plan": [{ "action": "...", "stakeholder": "...", "timeline": "${currentYear} Q...", "expected_impact": "..." }]
-}
-
-Do not calculate generic gap ratios across unlike metrics; lower-is-better metrics such as LCP require inverse directionality.
-
-═══════════════════════════════════════════════════════════════════════
-⚠️ SECTION 9.5 & 9.6
-═══════════════════════════════════════════════════════════════════════
-Use the EXACT base values from the MATH REFERENCE block above.
-Do NOT invent different numbers.
 
 ═══════════════════════════════════════════════════════════════════════
 ⚠️ CASE STUDY RULES
 ═══════════════════════════════════════════════════════════════════════
 - If multilingual: mention "English + [local language]"
 - Include case studies ONLY when the user supplies a verifiable case-study source and permission to publish.
-- Never fabricate client identities, baseline/results, metrics, tools, or NDA status.
 - If no verified case study is supplied, return an empty array.
-- title: NO "Case Study X:" prefix
 
 **Google Trends Data:** ${trendSummary}
 
@@ -833,83 +602,25 @@ RETURN JSON (ALL FIELDS REQUIRED):
 
 {
   "business_inputs": { "aov": null, "cac": null, "lifetime_value": null, "lifetime_months": null, "monthly_contribution_per_customer": null, "six_month_investment": null, "six_month_pipeline": null, "six_month_attributed_gross_profit": null, "monthly_fixed_cost": null, "variable_cost_per_customer": null, "organic_click_capture_rate": null, "lead_conversion_rate": null },
-  "executive_summary": {
-    "headline": "...",
-    "top_findings": [{"rank": 1, "priority": "CRITICAL", "title": "...", "size_of_prize": "...", "root_cause": "..."}],
-    "what_this_means": "...",
-    "next_90_days": ["...", "...", "..."],
-    "estimated_roi": { "investment": "Not supplied", "pipeline": "Not supplied", "roi_percent": "Not calculated" },
-    "health_score": { "overall": null, "status": "NOT SCORED — site audit evidence required", "breakdown": [] }
-  },
-  "current_state": {
-    "data_sources": [{"data_type": "...", "source": "...", "pull_date": "..."}],
-    "kpi_dashboard": [{"metric": "...", "current": "...", "previous": "...", "change": "...", "target": "..."}],
-    "narrative": "..."
-  },
-  "ground_intel": {
-    "cultural_calendar": [],
-    "language_split": { "summary": "...", "top_keywords": [] },
-    "buyer_behavior": ["...", "...", "...", "..."],
-    "editor_intelligence": [],
-    "competitor_weaknesses": [{"competitor": "...", "weakness": "..."}]
-  },
-  "magic_goldmine": {
-    "cluster_name": "...",
-    "criteria_met": ["...", "...", "...", "..."],
-    "why_invisible": ["...", "...", "..."],
-    "top_keywords": [{"keyword": "...", "volume": null, "kd": null, "cpc": null, "intent": "transactional"}],
-    "revenue_projection": { "monthly_traffic": null, "conversion_rate": null, "monthly_leads": null, "avg_deal_value": null, "monthly_pipeline": null, "formula": "..." },
-    "evidence": ["...", "...", "...", "..."]
-  },
-  "magic_playbook": {
-    "target_competitor": { "name": null, "da": null, "traffic": null },
-    "timeline": [{"date": "...", "action": "...", "impact": "..."}],
-    "content_formula": ["...", "...", "...", "..."],
-    "backlink_strategy": { "total_backlinks": null, "local_percentage": null, "top_sources": [] },
-    "vulnerabilities": ["...", "...", "...", "..."],
-    "counter_play": [{"week": "...", "action": "..."}],
-    "evidence": ["...", "...", "...", "..."]
-  },
+  "executive_summary": { "headline": "...", "top_findings": [{"rank": 1, "priority": "CRITICAL", "title": "...", "size_of_prize": "...", "root_cause": "..."}], "what_this_means": "...", "next_90_days": ["...", "...", "..."], "estimated_roi": { "investment": "Not supplied", "pipeline": "Not supplied", "roi_percent": "Not calculated" }, "health_score": { "overall": null, "status": "NOT SCORED — site audit evidence required", "breakdown": [] } },
+  "current_state": { "data_sources": [], "kpi_dashboard": [], "narrative": "..." },
+  "ground_intel": { "cultural_calendar": [], "language_split": { "summary": "...", "top_keywords": [] }, "buyer_behavior": ["...", "...", "...", "..."], "editor_intelligence": [], "competitor_weaknesses": [{"competitor": "...", "weakness": "..."}] },
+  "magic_goldmine": { "cluster_name": "...", "criteria_met": ["...", "...", "...", "..."], "why_invisible": ["...", "...", "..."], "top_keywords": [{"keyword": "...", "volume": null, "kd": null, "cpc": null, "intent": "transactional"}], "revenue_projection": { "monthly_traffic": null, "conversion_rate": null, "monthly_leads": null, "avg_deal_value": null, "monthly_pipeline": null, "formula": "..." }, "evidence": ["...", "...", "...", "..."] },
+  "magic_playbook": { "target_competitor": { "name": null, "da": null, "traffic": null }, "timeline": [{"date": "...", "action": "...", "impact": "..."}], "content_formula": ["...", "...", "...", "..."], "backlink_strategy": { "total_backlinks": null, "local_percentage": null, "top_sources": [] }, "vulnerabilities": ["...", "...", "...", "..."], "counter_play": [{"week": "...", "action": "..."}], "evidence": ["...", "...", "...", "..."] },
   "key_findings": [{"rank": 1, "priority": "CRITICAL", "title": "...", "category": "...", "impact": "HIGH", "effort": "LOW", "what_is_happening": "...", "why_it_matters": "...", "size_of_prize": "...", "size_formula": "...", "evidence": ["..."], "recommendation": "...", "timeline": "Week 1-2", "owner": "..."}],
-  "competitive_landscape": {
-    "comparison_table": [{"metric": "...", "you": "...", "comp_a": "...", "comp_b": "...", "comp_c": "..."}],
-    "content_gap": [{"topic": "...", "volume": null, "leader": "[REAL BRAND ONLY IF OBSERVED]", "your_position": "..."}],
-    "backlink_gap": [],
-    "prioritized_roadmap": ["...", "...", "..."]
-  },
-  "competitor_teardown": {
-    "feature_matrix": [],
-    "swot_scored": [],
-    "pricing_deconstruction": [],
-    "ux_audit": { "design_score": null, "performance_score": null, "mobile_score": null, "accessibility_score": null, "strengths": [], "weaknesses": [] },
-    "content_gap_scored": [],
-    "action_plan": []
-  },
-  "roadmap_90day": {
-    "days_1_30": [{"action": "...", "theme": "Quick Win", "owner": "...", "effort": "S"}],
-    "days_31_60": [{"action": "...", "theme": "Build", "owner": "...", "effort": "M"}],
-    "days_61_90": [{"action": "...", "theme": "Scale", "owner": "...", "effort": "L"}],
-    "dependencies": ["...", "..."]
-  },
-  "financial_projection": {
-    "investment": [],
-    "monthly_projection": [],
-    "roi_summary": "...",
-    "roi_formula": "...",
-    "assumptions": [{"assumption": "...", "source": "..."}],
-    "sensitivity": []
-  },
-  "unit_economics": {
-    "cac": {}, "ltv": {}, "ltv_cac_ratio": {}, "payback_period": {}, "gross_margin_per_tier": []
-  },
+  "competitive_landscape": { "comparison_table": [], "content_gap": [{"topic": "...", "volume": null, "leader": "[REAL BRAND ONLY IF OBSERVED]", "your_position": "..."}], "backlink_gap": [], "prioritized_roadmap": ["...", "...", "..."] },
+  "competitor_teardown": { "feature_matrix": [], "swot_scored": [], "pricing_deconstruction": [], "ux_audit": { "design_score": null, "performance_score": null, "mobile_score": null, "accessibility_score": null, "strengths": [], "weaknesses": [] }, "content_gap_scored": [], "action_plan": [] },
+  "roadmap_90day": { "days_1_30": [], "days_31_60": [], "days_61_90": [], "dependencies": ["...", "..."] },
+  "financial_projection": { "investment": [], "monthly_projection": [], "roi_summary": "...", "roi_formula": "...", "assumptions": [], "sensitivity": [] },
+  "unit_economics": { "cac": {}, "ltv": {}, "ltv_cac_ratio": {}, "payback_period": {}, "gross_margin_per_tier": [] },
   "break_even_analysis": {},
   "sensitivity_analysis": {},
   "keywords": [{"keyword": "...", "volume": null, "kd": null, "cpc": null, "intent": "commercial", "tier": "money", "data_source": null}],
-  "serp_landscape": [{"position": 1, "title": "...", "link": "...", "da": null, "words": null, "backlinks": null, "traffic": null, "strengths": "...", "weaknesses": "...", "gap": "..."}],
-  "content_roadmap": [{"week": 1, "title": "...", "primary_keyword": "...", "type": "Guide", "expected_traffic": null}],
+  "serp_landscape": [],
+  "content_roadmap": [],
   "link_acquisition": { "overview": "...", "target_sites": [], "guest_post_topics": ["..."] },
   "case_studies": [],
-  "client_value_proposition": ["...", "...", "..."],
+  "client_value_proposition": [],
   "trend_assessment": "...",
   "data_limitations": ["...", "...", "..."],
   "methodology_note": "..."
@@ -917,39 +628,25 @@ RETURN JSON (ALL FIELDS REQUIRED):
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
-// FALLBACK FILLER (before reconcile)
+// VALIDATE + FILL
 // ═══════════════════════════════════════════════════════════════════════════
 
-const validateAndFillSections = (
-  analysis: any, niche: string, country: string, keywords: any[], trendData: number[], serpResults: any[]
-): any => {
-  const currency = currencyInfo[country] || currencyInfo.us;
+const validateAndFillSections = (analysis: any, niche: string, country: string, keywords: any[], trendData: number[], serpResults: any[]): any => {
   const countryName = countryNames[country] || country;
-  const economics = getEconomics(country, analysis);
 
   if (!analysis.executive_summary) analysis.executive_summary = {};
-  if (!analysis.executive_summary.headline) {
-    analysis.executive_summary.headline = `Organic search opportunity assessment for ${niche} in ${countryName}`;
-  }
-  if (!analysis.executive_summary.what_this_means) {
-    analysis.executive_summary.what_this_means = `This report evaluates available search-result evidence and keyword candidates for ${niche} in ${countryName}. Market demand, ranking gaps and commercial impact are stated only where a connected source provides evidence.`;
-  }
+  if (!analysis.executive_summary.headline) analysis.executive_summary.headline = `Organic search opportunity assessment for ${niche} in ${countryName}`;
+  if (!analysis.executive_summary.what_this_means) analysis.executive_summary.what_this_means = `This report evaluates available search-result evidence and keyword candidates for ${niche} in ${countryName}. Market demand, ranking gaps and commercial impact are stated only where a connected source provides evidence.`;
   if (!safeArray(analysis.executive_summary.next_90_days).length) {
-    analysis.executive_summary.next_90_days = [
-      'Deploy schema markup and optimize Core Web Vitals',
-      'Launch localized content targeting top keyword clusters',
-      'Execute targeted link-building campaign for regional authority',
-    ];
+    analysis.executive_summary.next_90_days = ['Deploy schema markup and optimize Core Web Vitals', 'Launch localized content targeting top keyword clusters', 'Execute targeted link-building campaign for regional authority'];
   }
 
   if (!analysis.current_state) analysis.current_state = {};
-  if (!analysis.current_state.narrative) {
-    analysis.current_state.narrative = `No client website audit or first-party performance baseline was supplied. This run can assess public search results and provider-returned keyword data, but cannot establish client rankings, traffic, technical health or conversion performance.`;
-  }
+  if (!analysis.current_state.narrative) analysis.current_state.narrative = `No client website audit or first-party performance baseline was supplied. This run can assess public search results and provider-returned keyword data, but cannot establish client rankings, traffic, technical health or conversion performance.`;
 
   if (!analysis.ground_intel) analysis.ground_intel = {};
   if (!safeArray(analysis.ground_intel.buyer_behavior).length) analysis.ground_intel.buyer_behavior = [];
-  analysis.ground_intel.competitor_weaknesses = []; // Require observed page-level evidence before asserting a weakness.
+  analysis.ground_intel.competitor_weaknesses = [];
 
   if (!analysis.magic_goldmine) analysis.magic_goldmine = {};
   if (!analysis.magic_playbook) analysis.magic_playbook = {};
@@ -961,35 +658,25 @@ const validateAndFillSections = (
   if (!analysis.sensitivity_analysis) analysis.sensitivity_analysis = {};
 
   if (!safeArray(analysis.key_findings).length) {
-    const topKw = keywords.slice(0, 5);
-    analysis.key_findings = topKw.map((kw: any, i: number) => {
-      const calculated = 0;
-      return {
-        rank: i + 1,
-        priority: i === 0 ? 'CRITICAL' : i <= 2 ? 'HIGH' : 'MEDIUM',
-        title: `Opportunity in "${kw.keyword}"`,
-        category: i === 0 ? 'Content Strategy' : i === 1 ? 'Technical SEO' : i === 2 ? 'Localization' : 'Off-Page SEO',
-        impact: 'HIGH', effort: i === 0 ? 'LOW' : 'MEDIUM',
-        what_is_happening: `The phrase "${kw.keyword}" is an unverified candidate keyword. Provider-backed volume, CPC and difficulty are shown only if returned by the keyword API.`,
-        why_it_matters: `Validate local demand and search intent before prioritizing content or forecasting traffic.`,
-        size_of_prize: 'Not calculated — client conversion and value inputs required',
-        size_formula: 'Requires validated search volume, click-through rate, conversion rate and average order value',
-        evidence: [],
-        recommendation: `Create comprehensive content targeting "${kw.keyword}" with localized messaging.`,
-        timeline: `Week ${(i + 1) * 2}-${(i + 1) * 2 + 1}`,
-        owner: i === 0 ? 'Content Lead' : i === 1 ? 'Dev Lead' : 'SEO Lead',
-      };
-    });
+    analysis.key_findings = keywords.slice(0, 5).map((kw: any, i: number) => ({
+      rank: i + 1,
+      priority: i === 0 ? 'CRITICAL' : i <= 2 ? 'HIGH' : 'MEDIUM',
+      title: `Opportunity in "${kw.keyword}"`,
+      category: i === 0 ? 'Content Strategy' : i === 1 ? 'Technical SEO' : i === 2 ? 'Localization' : 'Off-Page SEO',
+      impact: 'HIGH', effort: i === 0 ? 'LOW' : 'MEDIUM',
+      what_is_happening: `The phrase "${kw.keyword}" is an unverified candidate keyword. Provider-backed volume, CPC and difficulty are shown only if returned by the keyword API.`,
+      why_it_matters: `Validate local demand and search intent before prioritizing content or forecasting traffic.`,
+      size_of_prize: 'Not calculated — client conversion and value inputs required',
+      size_formula: 'Requires validated search volume, click-through rate, conversion rate and average order value',
+      evidence: [],
+      recommendation: `Create comprehensive content targeting "${kw.keyword}" with localized messaging.`,
+      timeline: `Week ${(i + 1) * 2}-${(i + 1) * 2 + 1}`,
+      owner: i === 0 ? 'Content Lead' : i === 1 ? 'Dev Lead' : 'SEO Lead',
+    }));
   }
 
   if (!analysis.executive_summary.top_findings?.length) {
-    analysis.executive_summary.top_findings = safeArray(analysis.key_findings).slice(0, 3).map((k: any) => ({
-      rank: k.rank,
-      priority: k.priority,
-      title: k.title,
-      size_of_prize: k.size_of_prize,
-      root_cause: k.what_is_happening,
-    }));
+    analysis.executive_summary.top_findings = safeArray(analysis.key_findings).slice(0, 3).map((k: any) => ({ rank: k.rank, priority: k.priority, title: k.title, size_of_prize: k.size_of_prize, root_cause: k.what_is_happening }));
   }
 
   if (!safeArray(analysis.case_studies).length) analysis.case_studies = [];
@@ -1002,9 +689,7 @@ const validateAndFillSections = (
     ];
   }
 
-  if (!analysis.methodology_note) {
-    analysis.methodology_note = 'The report combines live SERP results and provider-returned keyword/trend metrics when available. AI-generated strategic recommendations are hypotheses, not measured market facts. Client analytics, backlink exports, crawl results and financial inputs are not inferred.';
-  }
+  if (!analysis.methodology_note) analysis.methodology_note = 'The report combines live SERP results and provider-returned keyword/trend metrics when available. AI-generated strategic recommendations are hypotheses, not measured market facts. Client analytics, backlink exports, crawl results and financial inputs are not inferred.';
 
   if (!analysis.trend_assessment) {
     if (trendData.length) {
@@ -1015,10 +700,6 @@ const validateAndFillSections = (
     }
   }
 
-  if (!safeArray(analysis.client_value_proposition).length) {
-    analysis.client_value_proposition = [];
-  }
-
   if (!safeArray(analysis.roadmap_90day.days_1_30).length) {
     analysis.roadmap_90day = {
       days_1_30: [
@@ -1027,7 +708,7 @@ const validateAndFillSections = (
         { action: 'Implement schema markup', theme: 'Quick Win', owner: 'SEO Lead', effort: 'S' },
       ],
       days_31_60: [
-        { action: 'Expand validated keyword clusters in the market’s primary search language(s)', theme: 'Build', owner: 'Content Lead', effort: 'L' },
+        { action: "Expand validated keyword clusters in the market's primary search language(s)", theme: 'Build', owner: 'Content Lead', effort: 'L' },
         { action: 'Execute a country-relevant digital PR campaign after prospect validation', theme: 'Build', owner: 'PR Specialist', effort: 'L' },
         { action: 'Build relevant editorial and partner links after quality review', theme: 'Build', owner: 'Partnerships', effort: 'M' },
       ],
@@ -1040,167 +721,24 @@ const validateAndFillSections = (
     };
   }
 
-  validateCompetitorTeardown(analysis, country, serpResults);
+  if (!analysis.competitor_teardown) analysis.competitor_teardown = {};
+  analysis.competitor_teardown.feature_matrix = [];
+  analysis.competitor_teardown.swot_scored = [];
+  analysis.competitor_teardown.pricing_deconstruction = [];
+  analysis.competitor_teardown.content_gap_scored = [];
+  if (!analysis.competitor_teardown.ux_audit) analysis.competitor_teardown.ux_audit = { design_score: null, performance_score: null, mobile_score: null, accessibility_score: null, strengths: [], weaknesses: [], status: 'Not audited — requires site crawl and field data' };
+  if (!safeArray(analysis.competitor_teardown.action_plan).length) {
+    const year = new Date().getFullYear();
+    const nextQuarter = `Q${Math.ceil((new Date().getMonth() + 4) / 3)} ${year}`;
+    analysis.competitor_teardown.action_plan = [
+      { action: 'Confirm the target keyword set using a country-specific keyword data export', stakeholder: 'SEO Lead', timeline: nextQuarter, expected_impact: 'Baseline and target to be set after measurement' },
+      { action: 'Audit Core Web Vitals using field data and representative mobile devices', stakeholder: 'Engineering Lead', timeline: nextQuarter, expected_impact: 'Set after baseline audit' },
+      { action: 'Review localized landing-page coverage and translation quality', stakeholder: 'Content Director', timeline: nextQuarter, expected_impact: 'Set after content inventory' },
+      { action: 'Run referring-domain gap analysis using a licensed backlink provider', stakeholder: 'Digital PR Lead', timeline: nextQuarter, expected_impact: 'Set after verified backlink export' },
+    ];
+  }
 
   return analysis;
-};
-
-// ═══════════════════════════════════════════════════════════════════════════
-// MARKDOWN BUILDERS
-// ═══════════════════════════════════════════════════════════════════════════
-
-const buildCompetitorTeardownMarkdown = (ct: any, currency: any): string => {
-  let md = '';
-  md += `7.5 COMPETITOR TEARDOWN — DEEP-DIVE ANALYSIS
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-🕵️ WHAT THIS SECTION IS
-A structured review of competitor evidence available from public SERP results and connected provider data.
-
-═══════════════════════════════════════════════════════════════════════
-A. FEATURE COMPARISON MATRIX (10 Dimensions)
-═══════════════════════════════════════════════════════════════════════
-
-`;
-  md += formatTable(
-    ['Dimension', 'You', 'Competitor 1', 'Competitor 2', 'Competitor 3', 'Gap'],
-    safeArray(ct.feature_matrix).map((f: any) => [
-      safeString(f.dimension), safeString(f.your_score), safeString(f.comp1),
-      safeString(f.comp2), safeString(f.comp3),
-      safeString(f.gap, '🟡 Medium'),
-    ])
-  );
-
-  md += `\n═══════════════════════════════════════════════════════════════════════
-B. SWOT SCORING RUBRIC (12 Dimensions)
-═══════════════════════════════════════════════════════════════════════
-
-`;
-  md += formatTable(
-    ['Dimension', 'Score', 'Reasoning'],
-    safeArray(ct.swot_scored).map((s: any) => [
-      safeString(s.dimension),
-      `${s.score}/10 ${s.score >= 7 ? '🟢' : s.score >= 5 ? '🟡' : '🔴'}`,
-      safeString(s.reasoning),
-    ])
-  );
-
-  md += `\n═══════════════════════════════════════════════════════════════════════
-C. PRICING DECONSTRUCTION (Tier-by-Tier)
-═══════════════════════════════════════════════════════════════════════
-
-`;
-  md += formatTable(
-    ['Tier', 'Your Price', 'Competitor 1', 'Competitor 2', 'Competitor 3', 'Insight'],
-    safeArray(ct.pricing_deconstruction).map((p: any) => [
-      safeString(p.tier), safeString(p.your_price), safeString(p.comp1_price),
-      safeString(p.comp2_price), safeString(p.comp3_price), safeString(p.insight),
-    ])
-  );
-
-  md += `\n═══════════════════════════════════════════════════════════════════════
-D. UX AUDIT
-═══════════════════════════════════════════════════════════════════════
-
-`;
-  const ux = ct.ux_audit || {};
-  md += `**Design Score:**         ${ux.design_score === null || ux.design_score === undefined ? 'Not audited' : ux.design_score}/100 ${ux.design_score >= 70 ? '🟢' : '🟡'}\n`;
-  md += `**Performance Score:**    ${ux.performance_score === null || ux.performance_score === undefined ? 'Not audited' : ux.performance_score}/100 ${ux.performance_score >= 70 ? '🟢' : '🔴'}\n`;
-  md += `**Mobile Score:**         ${ux.mobile_score === null || ux.mobile_score === undefined ? 'Not audited' : ux.mobile_score}/100 ${ux.mobile_score >= 70 ? '🟢' : '🟡'}\n`;
-  md += `**Accessibility Score:**  ${ux.accessibility_score === null || ux.accessibility_score === undefined ? 'Not audited' : ux.accessibility_score}/100 ${ux.accessibility_score >= 70 ? '🟢' : '🟡'}\n\n`;
-  md += `💪 STRENGTHS:\n`;
-  safeArray(ux.strengths).forEach((s: string) => { md += `  • ${s}\n`; });
-  md += `\n⚠️ WEAKNESSES:\n`;
-  safeArray(ux.weaknesses).forEach((w: string) => { md += `  • ${w}\n`; });
-
-  md += `\n═══════════════════════════════════════════════════════════════════════
-E. CONTENT GAP ANALYSIS (Scored)
-═══════════════════════════════════════════════════════════════════════
-
-`;
-  md += formatTable(
-    ['Topic', 'Volume', 'Competitor Coverage', 'Your Coverage', 'Priority', 'Expected Traffic'],
-    safeArray(ct.content_gap_scored).map((c: any) => [
-      safeString(c.topic), c.volume === null || c.volume === undefined ? 'No provider metric' : String(c.volume), safeString(c.competitor_coverage),
-      safeString(c.your_coverage),
-      c.priority === 'Critical' ? '🔴 Critical' : c.priority === 'High' ? '🟠 High' : '🟡 Medium',
-      c.expected_traffic === null || c.expected_traffic === undefined ? 'Not forecast' : `${c.expected_traffic}/mo`,
-    ])
-  );
-
-  md += `\n═══════════════════════════════════════════════════════════════════════
-F. STRATEGIC ACTION PLAN (Stakeholder-Mapped)
-═══════════════════════════════════════════════════════════════════════
-
-`;
-  md += formatTable(
-    ['Action', 'Stakeholder', 'Timeline', 'Expected Impact'],
-    safeArray(ct.action_plan).map((a: any) => [
-      safeString(a.action), safeString(a.stakeholder), safeString(a.timeline), safeString(a.expected_impact),
-    ])
-  );
-
-  md += `\n`;
-  return md;
-};
-
-const buildUnitEconomicsMarkdown = (ue: any, be: any, sa: any, currency: any): string => {
-  let md = '';
-  md += `9.5 UNIT ECONOMICS
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-💰 KEY METRICS
-
-`;
-  md += `  • CAC (Customer Acquisition Cost):   ${safeString(ue.cac?.value)}\n`;
-  md += `    └─ ${safeString(ue.cac?.calculation)}\n`;
-  md += `    └─ Benchmark: ${safeString(ue.cac?.benchmark)}\n\n`;
-  md += `  • LTV (Lifetime Value):             ${safeString(ue.ltv?.value)}\n`;
-  md += `    └─ ${safeString(ue.ltv?.calculation)}\n`;
-  md += `    └─ Benchmark: ${safeString(ue.ltv?.benchmark)}\n\n`;
-  md += `  • LTV:CAC Ratio:                    ${safeString(ue.ltv_cac_ratio?.value)}\n`;
-  md += `    └─ Health: ${safeString(ue.ltv_cac_ratio?.health)}\n`;
-  md += `    └─ Benchmark: ${safeString(ue.ltv_cac_ratio?.benchmark)}\n\n`;
-  md += `  • Payback Period:                   ${safeString(ue.payback_period?.months)} months\n`;
-  md += `    └─ ${safeString(ue.payback_period?.calculation)}\n`;
-  md += `    └─ Benchmark: ${safeString(ue.payback_period?.benchmark)}\n\n`;
-
-  md += `📊 GROSS MARGIN PER TIER\n\n`;
-  md += formatTable(
-    ['Tier', 'Revenue', 'Cost', 'Margin', 'Note'],
-    safeArray(ue.gross_margin_per_tier).map((g: any) => [
-      safeString(g.tier), safeString(g.revenue), safeString(g.cost), safeString(g.margin), safeString(g.note),
-    ])
-  );
-
-  md += `\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-9.6 BREAK-EVEN ANALYSIS
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-📈 BREAK-EVEN METRICS
-
-`;
-  md += `  • Fixed Costs (monthly):            ${safeString(be?.fixed_costs)}\n`;
-  md += `  • Revenue per Unit:                 ${safeString(be?.revenue_per_unit)}\n`;
-  md += `  • Variable Cost per Unit:           ${safeString(be?.variable_cost_per_unit)}\n`;
-  md += `  • Contribution Margin:              ${safeString(be?.contribution_margin)}\n\n`;
-  md += `  🎯 UNITS REQUIRED TO BREAK-EVEN:     ${safeString(be?.units_required)} customers\n`;
-  md += `  🎯 TRAFFIC REQUIRED:                  ${safeString(be?.traffic_required)} visitors\n`;
-  md += `  🎯 MONTHS TO BREAK-EVEN:             ${safeString(be?.months_to_breakeven)} months\n\n`;
-  if (be?.formula) md += `  Formula: ${safeString(be.formula)}\n\n`;
-
-  md += `📊 SENSITIVITY ANALYSIS\n\n`;
-  md += formatTable(
-    ['Scenario', 'Traffic Growth', 'Pipeline', 'ROI', 'LTV:CAC', 'Break-even'],
-    [
-      ['🟢 Best Case', safeString(sa?.best_case?.traffic_growth), safeString(sa?.best_case?.pipeline), safeString(sa?.best_case?.roi), safeString(sa?.best_case?.ltv_cac), `${safeString(sa?.best_case?.breakeven_months)} mo`],
-      ['🟡 Expected', safeString(sa?.expected_case?.traffic_growth), safeString(sa?.expected_case?.pipeline), safeString(sa?.expected_case?.roi), safeString(sa?.expected_case?.ltv_cac), `${safeString(sa?.expected_case?.breakeven_months)} mo`],
-      ['🔴 Worst Case', safeString(sa?.worst_case?.traffic_growth), safeString(sa?.worst_case?.pipeline), safeString(sa?.worst_case?.roi), safeString(sa?.worst_case?.ltv_cac), `${safeString(sa?.worst_case?.breakeven_months)} mo`],
-    ]
-  );
-  md += `\n`;
-  return md;
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1213,26 +751,21 @@ export async function generateSEOReport(
   options?: { clientName?: string; website?: string; productDescription?: string; targetIcp?: string; businessInputs?: Record<string, number>; baselineKpis?: any[]; }
 ) {
   country = String(country || '').trim().toLowerCase();
-  if (!countryNames[country]) throw new Error(`Unsupported country code: ${country}. Supported codes: ${Object.keys(countryNames).join(', ')}`);
+  if (!countryNames[country]) throw new Error(`Unsupported country code: ${country}. Supported: ${Object.keys(countryNames).join(', ')}`);
   niche = String(niche || '').trim();
   if (!niche) throw new Error('A non-empty niche is required to generate an SEO report.');
 
   const optionsKey = JSON.stringify({ clientName: options?.clientName || '', website: options?.website || '', productDescription: options?.productDescription || '', targetIcp: options?.targetIcp || '', businessInputs: options?.businessInputs || {}, baselineKpis: options?.baselineKpis || [] });
-  const cacheKey = `seo_v12_${niche}_${country}_${optionsKey}`;
+  const cacheKey = `seo_v13_${niche}_${country}_${optionsKey}`;
   const cached = cacheService.get(cacheKey);
-  if (cached) {
-    console.log('📦 [Cache] Returning cached SEO report (v12).');
-    return cached;
-  }
+  if (cached) return cached;
 
-  console.log(`🔍 [SEO v12] Generating for "${niche}" in ${country}...`);
+  console.log(`🔍 [SEO v13] Generating for "${niche}" in ${country}...`);
 
-  // ── TREND DATA ──
+  // TRENDS
   let trendData: number[] = [];
   let trendSource: 'dataforseo' | 'google_trends' | 'none' = 'none';
-  const dataForSEOAvailable = isDataForSEOAvailable();
-
-  if (dataForSEOAvailable) {
+  if (isDataForSEOAvailable()) {
     try {
       const realTrends = await fetchRealTrends([niche], country);
       if (realTrends.length > 0 && realTrends[0].timeline.length > 0) {
@@ -1245,56 +778,45 @@ export async function generateSEOReport(
     trendData = await getGoogleTrends(niche, country).catch(() => []);
     if (trendData.length > 0) trendSource = 'google_trends';
   }
-  // No synthetic seasonal curve: if both providers fail, keep the series empty and disclose it.
 
-  // ── SERP DATA ──
+  // SERP
   const serpQuery = buildSerpQuery(niche, country);
   let serpProvider = 'No SERP provider returned results';
   let searchData = await getScraperAPISearch(serpQuery, country).catch(() => null);
   if (searchData?.organic_results) serpProvider = 'ScraperAPI';
   if (!searchData?.organic_results) { searchData = await getSearchResults(serpQuery, country).catch(() => null); if (searchData?.organic_results) serpProvider = 'SerpAPI'; }
   if (!searchData?.organic_results) { searchData = await getSerperResults(serpQuery, country).catch(() => null); if (searchData?.organic_results) serpProvider = 'Serper'; }
-
-  const filteredResults = filterAndScoreSerp(searchData?.organic_results || [], niche, country);
-  const serpResults = filteredResults.slice(0, 10);
-
+  const serpResults = filterAndScoreSerp(searchData?.organic_results || [], niche, country).slice(0, 10);
   console.log(`✅ [SERP] ${serpResults.length} relevant results.`);
 
-  // ── AI CALL ──
-  const prompt = `${buildSEOPrompt(niche, country, serpResults, trendData)}\n\nCALLER-SUPPLIED CLIENT CONTEXT (authoritative; do not infer beyond this):\nWebsite: ${options?.website || 'Not supplied'}\nProduct: ${options?.productDescription || 'Not supplied'}\nTarget ICP: ${options?.targetIcp || 'Not supplied'}\nCommercial inputs will be supplied separately in code and must not be guessed.`;
+  // AI
+  const prompt = `${buildSEOPrompt(niche, country, serpResults, trendData)}\n\nCALLER-SUPPLIED CLIENT CONTEXT:\nWebsite: ${options?.website || 'Not supplied'}\nProduct: ${options?.productDescription || 'Not supplied'}\nTarget ICP: ${options?.targetIcp || 'Not supplied'}\nCommercial inputs supplied in code; must not be guessed.`;
   const aiResponse = await runGroqWithRetry(prompt, JSON.stringify({ niche, country }));
   let analysis = extractJSON(aiResponse);
-  // Never trust AI-generated commercial inputs or baselines. Only caller-supplied values are accepted.
+
   analysis.business_inputs = options?.businessInputs ? { ...options.businessInputs } : {};
   if (!analysis.current_state) analysis.current_state = {};
   analysis.current_state.kpi_dashboard = Array.isArray(options?.baselineKpis) ? options.baselineKpis : [];
-  if (!options?.website) {
-    analysis.current_state.narrative = 'Target website not supplied. Client-specific rankings, traffic, technical health, conversion performance and backlink baselines cannot be assessed in this run.';
-  }
+  if (!options?.website) analysis.current_state.narrative = 'Target website not supplied. Client-specific rankings, traffic, technical health, conversion performance and backlink baselines cannot be assessed in this run.';
   if (options?.clientName) analysis.client_name = options.clientName;
   if (options?.website) analysis.client_website = options.website;
-  analysis.case_studies = []; // No case-study evidence/permission interface is connected in this generator.
+  analysis.case_studies = [];
   if (!options?.productDescription) analysis.client_value_proposition = [];
-  if (!analysis.current_state) analysis.current_state = {};
-  analysis.current_state.kpi_dashboard = Array.isArray(options?.baselineKpis) ? options.baselineKpis : [];
 
-  // ── KEYWORDS PROCESSING ──
+  // KEYWORDS
   let keywords = Array.isArray(analysis.keywords) ? analysis.keywords : [];
   keywords = keywords.map((kw: any, i: number) => {
     const tier = safeString(kw.tier, i < 14 ? 'money' : i < 32 ? 'growth' : 'long-tail');
-    const keywordStr = safeString(kw.keyword, '');
     return {
-      keyword: keywordStr,
-      volume: null,
-      cpc: null,
-      kd: null,
+      keyword: safeString(kw.keyword, ''),
+      volume: null, cpc: null, kd: null,
       intent: resolveIntent(kw),
       tier,
       dataSource: 'unverified_ai_candidate',
     };
   }).filter((kw: any) => kw.keyword);
 
-  if (dataForSEOAvailable && keywords.length > 0) {
+  if (isDataForSEOAvailable() && keywords.length > 0) {
     try {
       const realMetrics = await fetchRealKeywordMetrics(keywords.map((k: any) => k.keyword), country);
       if (realMetrics.length > 0) {
@@ -1315,30 +837,20 @@ export async function generateSEOReport(
         });
       }
     } catch (e: any) {
-      console.warn(`⚠️ [Hybrid] DataForSEO override failed: ${e.message}`);
+      console.warn(`⚠️ [DataForSEO] override failed: ${e.message}`);
     }
   }
 
   keywords = await mapWithConcurrency(keywords, 5, async (kw: any) => {
     try {
-      let cpcLocal: number;
       if (kw.dataSource === 'dataforseo' && kw.cpc !== null && kw.cpc !== undefined && safeNumber(kw.cpc, -1) >= 0) {
         const converted = await convertCurrency(kw.cpc, 'USD', (currencyInfo[country] || currencyInfo.us).code);
-        cpcLocal = (converted === null || isNaN(converted) || converted < 0) ? -1 : converted;
-      } else {
-        cpcLocal = kw.cpc;
+        kw.cpc = (converted === null || isNaN(converted) || converted < 0) ? kw.cpc : Number(Number(converted).toFixed(2));
       }
-      kw.cpc = cpcLocal !== null && cpcLocal !== undefined && Number.isFinite(Number(cpcLocal)) && Number(cpcLocal) >= 0
-        ? Number(Number(cpcLocal).toFixed(2))
-        : null;
-    } catch {
-      // Preserve the existing currency value; never apply a second conversion.
-      kw.cpc = null;
-    }
+    } catch { /* preserve original */ }
     return kw;
   });
 
-  // Every metric field carries its own provenance/status; null is never silently imputed.
   keywords = keywords.map((kw: any) => {
     const verified = kw.dataSource === 'dataforseo';
     const metricStatus = (value: any, label: string) => value !== null && value !== undefined
@@ -1355,16 +867,15 @@ export async function generateSEOReport(
     };
   });
 
-  // ── VALIDATE + FILL ──
+  // VALIDATE + FILL + RECONCILE
   analysis = validateAndFillSections(analysis, niche, country, keywords, trendData, serpResults);
-
-  // ✅ CRITICAL: TRUTH RECONCILIATION (must be after all fills)
   analysis = reconcileAll(analysis, keywords, country);
+
   if (!analysis.current_state) analysis.current_state = {};
   analysis.current_state.kpi_dashboard = Array.isArray(options?.baselineKpis) ? options.baselineKpis : [];
   const sourcePullDate = new Date().toISOString().slice(0, 10);
   const actualSources: any[] = [];
-  if (keywords.some((k: any) => k.dataSource === 'dataforseo' && (safeNumber(k.volume, 0) > 0 || safeNumber(k.cpc, 0) > 0 || (k.kd !== null && k.kd !== undefined && Number.isFinite(Number(k.kd)))))) actualSources.push({ data_type: 'Keyword metrics', source: 'DataForSEO', pull_date: sourcePullDate });
+  if (keywords.some((k: any) => k.dataSource === 'dataforseo' && (safeNumber(k.volume, 0) > 0 || safeNumber(k.cpc, 0) > 0 || (k.kd !== null && k.kd !== undefined)))) actualSources.push({ data_type: 'Keyword metrics', source: 'DataForSEO', pull_date: sourcePullDate });
   if (trendSource === 'dataforseo') actualSources.push({ data_type: 'Search trends', source: 'DataForSEO Trends', pull_date: sourcePullDate });
   else if (trendSource === 'google_trends') actualSources.push({ data_type: 'Search trends', source: 'Google Trends', pull_date: sourcePullDate });
   else actualSources.push({ data_type: 'Search trends', source: 'No provider data returned; no trend values generated', pull_date: sourcePullDate });
@@ -1374,27 +885,33 @@ export async function generateSEOReport(
   dedupeCaseStudyTitles(safeArray(analysis.case_studies));
   cleanInsightPrefixes(analysis);
 
-  // Country-specific data overrides (after reconcile so they aren't overwritten)
+  // Country overrides
   const preloadedCalendar = getCalendarForCountry(country);
   const preloadedEditors = getEditorsForCountry(country);
   if (!analysis.ground_intel) analysis.ground_intel = {};
-  analysis.ground_intel.cultural_calendar_status = preloadedCalendar.length ? 'Country calendar dataset loaded from project data module' : 'No country calendar entries configured in project data module';
-  analysis.ground_intel.editor_intelligence_status = preloadedEditors.length ? 'Country editor dataset loaded from project data module; authority scores are not inferred' : 'No editor entries configured in project data module';
   analysis.ground_intel.cultural_calendar = preloadedCalendar.map((c: any) => ({
     period: c.period,
     behavior: String(c.behavior || '').replace(/mid-Q1 review/gi, 'Q1 close / Q2 start').replace(/mid-Q4/gi, 'Q3 close / Q4 start'),
     content_priority: c.contentPriority,
   }));
-  analysis.ground_intel.editor_intelligence = preloadedEditors.map((e: any) => ({
-    publication: e.site, da: null, what_works: e.whatWorks,
-  }));
+  analysis.ground_intel.editor_intelligence = preloadedEditors.map((e: any) => ({ publication: e.site, da: null, what_works: e.whatWorks }));
+  analysis.ground_intel.cultural_calendar_status = preloadedCalendar.length ? 'Country calendar loaded from project data module' : 'No country calendar configured';
+  analysis.ground_intel.editor_intelligence_status = preloadedEditors.length ? 'Country editor dataset loaded; authority scores not inferred' : 'No editor entries configured';
 
+  // BUILD MARKDOWN
   const today = new Date().toLocaleDateString((currencyInfo[country] || currencyInfo.us).locale, { year: 'numeric', month: 'long', day: 'numeric' });
   const reference = `MKT-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
   const currency = currencyInfo[country] || currencyInfo.us;
-  const economics = getEconomics(country, analysis);
 
-  analysis.serp_landscape = serpResults.slice(0, 10).map((r: any, i: number) => ({ position: i + 1, title: r.title || 'Untitled', link: r.link || null, da: null, words: null, backlinks: null, traffic: null, authority_status: 'Not measured: no authority provider export', content_status: 'Word count not measured: page crawler not connected', backlink_status: 'Not measured: no backlink provider export', traffic_status: 'Not measured: no analytics/provider traffic export' }));
+  analysis.serp_landscape = serpResults.slice(0, 10).map((r: any, i: number) => ({
+    position: i + 1, title: r.title || 'Untitled', link: r.link || null,
+    da: null, words: null, backlinks: null, traffic: null,
+    authority_status: 'Not measured: no authority provider export',
+    content_status: 'Word count not measured: page crawler not connected',
+    backlink_status: 'Not measured: no backlink provider export',
+    traffic_status: 'Not measured: no analytics/provider traffic export',
+  }));
+
   const execSum = analysis.executive_summary || {};
   const currentState = analysis.current_state || {};
   const groundIntel = analysis.ground_intel || {};
@@ -1408,26 +925,13 @@ export async function generateSEOReport(
   const unitEconomics = analysis.unit_economics || {};
   const breakEven = analysis.break_even_analysis || {};
   const sensitivity = analysis.sensitivity_analysis || {};
-  const caseStudies = safeArray(analysis.case_studies);
   const dataLimitations = safeArray(analysis.data_limitations);
-
-  let serp = Array.isArray(analysis.serp_landscape) ? analysis.serp_landscape.filter((s: any) => s.title && s.link).slice(0, 8) : [];
-  if (serp.length === 0 && serpResults.length > 0) {
-    serp = serpResults.slice(0, 8).map((r: any, i: number) => ({
-      position: i + 1, title: r.title || 'Untitled', link: r.link || '#',
-      da: null, words: null, backlinks: null, traffic: null,
-      strengths: null, weaknesses: null, gap: null,
-    }));
-  }
 
   const languageSplitHeading = isMultilingual[country] ? '3.2  🌍 LANGUAGE SPLIT INTELLIGENCE' : '3.2  🌍 REGIONAL SEARCH VARIATIONS';
   const languageSplitIntro = isMultilingual[country]
     ? 'This section analyzes bilingual (English + local language) search dynamics.'
     : `This section analyzes regional search variations across ${countryNames[country]}.`;
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // BUILD MARKDOWN
-  // ═══════════════════════════════════════════════════════════════════════════
   let markdown = `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Nexlor
 Real-Time Market Research | Intelligence Division
@@ -1449,7 +953,7 @@ HEADLINE:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 📋 REPORT STANDARDS
-Only source-backed metrics are presented as measured. Modeled estimates are labeled.
+Only source-backed metrics are presented as measured. Pattern-Based estimates are labeled.
 Missing client, analytics, competitor-provider or commercial inputs are shown as
 "Not supplied" / "Not verified" and are not converted into performance claims.
 
@@ -1493,15 +997,9 @@ TOP 3 FINDINGS (Ranked by Business Impact)
 📡 DATA SOURCES & PULL DATES
 
 `;
-  markdown += formatTable(
-    ['Data Type', 'Source', 'Pull Date'],
-    safeArray(currentState.data_sources).map((d: any) => [safeString(d.data_type), safeString(d.source), safeString(d.pull_date)])
-  );
+  markdown += formatTable(['Data Type', 'Source', 'Pull Date'], safeArray(currentState.data_sources).map((d: any) => [safeString(d.data_type), safeString(d.source), safeString(d.pull_date)]));
   markdown += `\n📊 CORE KPI DASHBOARD\n\n`;
-  markdown += formatTable(
-    ['Metric', 'Current', 'Previous', 'Change', 'Target'],
-    safeArray(currentState.kpi_dashboard).map((k: any) => [safeString(k.metric), safeString(k.current), safeString(k.previous), safeString(k.change), safeString(k.target)])
-  );
+  markdown += formatTable(['Metric', 'Current', 'Previous', 'Change', 'Target'], safeArray(currentState.kpi_dashboard).map((k: any) => [safeString(k.metric), safeString(k.current), safeString(k.previous), safeString(k.change), safeString(k.target)]));
   markdown += `\n📝 NARRATIVE\n"${safeString(currentState.narrative)}"\n\n`;
 
   markdown += `2.5 KEYWORD PORTFOLIO — 50 TIERED KEYWORDS
@@ -1529,7 +1027,7 @@ TOP 3 FINDINGS (Ranked by Business Impact)
     markdown += `TIER 1 — MONEY KEYWORDS (Highest Commercial Intent)\n\n`;
     markdown += formatTable(
       ['#', 'Keyword', 'Volume', 'KD', `CPC (${currency.symbol.trim()})`, 'Intent'],
-      moneyKw.map((k: any, i: number) => [String(i + 1), safeString(k.keyword), String(k.volume), String(k.kd), (k.cpc === null || k.cpc === undefined ? 'No provider metric' : formatCurrency(Number(k.cpc), country)), safeString(k.intent)])
+      moneyKw.map((k: any, i: number) => [String(i + 1), safeString(k.keyword), k.volume === null ? 'No provider metric' : String(k.volume), k.kd === null ? 'No provider metric' : String(k.kd), formatCpcSafe(k.cpc, country), safeString(k.intent)])
     );
     markdown += `\n`;
   }
@@ -1537,7 +1035,7 @@ TOP 3 FINDINGS (Ranked by Business Impact)
     markdown += `TIER 2 — GROWTH KEYWORDS (Strategic Value)\n\n`;
     markdown += formatTable(
       ['#', 'Keyword', 'Volume', 'KD', `CPC (${currency.symbol.trim()})`, 'Intent'],
-      growthKw.map((k: any, i: number) => [String(i + 15), safeString(k.keyword), String(k.volume), String(k.kd), (k.cpc === null || k.cpc === undefined ? 'No provider metric' : formatCurrency(Number(k.cpc), country)), safeString(k.intent)])
+      growthKw.map((k: any, i: number) => [String(i + 15), safeString(k.keyword), k.volume === null ? 'No provider metric' : String(k.volume), k.kd === null ? 'No provider metric' : String(k.kd), formatCpcSafe(k.cpc, country), safeString(k.intent)])
     );
     markdown += `\n`;
   }
@@ -1545,7 +1043,7 @@ TOP 3 FINDINGS (Ranked by Business Impact)
     markdown += `TIER 3 — LONG-TAIL KEYWORDS (Quick Wins)\n\n`;
     markdown += formatTable(
       ['#', 'Keyword', 'Volume', 'KD', `CPC (${currency.symbol.trim()})`, 'Intent'],
-      longTailKw.map((k: any, i: number) => [String(i + 33), safeString(k.keyword), String(k.volume), String(k.kd), (k.cpc === null || k.cpc === undefined ? 'No provider metric' : formatCurrency(Number(k.cpc), country)), safeString(k.intent)])
+      longTailKw.map((k: any, i: number) => [String(i + 33), safeString(k.keyword), k.volume === null ? 'No provider metric' : String(k.volume), k.kd === null ? 'No provider metric' : String(k.kd), formatCpcSafe(k.cpc, country), safeString(k.intent)])
     );
     markdown += `\n`;
   }
@@ -1568,28 +1066,21 @@ editor relationships.
   });
 
   markdown += `──────────────────────────────────────────────────────────────\n${languageSplitHeading}\n──────────────────────────────────────────────────────────────\n\n`;
-  markdown += `${languageSplitIntro}\n\n`;
-  markdown += `${safeString(groundIntel.language_split?.summary)}\n\n`;
+  markdown += `${languageSplitIntro}\n\n${safeString(groundIntel.language_split?.summary)}\n\n`;
   markdown += `Top ${isMultilingual[country] ? 'local-language' : 'regional'} keywords with commercial intent:\n\n`;
   markdown += formatTable(
-    ['Keyword', 'Volume', 'KD', `CPC (${currency.symbol.trim()})`],
-    safeArray(groundIntel.language_split?.top_keywords).map((k: any) => [safeString(k.keyword), k.volume === null || k.volume === undefined ? 'No provider metric' : String(k.volume), k.kd === null || k.kd === undefined ? 'No provider metric' : String(k.kd), k.cpc === null || k.cpc === undefined ? 'No provider metric' : formatCurrency(Number(k.cpc), country)])
+    ['Keyword', 'Volume', 'KD', `CPC (${currency.symbol.trim()})`, 'Scope'],
+    safeArray(groundIntel.language_split?.top_keywords).map((k: any) => [safeString(k.keyword), k.volume === null ? 'No provider metric' : String(k.volume), k.kd === null ? 'No provider metric' : String(k.kd), formatCpcSafe(k.cpc, country), safeString(k.scope, 'regional-intent candidate')])
   );
 
   markdown += `\n──────────────────────────────────────────────────────────────\n3.3  🧠 LOCAL BUYER BEHAVIOR PATTERNS\n──────────────────────────────────────────────────────────────\n\n`;
   safeArray(groundIntel.buyer_behavior).forEach((b: string) => markdown += `  • ${b}\n`);
 
   markdown += `\n──────────────────────────────────────────────────────────────\n3.4  📰 LOCAL EDITOR & PUBLICATION INTELLIGENCE\n──────────────────────────────────────────────────────────────\n\n`;
-  markdown += formatTable(
-    ['Publication', 'DA', 'What Actually Works'],
-    safeArray(groundIntel.editor_intelligence).map((e: any) => [safeString(e.publication), safeString(e.da, 'Not measured'), safeString(e.what_works)])
-  );
+  markdown += formatTable(['Publication', 'DA', 'What Actually Works'], safeArray(groundIntel.editor_intelligence).map((e: any) => [safeString(e.publication), safeString(e.da, 'Not measured'), safeString(e.what_works)]));
 
   markdown += `\n──────────────────────────────────────────────────────────────\n3.5  ⚔️ COMPETITOR LOCAL WEAKNESS MAP\n──────────────────────────────────────────────────────────────\n\n`;
-  markdown += formatTable(
-    ['Competitor', 'Local Weakness (verified)'],
-    safeArray(groundIntel.competitor_weaknesses).map((c: any) => [safeString(c.competitor), safeString(c.weakness)])
-  );
+  markdown += formatTable(['Competitor', 'Local Weakness (verified)'], safeArray(groundIntel.competitor_weaknesses).map((c: any) => [safeString(c.competitor), safeString(c.weakness)]));
   markdown += `\n`;
 
   markdown += `4. STRATEGIC OPPORTUNITY — UNTAPPED KEYWORD CLUSTER
@@ -1603,31 +1094,38 @@ We searched for keyword clusters meeting ALL four criteria:
   4. Currently untargeted by your competitors
 
 ──────────────────────────────────────────────────────────────
-${safeString(magicGoldmine.cluster_name)}
+${safeString(magicGoldmine.cluster_name, 'Cluster analysis pending verified keyword data')}
 ──────────────────────────────────────────────────────────────
 
-✅ CRITERIA MET:
 `;
-  safeArray(magicGoldmine.criteria_met).forEach((c: string) => markdown += `  ✅ ${c}\n`);
+  safeArray(magicGoldmine.criteria_met).forEach((c: string) => markdown += `✅ ${c}\n`);
   markdown += `\n🔍 WHY THIS CLUSTER IS INVISIBLE:\n`;
-  safeArray(magicGoldmine.why_invisible).forEach((w: string) => markdown += `  → ${w}\n`);
+  safeArray(magicGoldmine.why_invisible).forEach((w: string) => markdown += `→ ${w}\n`);
 
   markdown += `\n💎 TOP 5 HIGHEST-VALUE KEYWORDS\n\n`;
   markdown += formatTable(
-    ['#', 'Keyword', 'Volume', 'KD', `CPC (${currency.symbol.trim()})`, 'Intent'],
-    safeArray(magicGoldmine.top_keywords).map((k: any, i: number) => [String(i + 1), safeString(k.keyword), k.volume === null || k.volume === undefined ? 'No provider metric' : String(k.volume), k.kd === null || k.kd === undefined ? 'No provider metric' : String(k.kd), k.cpc === null || k.cpc === undefined ? 'No provider metric' : formatCurrency(Number(k.cpc), country), safeString(k.intent)])
+    ['#', 'Keyword', 'Volume', 'KD', `CPC (${currency.symbol.trim()})`, 'Intent', 'Status'],
+    safeArray(magicGoldmine.top_keywords).map((k: any, i: number) => [
+      String(i + 1),
+      safeString(k.keyword),
+      k.volume === null || k.volume === undefined ? 'No provider metric' : String(k.volume),
+      k.kd === null || k.kd === undefined ? 'No provider metric' : String(k.kd),
+      formatCpcSafe(k.cpc, country),
+      safeString(k.intent),
+      safeString(k.status, 'unverified'),
+    ])
   );
 
   markdown += `\n💰 REVENUE PROJECTION\n\n`;
-  const rp = magicGoldmine.revenue_projection || {};
-  markdown += `  → Monthly traffic:        ${safeString(rp.monthly_traffic, 'Not forecast: verified search volume and click-capture rate required')}\n`;
-  markdown += `  → Conversion rate:        ${safeString(rp.conversion_rate)}\n`;
-  markdown += `  → Monthly leads:          ${safeString(rp.monthly_leads, 'Not forecast: conversion and click-capture inputs required')}\n`;
-  markdown += `  → Avg. deal value:        ${safeString(rp.avg_deal_value)}\n`;
-  markdown += `  → Monthly pipeline:       ${safeString(rp.monthly_pipeline)}\n`;
-  if (rp.formula) markdown += `  → Formula:                ${safeString(rp.formula)}\n`;
-  markdown += `\n✅ EVIDENCE\n`;
-  safeArray(magicGoldmine.evidence).forEach((e: string) => markdown += `  ✅ ${e}\n`);
+  markdown += `→ Monthly traffic: ${safeString(magicGoldmine.revenue_projection?.monthly_traffic)}\n`;
+  markdown += `→ Conversion rate: ${safeString(magicGoldmine.revenue_projection?.conversion_rate)}\n`;
+  markdown += `→ Monthly leads: ${safeString(magicGoldmine.revenue_projection?.monthly_leads)}\n`;
+  markdown += `→ Avg. deal value: ${safeString(magicGoldmine.revenue_projection?.avg_deal_value)}\n`;
+  markdown += `→ Monthly pipeline: ${safeString(magicGoldmine.revenue_projection?.monthly_pipeline)}\n`;
+  markdown += `→ Formula: ${safeString(magicGoldmine.revenue_projection?.formula)}\n\n`;
+
+  markdown += `✅ EVIDENCE\n`;
+  safeArray(magicGoldmine.evidence).forEach((e: string) => markdown += `✅ ${e}\n`);
   markdown += `\n`;
 
   markdown += `5. COMPETITIVE EDGE — FORENSIC COMPETITOR ANALYSIS
@@ -1637,7 +1135,7 @@ ${safeString(magicGoldmine.cluster_name)}
 Competitor analysis is limited to the public SERP evidence and provider fields returned in this report.
 
 ──────────────────────────────────────────────────────────────
-TARGET: ${safeString(magicPlaybook.target_competitor?.name, 'Not identified: product-level competitor validation required').toUpperCase()}
+TARGET: ${safeString(magicPlaybook.target_competitor?.name, 'Not identified')}
 Domain Rating: ${safeString(magicPlaybook.target_competitor?.da, 'Not measured')} | Monthly Organic Traffic: ${safeString(magicPlaybook.target_competitor?.traffic, 'Not measured')}
 ──────────────────────────────────────────────────────────────
 
@@ -1645,51 +1143,50 @@ Domain Rating: ${safeString(magicPlaybook.target_competitor?.da, 'Not measured')
 
 `;
   safeArray(magicPlaybook.timeline).forEach((t: any) => {
-    markdown += `  ${safeString(t.date)}  →  ${safeString(t.action)}\n                Impact: ${safeString(t.impact)}\n\n`;
+    markdown += `${safeString(t.date)} →  ${safeString(t.action)}\n   Impact: ${safeString(t.impact)}\n\n`;
   });
 
-  markdown += `🔍 THEIR CONTENT FORMULA (CRACKED)\n\n`;
-  safeArray(magicPlaybook.content_formula).forEach((c: string) => markdown += `  • ${c}\n`);
+  markdown += `🔍 THEIR CONTENT FORMULA (CRACKED)\n`;
+  safeArray(magicPlaybook.content_formula).forEach((c: string) => markdown += `• ${c}\n`);
+  markdown += `\n🎯 THEIR BACKLINK STRATEGY (MAPPED)\n`;
+  markdown += `Total backlinks: ${safeString(magicPlaybook.backlink_strategy?.total_backlinks)}\n`;
+  markdown += `Local percentage: ${safeString(magicPlaybook.backlink_strategy?.local_percentage)}\n`;
+  markdown += `Top 3 source domains: ${safeArray(magicPlaybook.backlink_strategy?.top_sources).length ? '' : 'Not verified'}\n\n`;
+  safeArray(magicPlaybook.backlink_strategy?.top_sources).forEach((s: any) => markdown += `  • ${safeString(s)}\n`);
 
-  markdown += `\n🎯 THEIR BACKLINK STRATEGY (MAPPED)\n\n`;
-  const bs = magicPlaybook.backlink_strategy || {};
-  markdown += `  Total backlinks:      ${safeString(bs.total_backlinks, 'Not measured: backlink provider export required')}\n  Local percentage:     ${safeString(bs.local_percentage, 'Not measured: referring-domain classification required')}\n  Top 3 source domains:\n`;
-  safeArray(bs.top_sources).forEach((s: any, i: number) => {
-    markdown += `    ${i + 1}. ${safeString(s.domain)} — ${s.links === null || s.links === undefined ? 'Not measured' : s.links} links\n`;
-  });
+  markdown += `\n⚠️ THEIR VULNERABILITIES (WHAT THEY'RE NOT DOING)\n`;
+  safeArray(magicPlaybook.vulnerabilities).forEach((v: string) => markdown += `• ${v}\n`);
 
-  markdown += `\n⚠️ THEIR VULNERABILITIES (WHAT THEY'RE NOT DOING)\n\n`;
-  safeArray(magicPlaybook.vulnerabilities).forEach((v: string) => markdown += `  • ${v}\n`);
-
-  markdown += `\n🎯 YOUR 60-DAY COUNTER-PLAY\n\n`;
-  safeArray(magicPlaybook.counter_play).forEach((c: any) => {
-    markdown += `  ${safeString(c.week)}  →  ${safeString(c.action)}\n`;
-  });
+  markdown += `\n🎯 YOUR 60-DAY COUNTER-PLAY\n`;
+  safeArray(magicPlaybook.counter_play).forEach((c: any) => markdown += `${safeString(c.week)} →  ${safeString(c.action)}\n`);
 
   markdown += `\n✅ EVIDENCE\n`;
-  safeArray(magicPlaybook.evidence).forEach((e: string) => markdown += `  ✅ ${e}\n`);
+  safeArray(magicPlaybook.evidence).forEach((e: string) => markdown += `✅ ${e}\n`);
   markdown += `\n`;
 
   markdown += `6. KEY FINDINGS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 `;
-  keyFindings.forEach((f: any, idx: number) => {
+  keyFindings.forEach((f: any) => {
     markdown += `┌──────────────────────────────────────────────────────────────────┐\n`;
-    markdown += `│ FINDING #${f.rank || idx + 1} — ${safeString(f.priority, 'HIGH').toUpperCase()}\n`;
+    markdown += `│ FINDING #${f.rank} — ${safeString(f.priority)}\n`;
     markdown += `│ Title: ${safeString(f.title)}\n`;
     markdown += `├──────────────────────────────────────────────────────────────────┤\n`;
-    markdown += `│ Category:   ${safeString(f.category)}\n`;
-    markdown += `│ Impact:     ${safeString(f.impact)}   |   Effort: ${safeString(f.effort)}\n`;
-    markdown += `└──────────────────────────────────────────────────────────────────┘\n\n`;
-    markdown += `💡 What is happening:\n   ${safeString(f.what_is_happening)}\n\n`;
-    markdown += `⚠️ Why it matters:\n   ${safeString(f.why_it_matters)}\n\n`;
-    markdown += `💰 Size of prize:\n   ${safeString(f.size_of_prize)}\n`;
-    if (f.size_formula) markdown += `   Formula: ${safeString(f.size_formula)}\n`;
-    markdown += `\n✅ Evidence:\n`;
-    safeArray(f.evidence).forEach((e: string) => markdown += `   • ${e}\n`);
-    markdown += `\n🎯 Recommendation:\n   ${safeString(f.recommendation)}\n\n`;
-    markdown += `⏱️  Timeline: ${safeString(f.timeline)}\n👤 Owner: ${safeString(f.owner)}\n\n──────────────────────────────────────────────────────────────\n\n`;
+    markdown += `│ Category: ${safeString(f.category)}\n`;
+    markdown += `│ Impact: ${safeString(f.impact)} |  Effort: ${safeString(f.effort)}\n`;
+    markdown += `└──────────────────────────────────────────────────────────────────┘\n`;
+    markdown += `💡 What is happening: ${safeString(f.what_is_happening)}\n`;
+    markdown += `⚠️ Why it matters: ${safeString(f.why_it_matters)}\n`;
+    markdown += `💰 Size of prize: ${safeString(f.size_of_prize)}\n`;
+    markdown += `   Formula: ${safeString(f.size_formula)}\n`;
+    markdown += `✅ Evidence:\n`;
+    safeArray(f.evidence).forEach((e: string) => markdown += `  • ${e}\n`);
+    if (!safeArray(f.evidence).length) markdown += `  • No verified evidence supplied for this finding.\n`;
+    markdown += `🎯 Recommendation: ${safeString(f.recommendation)}\n`;
+    markdown += `⏱️ Timeline: ${safeString(f.timeline)}\n`;
+    markdown += `👤 Owner: ${safeString(f.owner)}\n`;
+    markdown += `──────────────────────────────────────────────────────────────\n`;
   });
 
   markdown += `7. COMPETITIVE LANDSCAPE & GAP ANALYSIS
@@ -1706,46 +1203,106 @@ Domain Rating: ${safeString(magicPlaybook.target_competitor?.da, 'Not measured')
   markdown += `\n📊 CONTENT GAP ANALYSIS\n\n`;
   markdown += formatTable(
     ['Topic', 'Volume', 'Leader', 'Your Position'],
-    safeArray(competitive.content_gap).map((c: any) => [safeString(c.topic), c.volume === null || c.volume === undefined ? 'No provider metric' : String(c.volume), safeString(c.leader), safeString(c.your_position)])
+    safeArray(competitive.content_gap).map((c: any) => [safeString(c.topic), c.volume === null ? 'No provider metric' : String(c.volume), safeString(c.leader), safeString(c.your_position)])
   );
 
   markdown += `\n🔗 BACKLINK GAP ANALYSIS\n\n`;
   markdown += formatTable(
     ['Domain', 'DA', 'Competitor Links', 'Your Links'],
-    safeArray(competitive.backlink_gap).map((b: any) => [safeString(b.domain), safeString(b.da), safeString(b.comp_a_links), safeString(b.your_links)])
+    safeArray(competitive.backlink_gap).map((b: any) => [safeString(b.domain), safeString(b.da), safeString(b.competitor_links), safeString(b.your_links)])
   );
 
   markdown += `\n🎯 PRIORITIZED GAP-CLOSING ROADMAP\n\n`;
-  safeArray(competitive.prioritized_roadmap).forEach((r: string, i: number) => markdown += `  ${i + 1}. ${r}\n`);
+  safeArray(competitive.prioritized_roadmap).forEach((r: string, i: number) => markdown += `${i + 1}. ${r}\n`);
   markdown += `\n`;
 
-  markdown += buildCompetitorTeardownMarkdown(competitorTeardown, currency);
+  markdown += `7.5 COMPETITOR TEARDOWN — DEEP-DIVE ANALYSIS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-  markdown += `8. 90-DAY ACTION ROADMAP
+🕵️ WHAT THIS SECTION IS
+A structured review of competitor evidence available from public SERP results and connected provider data.
+
+═══════════════════════════════════════════════════════════════════════
+A. FEATURE COMPARISON MATRIX (10 Dimensions)
+═══════════════════════════════════════════════════════════════════════
+
+`;
+  markdown += formatTable(
+    ['Dimension', 'You', 'Competitor 1', 'Competitor 2', 'Competitor 3', 'Gap'],
+    safeArray(competitorTeardown.feature_matrix).map((f: any) => [safeString(f.dimension), safeString(f.your_score), safeString(f.comp1), safeString(f.comp2), safeString(f.comp3), safeString(f.gap, '🟡 Medium')])
+  );
+
+  markdown += `\n═══════════════════════════════════════════════════════════════════════
+B. SWOT SCORING RUBRIC (12 Dimensions)
+═══════════════════════════════════════════════════════════════════════
+
+`;
+  markdown += formatTable(
+    ['Dimension', 'Score', 'Reasoning'],
+    safeArray(competitorTeardown.swot_scored).map((s: any) => [safeString(s.dimension), `${s.score}/10 ${s.score >= 7 ? '🟢' : s.score >= 5 ? '🟡' : '🔴'}`, safeString(s.reasoning)])
+  );
+
+  markdown += `\n═══════════════════════════════════════════════════════════════════════
+C. PRICING DECONSTRUCTION (Tier-by-Tier)
+═══════════════════════════════════════════════════════════════════════
+
+`;
+  markdown += formatTable(
+    ['Tier', 'Your Price', 'Competitor 1', 'Competitor 2', 'Competitor 3', 'Insight'],
+    safeArray(competitorTeardown.pricing_deconstruction).map((p: any) => [safeString(p.tier), safeString(p.your_price), safeString(p.comp1_price), safeString(p.comp2_price), safeString(p.comp3_price), safeString(p.insight)])
+  );
+
+  markdown += `\n═══════════════════════════════════════════════════════════════════════
+D. UX AUDIT
+═══════════════════════════════════════════════════════════════════════
+
+`;
+  const ux = competitorTeardown.ux_audit || {};
+  markdown += `**Design Score:**         ${ux.design_score === null || ux.design_score === undefined ? 'Not audited' : ux.design_score}/100 ${ux.design_score >= 70 ? '🟢' : '🟡'}\n`;
+  markdown += `**Performance Score:**    ${ux.performance_score === null || ux.performance_score === undefined ? 'Not audited' : ux.performance_score}/100 ${ux.performance_score >= 70 ? '🟢' : '🔴'}\n`;
+  markdown += `**Mobile Score:**         ${ux.mobile_score === null || ux.mobile_score === undefined ? 'Not audited' : ux.mobile_score}/100 ${ux.mobile_score >= 70 ? '🟢' : '🟡'}\n`;
+  markdown += `**Accessibility Score:**  ${ux.accessibility_score === null || ux.accessibility_score === undefined ? 'Not audited' : ux.accessibility_score}/100 ${ux.accessibility_score >= 70 ? '🟢' : '🟡'}\n\n`;
+  markdown += `💪 STRENGTHS:\n`;
+  safeArray(ux.strengths).forEach((s: string) => { markdown += `  • ${s}\n`; });
+  markdown += `\n⚠️ WEAKNESSES:\n`;
+  safeArray(ux.weaknesses).forEach((w: string) => { markdown += `  • ${w}\n`; });
+
+  markdown += `\n═══════════════════════════════════════════════════════════════════════
+E. CONTENT GAP ANALYSIS (Scored)
+═══════════════════════════════════════════════════════════════════════
+
+`;
+  markdown += formatTable(
+    ['Topic', 'Volume', 'Competitor Coverage', 'Your Coverage', 'Priority', 'Expected Traffic'],
+    safeArray(competitorTeardown.content_gap_scored).map((c: any) => [safeString(c.topic), c.volume === null ? 'No provider metric' : String(c.volume), safeString(c.competitor_coverage), safeString(c.your_coverage), c.priority === 'Critical' ? '🔴 Critical' : c.priority === 'High' ? '🟠 High' : '🟡 Medium', c.expected_traffic === null ? 'Not forecast' : `${c.expected_traffic}/mo`])
+  );
+
+  markdown += `\n═══════════════════════════════════════════════════════════════════════
+F. STRATEGIC ACTION PLAN (Stakeholder-Mapped)
+═══════════════════════════════════════════════════════════════════════
+
+`;
+  markdown += formatTable(
+    ['Action', 'Stakeholder', 'Timeline', 'Expected Impact'],
+    safeArray(competitorTeardown.action_plan).map((a: any) => [safeString(a.action), safeString(a.stakeholder), safeString(a.timeline), safeString(a.expected_impact)])
+  );
+
+  markdown += `\n8. 90-DAY ACTION ROADMAP
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 🟢 DAYS 1-30 — FOUNDATION & QUICK WINS
 
 `;
-  markdown += formatTable(
-    ['Action', 'Theme', 'Owner', 'Effort'],
-    safeArray(roadmap.days_1_30).map((a: any) => [safeString(a.action), safeString(a.theme), safeString(a.owner), safeString(a.effort)])
-  );
+  markdown += formatTable(['Action', 'Theme', 'Owner', 'Effort'], safeArray(roadmap.days_1_30).map((a: any) => [safeString(a.action), safeString(a.theme), safeString(a.owner), safeString(a.effort)]));
 
   markdown += `\n🟡 DAYS 31-60 — BUILD & EXPAND\n\n`;
-  markdown += formatTable(
-    ['Action', 'Theme', 'Owner', 'Effort'],
-    safeArray(roadmap.days_31_60).map((a: any) => [safeString(a.action), safeString(a.theme), safeString(a.owner), safeString(a.effort)])
-  );
+  markdown += formatTable(['Action', 'Theme', 'Owner', 'Effort'], safeArray(roadmap.days_31_60).map((a: any) => [safeString(a.action), safeString(a.theme), safeString(a.owner), safeString(a.effort)]));
 
   markdown += `\n🔵 DAYS 61-90 — SCALE & OPTIMIZE\n\n`;
-  markdown += formatTable(
-    ['Action', 'Theme', 'Owner', 'Effort'],
-    safeArray(roadmap.days_61_90).map((a: any) => [safeString(a.action), safeString(a.theme), safeString(a.owner), safeString(a.effort)])
-  );
+  markdown += formatTable(['Action', 'Theme', 'Owner', 'Effort'], safeArray(roadmap.days_61_90).map((a: any) => [safeString(a.action), safeString(a.theme), safeString(a.owner), safeString(a.effort)]));
 
   markdown += `\n⚠️ DEPENDENCIES & RISKS\n`;
-  safeArray(roadmap.dependencies).forEach((d: string) => markdown += `  • ${d}\n`);
+  safeArray(roadmap.dependencies).forEach((d: string) => markdown += `• ${d}\n`);
   markdown += `\n`;
 
   markdown += `9. FINANCIAL PROJECTION & ROI MODEL
@@ -1754,80 +1311,103 @@ Domain Rating: ${safeString(magicPlaybook.target_competitor?.da, 'Not measured')
 💵 INVESTMENT (6-MONTH)
 
 `;
-  markdown += formatTable(
-    ['Item', 'Cost'],
-    safeArray(financial.investment).map((i: any) => [safeString(i.item), safeString(i.cost)])
-  );
+  markdown += formatTable(['Item', 'Cost'], safeArray(financial.investment).map((i: any) => [safeString(i.item), safeString(i.cost)]));
 
   markdown += `\n📈 6-MONTH PROJECTION\n\n`;
-  markdown += formatTable(
-    ['Month', 'Sessions', 'Leads', 'Pipeline', 'Pipeline / Investment'],
-    safeArray(financial.monthly_projection).map((m: any) => [safeString(m.month), safeString(m.sessions), safeString(m.leads), safeString(m.pipeline), safeString(m.pipeline_to_investment_ratio)])
-  );
+  markdown += formatTable(['Month', 'Sessions', 'Leads', 'Pipeline', 'Pipeline / Investment'], safeArray(financial.monthly_projection).map((m: any) => [safeString(m.month), safeString(m.sessions), safeString(m.leads), safeString(m.pipeline), safeString(m.pipeline_to_investment)]));
 
   markdown += `\n💡 ${safeString(financial.roi_summary)}\n`;
-  if (financial.roi_formula) markdown += `   Formula: ${safeString(financial.roi_formula)}\n`;
-  markdown += `\n📐 ASSUMPTIONS & SOURCES\n`;
-  safeArray(financial.assumptions).forEach((a: any) => {
-    markdown += `  • ${safeString(a.assumption)}\n    └─ Source: ${safeString(a.source)}\n`;
-  });
-  markdown += `\n`;
+  markdown += `Formula: ${safeString(financial.roi_formula)}\n\n`;
 
-  markdown += buildUnitEconomicsMarkdown(unitEconomics, breakEven, sensitivity, currency);
+  markdown += `📐 ASSUMPTIONS & SOURCES\n\n`;
+  markdown += formatTable(['Assumption', 'Source'], safeArray(financial.assumptions).map((a: any) => [safeString(a.assumption), safeString(a.source)]));
 
-  markdown += `10. CASE STUDIES
+  markdown += `\n9.5 UNIT ECONOMICS\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+💰 KEY METRICS
+
+`;
+  markdown += `  • CAC (Customer Acquisition Cost):   ${safeString(unitEconomics.cac?.value)}\n`;
+  markdown += `    └─ ${safeString(unitEconomics.cac?.calculation)}\n`;
+  markdown += `    └─ Benchmark: ${safeString(unitEconomics.cac?.benchmark)}\n\n`;
+  markdown += `  • LTV (Lifetime Value):             ${safeString(unitEconomics.ltv?.value)}\n`;
+  markdown += `    └─ ${safeString(unitEconomics.ltv?.calculation)}\n`;
+  markdown += `    └─ Benchmark: ${safeString(unitEconomics.ltv?.benchmark)}\n\n`;
+  markdown += `  • LTV:CAC Ratio:                    ${safeString(unitEconomics.ltv_cac_ratio?.value)}\n`;
+  markdown += `    └─ Health: ${safeString(unitEconomics.ltv_cac_ratio?.health)}\n`;
+  markdown += `    └─ Benchmark: ${safeString(unitEconomics.ltv_cac_ratio?.benchmark)}\n\n`;
+  markdown += `  • Payback Period:                   ${safeString(unitEconomics.payback_period?.months)} months\n`;
+  markdown += `    └─ ${safeString(unitEconomics.payback_period?.calculation)}\n`;
+  markdown += `    └─ Benchmark: ${safeString(unitEconomics.payback_period?.benchmark)}\n\n`;
+
+  markdown += `📊 GROSS MARGIN PER TIER\n\n`;
+  markdown += formatTable(['Tier', 'Revenue', 'Cost', 'Margin', 'Note'], safeArray(unitEconomics.gross_margin_per_tier).map((g: any) => [safeString(g.tier), safeString(g.revenue), safeString(g.cost), safeString(g.margin), safeString(g.note)]));
+
+  markdown += `\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+9.6 BREAK-EVEN ANALYSIS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📈 BREAK-EVEN METRICS
+
+`;
+  markdown += `  • Fixed Costs (monthly):            ${safeString(breakEven.fixed_costs)}\n`;
+  markdown += `  • Revenue per Unit:                 ${safeString(breakEven.revenue_per_unit)}\n`;
+  markdown += `  • Variable Cost per Unit:           ${safeString(breakEven.variable_cost_per_unit)}\n`;
+  markdown += `  • Contribution Margin:              ${safeString(breakEven.contribution_margin)}\n\n`;
+  markdown += `  🎯 UNITS REQUIRED TO BREAK-EVEN:     ${safeString(breakEven.units_required)} customers\n`;
+  markdown += `  🎯 TRAFFIC REQUIRED:                  ${safeString(breakEven.traffic_required)} visitors\n`;
+  markdown += `  🎯 MONTHS TO BREAK-EVEN:             ${safeString(breakEven.months_to_breakeven)} months\n\n`;
+  if (breakEven.formula) markdown += `  Formula: ${safeString(breakEven.formula)}\n\n`;
+
+  markdown += `📊 SENSITIVITY ANALYSIS\n\n`;
+  markdown += formatTable(
+    ['Scenario', 'Traffic Growth', 'Pipeline', 'ROI', 'LTV:CAC', 'Break-even'],
+    [
+      ['🟢 Best Case', safeString(sensitivity.best_case?.traffic_growth), safeString(sensitivity.best_case?.pipeline), safeString(sensitivity.best_case?.roi), safeString(sensitivity.best_case?.ltv_cac), `${safeString(sensitivity.best_case?.breakeven_months)} mo`],
+      ['🟡 Expected', safeString(sensitivity.expected_case?.traffic_growth), safeString(sensitivity.expected_case?.pipeline), safeString(sensitivity.expected_case?.roi), safeString(sensitivity.expected_case?.ltv_cac), `${safeString(sensitivity.expected_case?.breakeven_months)} mo`],
+      ['🔴 Worst Case', safeString(sensitivity.worst_case?.traffic_growth), safeString(sensitivity.worst_case?.pipeline), safeString(sensitivity.worst_case?.roi), safeString(sensitivity.worst_case?.ltv_cac), `${safeString(sensitivity.worst_case?.breakeven_months)} mo`],
+    ]
+  );
+
+  markdown += `\n10. CASE STUDIES
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 `;
-  if (caseStudies.length === 0) {
-    markdown += 'No verified case-study source and publication permission were supplied; no client results are asserted.\n\n';
+  if (safeArray(analysis.case_studies).length === 0) {
+    markdown += `No verified case-study source and publication permission were supplied; no client results are asserted.\n`;
+  } else {
+    safeArray(analysis.case_studies).forEach((cs: any, i: number) => {
+      markdown += `CASE STUDY ${i + 1}: ${safeString(cs.title)}\n`;
+      markdown += `${safeString(cs.summary)}\n\n`;
+    });
   }
-  caseStudies.forEach((cs: any, idx: number) => {
-    markdown += `CASE STUDY ${String(idx + 1).padStart(2, '0')}: ${safeString(cs.title)}\n${safeString(cs.subtitle)}\n\n`;
-    const cp = cs.client_profile || {};
-    markdown += `📋 CLIENT PROFILE\n  Industry:        ${safeString(cp.industry)}\n  Location:        ${safeString(cp.location)}\n  Company Stage:   ${safeString(cp.company_stage)}\n  Team Size:       ${safeString(cp.team_size)}\n  Engagement:      ${safeString(cp.engagement)}\n  Services:        ${safeString(cp.services)}\n  Client Identity: ${safeString(cp.client_identity, 'Withheld under NDA')}\n\n`;
-    markdown += `⚠️ THE CHALLENGE\n${safeString(cs.challenge)}\n\n🎯 OUR APPROACH\n`;
-    safeArray(cs.approach).forEach((a: string) => markdown += `  ${a}\n`);
-    markdown += `\n📊 RESULTS AFTER 6 MONTHS\n\n`;
-    markdown += formatTable(
-      ['Metric', 'Baseline', 'After 6 Mo.', 'Change'],
-      safeArray(cs.results_table).map((r: any) => [safeString(r.metric), safeString(r.baseline), safeString(r.after), safeString(r.change)])
-    );
-    markdown += `\n💡 WHAT DROVE THE GROWTH\n`;
-    safeArray(cs.what_drove_growth).forEach((w: string) => markdown += `  • ${w}\n`);
-    markdown += `\n✅ EVIDENCE & VERIFICATION\n`;
-    safeArray(cs.evidence).forEach((e: string) => markdown += `  • ${e}\n`);
-    markdown += `\n📌 ATTRIBUTION NOTE\n  ${safeString(cs.attribution_note)}\n\n⚠️ IMPORTANT DISCLOSURE\n  ${safeString(cs.disclosure)}\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
-  });
 
-  markdown += `APPENDIX A — EVIDENCE, METHODOLOGY & DATA SOURCES
+  markdown += `\nAPPENDIX A — EVIDENCE, METHODOLOGY & DATA SOURCES
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 📖 METHODOLOGY
 ${safeString(analysis.methodology_note)}
 
+📚 LIVE SERP EVIDENCE
+
 `;
-  if (serpResults.length > 0) {
-    markdown += `📚 LIVE SERP EVIDENCE\n\n`;
-    markdown += formatTable(
-      ['#', 'Title', 'URL'],
-      serpResults.slice(0, 10).map((r: any, i: number) => [String(i + 1), safeString(r.title), safeString(r.link)])
-    );
-    markdown += `\n`;
-  }
+  markdown += formatTable(['#', 'Title', 'URL'], serpResults.slice(0, 10).map((r: any, i: number) => [String(i + 1), safeString(r.title), safeString(r.link)]));
 
-  markdown += `⚠️ DATA LIMITATIONS\n`;
-  dataLimitations.forEach((d: string, i: number) => markdown += `  ${i + 1}. ${d}\n`);
+  markdown += `\n⚠️ DATA LIMITATIONS\n`;
+  dataLimitations.forEach((d: string, i: number) => markdown += `${i + 1}. ${d}\n`);
 
-  const hasDataForSEO = keywords.some((k: any) => k.dataSource === 'dataforseo' && (safeNumber(k.volume, 0) > 0 || safeNumber(k.cpc, 0) > 0 || (k.kd !== null && k.kd !== undefined && Number.isFinite(Number(k.kd)))));
-  const keywordDataSource = hasDataForSEO ? 'DataForSEO metrics returned (check per-keyword coverage)' : 'No verified keyword metrics returned; candidate phrases only';
-  const trendSourceLabel = trendSource === 'dataforseo' ? 'DataForSEO Trends (provider-returned)' : trendSource === 'google_trends' ? 'Google Trends (provider-returned)' : 'No provider trend series returned';
+  markdown += `\n📡 DATA SOURCE DISCLOSURE\n`;
+  markdown += `• Keyword Data: ${keywords.some((k: any) => k.dataSource === 'dataforseo') ? 'DataForSEO-verified where returned; unverified candidates labeled' : 'No verified keyword metrics returned; candidate phrases only'}\n`;
+  markdown += `• SERP Data: ${serpProvider}\n`;
+  markdown += `• Trend Data: ${trendSource === 'none' ? 'No provider trend series returned' : trendSource}\n`;
+  markdown += `• Currency: ${currency.code} (${currency.symbol.trim()})\n`;
+  markdown += `• Strategic Synthesis: Nexlor Senior Research Division\n`;
 
-  markdown += `\n📡 DATA SOURCE DISCLOSURE\n  • Keyword Data:  ${keywordDataSource}\n  • SERP Data:     ${serpProvider}\n  • Trend Data:    ${trendSourceLabel}\n  • Currency:      Currency amounts formatted in the target market locale; CPC conversion is attempted through the exchange integration\n  • Strategic Synthesis: Nexlor Senior Research Division\n\n`;
-
-  markdown += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  markdown += `\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ⚠️ DISCLAIMER
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 This report is for informational purposes only and does not constitute
 legal, tax, or financial advice. Please consult qualified professionals
 before making business decisions.
@@ -1837,29 +1417,16 @@ Generated by Nexlor Senior Research Division.
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 `;
 
-  markdown = cleanMarkdown(markdown, country);
-
-  const trafficEstimate = null;
-  const trafficEstimateBasis = 'Not forecast — requires Search Console baseline and a documented forecasting model';
-
   const result = {
-    niche, country, type: 'seo',
-    data: analysis,
-    keywords: keywords.slice(0, 50),
-    serp_landscape: serp,
-    markdown,
-    trend_summary: safeString(analysis.trend_assessment, 'No provider-backed trend series returned; seasonality not inferred.'),
-    dataSource: hasDataForSEO ? 'dataforseo' : 'unverified',
-    dataQuality: { keywordMetrics: hasDataForSEO ? 'DataForSEO returned one or more fields; each keyword field retains its provider source and nulls are not imputed' : 'No verified keyword metrics returned; candidate phrases only', competitorMetrics: 'SERP competitors are identified from live result pages; authority, traffic and backlink metrics require a dedicated provider export', financialModel: 'Calculated only from client-supplied business_inputs; unsupported outputs are explicitly withheld', caseStudies: 'No case studies included because no verified case-study source and publication permission were supplied' },
-    trendSource,
-    chart_data: {
-      trend_12m: trendData.slice(0, 12).map((v: number, i: number) => ({ observation: i + 1, value: v, source: trendSource })),
-      traffic_forecast_6m: [],
-      market_share: [],
+    markdown: cleanMarkdown(markdown),
+    metadata: {
+      niche, country, reference, date: today,
+      generatedAt: new Date().toISOString(),
+      version: 'v13',
+      options: { clientName: options?.clientName, website: options?.website },
     },
-    traffic_estimate: trafficEstimate,
-    traffic_estimate_basis: trafficEstimateBasis,
   };
-  cacheService.set(cacheKey, result, 86400);
+
+  cacheService.set(cacheKey, result);
   return result;
 }
