@@ -1,24 +1,21 @@
 // seo.report.generator.ts
 // ═══════════════════════════════════════════════════════════════════════════
-// v13 — EVIDENCE-GATED + KEYWORD FALLBACK EDITION (12 COUNTRIES)
+// v14 — SERPAPI + GEMINI ONLY (NO DATAFORSEO) — 12 COUNTRIES
 // ═══════════════════════════════════════════════════════════════════════════
-// CHANGES FROM v12:
-//   (20) magic_goldmine.top_keywords never empty if money keywords exist
-//   (21) Regional/language table never empty (monolingual fallback)
-//   (22) CPC never silently nulled; safe format with "No provider metric"
-//   (23) Health score status text improved with explicit reasons
-//   (24) Keyword metric status carries provenance per field
-//   (25) 12-country currency locale safety (try/catch fallback)
+// - Removed all DataForSEO imports/calls.
+// - Keyword metrics come from SerpAPI related_searches + AI candidate list.
+// - Metrics that SerpAPI cannot verify are labeled "unverified" (never faked).
+// - Gemini replaces Groq for AI analysis.
+// - All v13 fallback fixes retained (top_keywords never empty, regional table).
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { cacheService } from './cache';
 import { getGoogleTrends } from './trends';
-import { getSearchResults } from './serpapi';
-import { getSerperResults } from './serper';
-import { getScraperAPISearch } from './scraperapi';
+import { getSearchResults } from './serpapi';          // SerpAPI (organic + related_searches)
+import { getSerperResults } from './serper';           // fallback only
+import { getScraperAPISearch } from './scraperapi';    // fallback only
 import { convertCurrency } from './exchange';
-import { runGroqWithRetry } from './groq';
-import { isDataForSEOAvailable, fetchRealKeywordMetrics, fetchRealTrends, RealKeywordMetric } from './dataforseo.service';
+import { runGeminiWithRetry } from './gemini';         // ✅ Gemini replaces Groq
 
 import { getCalendarForCountry } from '../data/country-calendars';
 import { getEditorsForCountry } from '../data/country-editors';
@@ -108,14 +105,6 @@ const formatCpcSafe = (cpc: any, country: string): string => {
   return formatCurrency(num, country);
 };
 
-const extractNumber = (val: any): number => {
-  if (typeof val === 'number') return val;
-  if (!val) return 0;
-  const cleaned = String(val).replace(/[٠-٩]/g, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d))).replace(/[^0-9.]/g, '');
-  const num = parseFloat(cleaned);
-  return isNaN(num) ? 0 : num;
-};
-
 const cleanMarkdown = (markdown: string): string => {
   return markdown
     .replace(/[٠-٩]/g, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d)))
@@ -129,35 +118,22 @@ const cleanMarkdown = (markdown: string): string => {
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
-// v13: KEYWORD FALLBACK BUILDERS
+// v14: KEYWORD FALLBACK BUILDERS
 // ═══════════════════════════════════════════════════════════════════════════
 
 const buildTopGoldmineKeywords = (keywords: any[]): any[] => {
   const moneyKeywords = keywords.filter((k: any) => k.tier === 'money');
   if (moneyKeywords.length === 0) return [];
-  const verified = moneyKeywords.filter(
-    (k: any) => k.dataSource === 'dataforseo' && safeNumber(k.volume, 0) > 0 && safeNumber(k.cpc, 0) > 0
-  );
-  if (verified.length > 0) {
-    return [...verified]
-      .sort((a, b) => safeNumber(b.cpc, 0) - safeNumber(a.cpc, 0))
-      .slice(0, 5)
-      .map((k: any) => ({
-        keyword: k.keyword,
-        volume: k.volume,
-        kd: k.kd,
-        cpc: k.cpc,
-        intent: k.intent,
-        status: 'verified (DataForSEO)',
-      }));
-  }
+  // SerpAPI cannot verify volume/CPC — mark as SERP-observed if seen, else unverified.
   return moneyKeywords.slice(0, 5).map((k: any) => ({
     keyword: k.keyword,
     volume: null,
     kd: null,
     cpc: null,
     intent: k.intent,
-    status: 'Metrics unverified — DataForSEO returned no volume/CPC/KD. Keyword retained as intent candidate.',
+    status: k.serpPresence
+      ? 'SERP-observed candidate — no volume/CPC/KD provider connected'
+      : 'Metrics unverified — no keyword-metric provider connected. Keyword retained as intent candidate.',
   }));
 };
 
@@ -174,14 +150,14 @@ const buildRegionalKeywordTable = (keywords: any[], country: string): any[] => {
             : /[\u0600-\u06FF]|[\u4E00-\u9FFF]|[\u0B80-\u0BFF]/;
     const local = keywords.filter((k: any) => languagePattern.test(String(k.keyword || ''))).slice(0, 5);
     if (local.length > 0) {
-      return local.map((k: any) => ({ keyword: k.keyword, volume: k.volume, kd: k.kd, cpc: k.cpc, scope: 'local-language' }));
+      return local.map((k: any) => ({ keyword: k.keyword, volume: null, kd: null, cpc: null, scope: 'local-language' }));
     }
   }
   return keywords.slice(0, 5).map((k: any) => ({
     keyword: k.keyword,
-    volume: k.volume,
-    kd: k.kd,
-    cpc: k.cpc,
+    volume: null,
+    kd: null,
+    cpc: null,
     scope: 'regional-intent candidate (no measured regional split)',
   }));
 };
@@ -219,7 +195,38 @@ const getEconomics = (country: string, analysis?: any) => {
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
-// RECONCILE ALL (v13)
+// SERP-ONLY KEYWORD ENRICHMENT
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Marks each keyword as "serpPresence" if it appears in SerpAPI related_searches
+ * or organic titles/snippets. Never invents volume/CPC.
+ */
+const enrichKeywordsFromSerp = (keywords: any[], serpResults: any[], searchData: any): any[] => {
+  const serpTerms = new Set<string>();
+  safeArray(serpResults).forEach((r: any) => {
+    safeArray(r.related_searches).forEach((rs: any) => {
+      const term = typeof rs === 'string' ? rs : rs?.query;
+      if (term && String(term).trim().length > 3) serpTerms.add(String(term).trim().toLowerCase());
+    });
+  });
+  safeArray(searchData?.related_searches).forEach((rs: any) => {
+    const term = typeof rs === 'string' ? rs : rs?.query;
+    if (term && String(term).trim().length > 3) serpTerms.add(String(term).trim().toLowerCase());
+  });
+  safeArray(searchData?.related_questions).forEach((rq: any) => {
+    if (rq?.question && String(rq.question).trim().length > 3) serpTerms.add(String(rq.question).trim().toLowerCase());
+  });
+  return keywords.map((kw: any) => ({
+    ...kw,
+    serpPresence: serpTerms.has(String(kw.keyword).toLowerCase())
+      ? 'Observed in SERP related searches/questions (no volume metric)'
+      : null,
+  }));
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// RECONCILE ALL
 // ═══════════════════════════════════════════════════════════════════════════
 
 const reconcileAll = (analysis: any, keywords: any[], country: string): any => {
@@ -232,10 +239,8 @@ const reconcileAll = (analysis: any, keywords: any[], country: string): any => {
   if (!analysis.magic_goldmine) analysis.magic_goldmine = {};
   if (!analysis.ground_intel) analysis.ground_intel = {};
 
-  // Always populate top_keywords
   analysis.magic_goldmine.top_keywords = buildTopGoldmineKeywords(keywords);
 
-  // Always populate regional table
   const regionalKeywords = buildRegionalKeywordTable(keywords, country);
   if (regionalKeywords.length > 0) {
     if (!analysis.ground_intel.language_split) analysis.ground_intel.language_split = {};
@@ -265,12 +270,11 @@ const reconcileAll = (analysis: any, keywords: any[], country: string): any => {
     analysis.sensitivity_analysis = { best_case: { scenario: 'Best Case', pipeline: 'Not modeled', roi: 'Not calculated', ltv_cac: 'Not calculated', breakeven_months: 'Not calculated' }, expected_case: { scenario: 'Expected', pipeline: 'Not modeled', roi: 'Not calculated', ltv_cac: 'Not calculated', breakeven_months: 'Not calculated' }, worst_case: { scenario: 'Worst Case', pipeline: 'Not modeled', roi: 'Not calculated', ltv_cac: 'Not calculated', breakeven_months: 'Not calculated' } };
     analysis.magic_goldmine.revenue_projection = { monthly_traffic: 'Not forecast', conversion_rate: 'Not supplied', monthly_leads: 'Not forecast', avg_deal_value: 'Not supplied', monthly_pipeline: 'Not calculated', formula: 'Requires validated keyword volume, capture rate, conversion rate and AOV' };
     if (analysis.magic_playbook?.backlink_strategy) { analysis.magic_playbook.backlink_strategy.total_backlinks = 'Not verified'; analysis.magic_playbook.backlink_strategy.local_percentage = 'Not verified'; analysis.magic_playbook.backlink_strategy.top_sources = []; }
-    analysis.data_limitations = [...safeArray(analysis.data_limitations), 'Financial projections, unit economics and break-even outputs are withheld until client-specific commercial inputs are provided.'];
+    analysis.data_limitations = [...safeArray(analysis.data_limitations), 'Financial projections, unit economics and break-even outputs are withheld until client-specific commercial inputs are provided.', 'No keyword-metric provider (DataForSEO/Semrush/Ahrefs) is connected; volume/CPC/KD fields remain unverified.'];
     analysis.executive_summary.health_score = { overall: null, status: buildHealthStatus(null, suppliedSwot.length), breakdown: [] };
     return analysis;
   }
 
-  // Finance recompute
   const investment = economics.INVESTMENT;
   const pipeline6mo = economics.PIPELINE_6MO;
   const grossProfit6mo = economics.GROSS_PROFIT_6MO;
@@ -290,7 +294,6 @@ const reconcileAll = (analysis: any, keywords: any[], country: string): any => {
   analysis.financial_projection.roi_formula = grossProfit6mo === null ? 'ROI = (attributed gross profit − investment) ÷ investment × 100; attributed gross profit input is required.' : `(${formatCurrency(grossProfit6mo, country)} − ${formatCurrency(investment, country)}) ÷ ${formatCurrency(investment, country)} × 100 = ${roiPercent}%`;
   analysis.financial_projection.monthly_projection = [];
 
-  // Unit economics
   const CAC = economics.CAC;
   const LTV = economics.LTV;
   const MONTHLY_REVENUE = economics.MONTHLY_REVENUE;
@@ -305,7 +308,6 @@ const reconcileAll = (analysis: any, keywords: any[], country: string): any => {
     gross_margin_per_tier: [],
   };
 
-  // Break-even
   const fixedCostsMonthly = economics.MONTHLY_FIXED_COST;
   const variableCostPerUnit = economics.VARIABLE_COST_PER_UNIT;
   const contributionMargin = AOV - variableCostPerUnit;
@@ -327,7 +329,6 @@ const reconcileAll = (analysis: any, keywords: any[], country: string): any => {
     worst_case: { scenario: 'Worst Case', pipeline: 'Requires approved scenario inputs', roi: 'Not calculated', ltv_cac: 'Not calculated', breakeven_months: 'Not calculated' },
   };
 
-  // Health score
   const swot = safeArray(analysis.competitor_teardown?.swot_scored);
   const swotAvg = swot.length > 0
     ? Math.round((swot.reduce((s: number, x: any) => s + Math.min(10, Math.max(0, safeNumber(x.score, 0))), 0) / swot.length) * 10)
@@ -336,26 +337,16 @@ const reconcileAll = (analysis: any, keywords: any[], country: string): any => {
     ? { overall: null, status: buildHealthStatus(null, 0), breakdown: [] }
     : { overall: swotAvg, status: buildHealthStatus(swotAvg, swot.length), breakdown: [{ category: 'Evidence-backed SWOT average', score: swotAvg, status: swotAvg >= 70 ? '🟢' : swotAvg >= 50 ? '🟡' : '🔴' }] };
 
-  // Magic goldmine revenue projection
-  const verifiedTop = analysis.magic_goldmine.top_keywords.filter((k: any) => k.status === 'verified (DataForSEO)');
-  const magicTotalVol = verifiedTop.length > 0 ? verifiedTop.reduce((max: number, k: any) => Math.max(max, safeNumber(k.volume, 0)), 0) : 0;
-  const captureRateRaw = safeNumber(analysis.business_inputs?.organic_click_capture_rate, 0);
-  const leadConversionRateRaw = safeNumber(analysis.business_inputs?.lead_conversion_rate, 0);
-  const captureRate = captureRateRaw > 0 && captureRateRaw <= 1 ? captureRateRaw : 0;
-  const leadConversionRate = leadConversionRateRaw > 0 && leadConversionRateRaw <= 1 ? leadConversionRateRaw : 0;
-  const magicTraffic = captureRate > 0 && magicTotalVol > 0 ? Math.round(magicTotalVol * captureRate) : 0;
-  const magicLeads = leadConversionRate > 0 && magicTraffic > 0 ? Math.round(magicTraffic * leadConversionRate) : 0;
-
+  const magicTotalVol = 0; // no verified volume provider
   analysis.magic_goldmine.revenue_projection = {
-    monthly_traffic: magicTraffic > 0 ? magicTraffic : (magicTotalVol === 0 ? 'Not calculated — no verified keyword volume available' : 'Not calculated — organic_click_capture_rate required'),
-    conversion_rate: leadConversionRate > 0 ? `${(leadConversionRate * 100).toFixed(2)}%` : 'Not supplied',
-    monthly_leads: magicLeads > 0 ? magicLeads : 'Not calculated',
+    monthly_traffic: 'Not calculated — no verified keyword volume provider connected',
+    conversion_rate: safeNumber(analysis.business_inputs?.lead_conversion_rate, 0) > 0 ? `${(safeNumber(analysis.business_inputs.lead_conversion_rate, 0) * 100).toFixed(2)}%` : 'Not supplied',
+    monthly_leads: 'Not calculated',
     avg_deal_value: AOV > 0 ? formatCurrency(AOV, country) : 'Not supplied',
     monthly_pipeline: 'Not calculated — a qualified-lead-to-customer close rate and deal value are required',
-    formula: 'Monthly traffic = highest single verified keyword volume × client-supplied organic_click_capture_rate; leads = traffic × client-supplied lead_conversion_rate.',
+    formula: 'Requires a verified keyword volume provider; SerpAPI alone cannot supply volume.',
   };
 
-  // Backlinks
   if (!analysis.magic_playbook) analysis.magic_playbook = {};
   if (!analysis.magic_playbook.backlink_strategy) analysis.magic_playbook.backlink_strategy = {};
   analysis.magic_playbook.backlink_strategy.total_backlinks = 'Not verified — backlink provider export required';
@@ -366,7 +357,6 @@ const reconcileAll = (analysis: any, keywords: any[], country: string): any => {
   analysis.magic_playbook.target_competitor = { name: 'Not identified — product competitor research required', da: null, traffic: null };
 
   if (analysis.executive_summary.top_findings) analysis.executive_summary.top_findings = analysis.executive_summary.top_findings.slice(0, 3);
-
   return analysis;
 };
 
@@ -500,7 +490,7 @@ function formatTable(headers: string[], rows: string[][]): string {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// PROMPT BUILDER
+// PROMPT BUILDER (Gemini — v14)
 // ═══════════════════════════════════════════════════════════════════════════
 
 const buildSEOPrompt = (niche: string, country: string, serpResults: any[], trendData: number[]): string => {
@@ -535,7 +525,7 @@ Is ${countryName} multilingual? ${multilingual}
 RULE #1 — VALUE: Every line earns its place. No filler.
 RULE #1A — SCOPE: No target website is supplied unless passed by the caller. Never claim client rankings, traffic, technical defects, backlink metrics, conversion rates or site-specific findings without a crawl / first-party data source.
 RULE #2 — EVIDENCE: Every quantitative claim must have a named source, timestamp and scope; otherwise return null / "Not verified".
-RULE #3 — NO FABRICATED NUMBERS: Never invent volumes, CPC, KD, competitor metrics, conversion rates, financial inputs, case studies or market-share percentages.
+RULE #3 — NO FABRICATED NUMBERS: Never invent volumes, CPC, KD, competitor metrics, conversion rates, financial inputs, case studies or market-share percentages. NO keyword-metric provider is connected. Do not put numbers in volume/kd/cpc fields — set them to null.
 RULE #4 — NO AI MENTION.
 RULE #5 — NO FAKE QUOTES.
 RULE #6 — NO UNIFORM DATA.
@@ -563,13 +553,13 @@ REGULATORY FRAMEWORK for ${countryName}:
 ⚠️ STRICT COUNTS
 ═══════════════════════════════════════════════════════════════════════
 - keywords: EXACTLY 50 (14 money + 18 growth + 18 long-tail)
-- magic_goldmine.top_keywords: up to 5; [] if no verified metrics
+- magic_goldmine.top_keywords: up to 5; volume/kd/cpc ALWAYS null
 - key_findings: EXACTLY 5
 - executive_summary.top_findings: EXACTLY 3
-- competitor_teardown.feature_matrix: [] unless backed by verified provider/page evidence
-- competitor_teardown.swot_scored: [] unless an actual site audit has been completed
-- competitor_teardown.pricing_deconstruction: [] unless dated public pricing evidence is supplied
-- competitor_teardown.content_gap_scored: up to 6, only when actual SERP evidence supports it
+- competitor_teardown.feature_matrix: []
+- competitor_teardown.swot_scored: []
+- competitor_teardown.pricing_deconstruction: []
+- competitor_teardown.content_gap_scored: []
 - competitor_teardown.action_plan: evidence-based actions; no invented uplift percentages
 
 ═══════════════════════════════════════════════════════════════════════
@@ -581,11 +571,8 @@ If client business_inputs are supplied, use only those values and preserve their
 ═══════════════════════════════════════════════════════════════════════
 ⚠️ SIZE-OF-PRIZE FORMULA
 ═══════════════════════════════════════════════════════════════════════
-For EVERY key_finding:
-  size_of_prize = N kw × V vol × C% CVR × ${currencySymbol}A AOV
-  Show the arithmetic. The result MUST equal the product.
-  NO division by 10. NO shortcuts.
-If any required input is missing, return null / "Not calculated" and explain which input is missing.
+Since no keyword-volume provider is connected, size_of_prize MUST be "Not calculated — no verified keyword volume provider connected".
+Do NOT invent numbers.
 
 ═══════════════════════════════════════════════════════════════════════
 ⚠️ CASE STUDY RULES
@@ -602,13 +589,13 @@ RETURN JSON (ALL FIELDS REQUIRED):
 
 {
   "business_inputs": { "aov": null, "cac": null, "lifetime_value": null, "lifetime_months": null, "monthly_contribution_per_customer": null, "six_month_investment": null, "six_month_pipeline": null, "six_month_attributed_gross_profit": null, "monthly_fixed_cost": null, "variable_cost_per_customer": null, "organic_click_capture_rate": null, "lead_conversion_rate": null },
-  "executive_summary": { "headline": "...", "top_findings": [{"rank": 1, "priority": "CRITICAL", "title": "...", "size_of_prize": "...", "root_cause": "..."}], "what_this_means": "...", "next_90_days": ["...", "...", "..."], "estimated_roi": { "investment": "Not supplied", "pipeline": "Not supplied", "roi_percent": "Not calculated" }, "health_score": { "overall": null, "status": "NOT SCORED — site audit evidence required", "breakdown": [] } },
+  "executive_summary": { "headline": "...", "top_findings": [{"rank": 1, "priority": "CRITICAL", "title": "...", "size_of_prize": "Not calculated — no verified keyword volume provider connected", "root_cause": "..."}], "what_this_means": "...", "next_90_days": ["...", "...", "..."], "estimated_roi": { "investment": "Not supplied", "pipeline": "Not supplied", "roi_percent": "Not calculated" }, "health_score": { "overall": null, "status": "NOT SCORED — site audit evidence required", "breakdown": [] } },
   "current_state": { "data_sources": [], "kpi_dashboard": [], "narrative": "..." },
-  "ground_intel": { "cultural_calendar": [], "language_split": { "summary": "...", "top_keywords": [] }, "buyer_behavior": ["...", "...", "...", "..."], "editor_intelligence": [], "competitor_weaknesses": [{"competitor": "...", "weakness": "..."}] },
-  "magic_goldmine": { "cluster_name": "...", "criteria_met": ["...", "...", "...", "..."], "why_invisible": ["...", "...", "..."], "top_keywords": [{"keyword": "...", "volume": null, "kd": null, "cpc": null, "intent": "transactional"}], "revenue_projection": { "monthly_traffic": null, "conversion_rate": null, "monthly_leads": null, "avg_deal_value": null, "monthly_pipeline": null, "formula": "..." }, "evidence": ["...", "...", "...", "..."] },
+  "ground_intel": { "cultural_calendar": [], "language_split": { "summary": "...", "top_keywords": [] }, "buyer_behavior": ["...", "...", "...", "..."], "editor_intelligence": [], "competitor_weaknesses": [] },
+  "magic_goldmine": { "cluster_name": "...", "criteria_met": ["...", "...", "...", "..."], "why_invisible": ["...", "...", "..."], "top_keywords": [{"keyword": "...", "volume": null, "kd": null, "cpc": null, "intent": "transactional"}], "revenue_projection": { "monthly_traffic": "Not calculated — no verified keyword volume provider connected", "conversion_rate": null, "monthly_leads": null, "avg_deal_value": null, "monthly_pipeline": null, "formula": "Requires a verified keyword volume provider" }, "evidence": ["...", "...", "...", "..."] },
   "magic_playbook": { "target_competitor": { "name": null, "da": null, "traffic": null }, "timeline": [{"date": "...", "action": "...", "impact": "..."}], "content_formula": ["...", "...", "...", "..."], "backlink_strategy": { "total_backlinks": null, "local_percentage": null, "top_sources": [] }, "vulnerabilities": ["...", "...", "...", "..."], "counter_play": [{"week": "...", "action": "..."}], "evidence": ["...", "...", "...", "..."] },
-  "key_findings": [{"rank": 1, "priority": "CRITICAL", "title": "...", "category": "...", "impact": "HIGH", "effort": "LOW", "what_is_happening": "...", "why_it_matters": "...", "size_of_prize": "...", "size_formula": "...", "evidence": ["..."], "recommendation": "...", "timeline": "Week 1-2", "owner": "..."}],
-  "competitive_landscape": { "comparison_table": [], "content_gap": [{"topic": "...", "volume": null, "leader": "[REAL BRAND ONLY IF OBSERVED]", "your_position": "..."}], "backlink_gap": [], "prioritized_roadmap": ["...", "...", "..."] },
+  "key_findings": [{"rank": 1, "priority": "CRITICAL", "title": "...", "category": "...", "impact": "HIGH", "effort": "LOW", "what_is_happening": "...", "why_it_matters": "...", "size_of_prize": "Not calculated — no verified keyword volume provider connected", "size_formula": "Requires verified keyword volume provider", "evidence": ["..."], "recommendation": "...", "timeline": "Week 1-2", "owner": "..."}],
+  "competitive_landscape": { "comparison_table": [], "content_gap": [], "backlink_gap": [], "prioritized_roadmap": ["...", "...", "..."] },
   "competitor_teardown": { "feature_matrix": [], "swot_scored": [], "pricing_deconstruction": [], "ux_audit": { "design_score": null, "performance_score": null, "mobile_score": null, "accessibility_score": null, "strengths": [], "weaknesses": [] }, "content_gap_scored": [], "action_plan": [] },
   "roadmap_90day": { "days_1_30": [], "days_31_60": [], "days_61_90": [], "dependencies": ["...", "..."] },
   "financial_projection": { "investment": [], "monthly_projection": [], "roi_summary": "...", "roi_formula": "...", "assumptions": [], "sensitivity": [] },
@@ -642,7 +629,7 @@ const validateAndFillSections = (analysis: any, niche: string, country: string, 
   }
 
   if (!analysis.current_state) analysis.current_state = {};
-  if (!analysis.current_state.narrative) analysis.current_state.narrative = `No client website audit or first-party performance baseline was supplied. This run can assess public search results and provider-returned keyword data, but cannot establish client rankings, traffic, technical health or conversion performance.`;
+  if (!analysis.current_state.narrative) analysis.current_state.narrative = `No client website audit or first-party performance baseline was supplied. This run can assess public search results and AI-generated keyword candidates, but cannot establish client rankings, traffic, technical health or conversion performance.`;
 
   if (!analysis.ground_intel) analysis.ground_intel = {};
   if (!safeArray(analysis.ground_intel.buyer_behavior).length) analysis.ground_intel.buyer_behavior = [];
@@ -664,11 +651,11 @@ const validateAndFillSections = (analysis: any, niche: string, country: string, 
       title: `Opportunity in "${kw.keyword}"`,
       category: i === 0 ? 'Content Strategy' : i === 1 ? 'Technical SEO' : i === 2 ? 'Localization' : 'Off-Page SEO',
       impact: 'HIGH', effort: i === 0 ? 'LOW' : 'MEDIUM',
-      what_is_happening: `The phrase "${kw.keyword}" is an unverified candidate keyword. Provider-backed volume, CPC and difficulty are shown only if returned by the keyword API.`,
+      what_is_happening: `The phrase "${kw.keyword}" is an unverified candidate keyword. No keyword-metric provider is connected, so volume/CPC/KD cannot be shown.`,
       why_it_matters: `Validate local demand and search intent before prioritizing content or forecasting traffic.`,
-      size_of_prize: 'Not calculated — client conversion and value inputs required',
-      size_formula: 'Requires validated search volume, click-through rate, conversion rate and average order value',
-      evidence: [],
+      size_of_prize: 'Not calculated — no verified keyword volume provider connected',
+      size_formula: 'Requires a verified keyword volume provider',
+      evidence: kw.serpPresence ? [kw.serpPresence] : [],
       recommendation: `Create comprehensive content targeting "${kw.keyword}" with localized messaging.`,
       timeline: `Week ${(i + 1) * 2}-${(i + 1) * 2 + 1}`,
       owner: i === 0 ? 'Content Lead' : i === 1 ? 'Dev Lead' : 'SEO Lead',
@@ -683,13 +670,13 @@ const validateAndFillSections = (analysis: any, niche: string, country: string, 
 
   if (!safeArray(analysis.data_limitations).length) {
     analysis.data_limitations = [
-      'Keyword metrics are shown only when returned by the connected provider; unreturned fields remain explicitly unverified.',
+      'No keyword-metric provider (DataForSEO / Semrush / Ahrefs) is connected; volume, CPC and KD fields remain unverified.',
       'Competitor authority, traffic, backlink and pricing metrics require dedicated dated provider exports or source-page evidence.',
       'Client-specific health, traffic, rankings, conversion and ROI require website access, analytics and client-supplied commercial inputs.',
     ];
   }
 
-  if (!analysis.methodology_note) analysis.methodology_note = 'The report combines live SERP results and provider-returned keyword/trend metrics when available. AI-generated strategic recommendations are hypotheses, not measured market facts. Client analytics, backlink exports, crawl results and financial inputs are not inferred.';
+  if (!analysis.methodology_note) analysis.methodology_note = 'The report combines live SERP results (SerpAPI), Google Trends and Gemini-generated strategic recommendations. No keyword-metric provider is connected, so volume/CPC/KD are not asserted. Client analytics, backlink exports, crawl results and financial inputs are not inferred.';
 
   if (!analysis.trend_assessment) {
     if (trendData.length) {
@@ -750,48 +737,60 @@ export async function generateSEOReport(
   country: string,
   options?: { clientName?: string; website?: string; productDescription?: string; targetIcp?: string; businessInputs?: Record<string, number>; baselineKpis?: any[]; }
 ) {
-  country = String(country || '').trim().toLowerCase();
-  if (!countryNames[country]) throw new Error(`Unsupported country code: ${country}. Supported: ${Object.keys(countryNames).join(', ')}`);
-  niche = String(niche || '').trim();
-  if (!niche) throw new Error('A non-empty niche is required to generate an SEO report.');
+  // ✅ v14: HARD validation — never let undefined reach Mongoose
+  if (!niche || typeof niche !== 'string' || !niche.trim()) {
+    throw new Error('generateSEOReport: niche is required and must be a non-empty string');
+  }
+  if (!country || typeof country !== 'string' || !country.trim()) {
+    throw new Error('generateSEOReport: country is required and must be a non-empty string');
+  }
+  country = country.trim().toLowerCase();
+  niche = niche.trim();
+  if (!countryNames[country]) {
+    throw new Error(`Unsupported country code: ${country}. Supported: ${Object.keys(countryNames).join(', ')}`);
+  }
 
   const optionsKey = JSON.stringify({ clientName: options?.clientName || '', website: options?.website || '', productDescription: options?.productDescription || '', targetIcp: options?.targetIcp || '', businessInputs: options?.businessInputs || {}, baselineKpis: options?.baselineKpis || [] });
-  const cacheKey = `seo_v13_${niche}_${country}_${optionsKey}`;
+  const cacheKey = `seo_v14_${niche}_${country}_${optionsKey}`;
   const cached = cacheService.get(cacheKey);
   if (cached) return cached;
 
-  console.log(`🔍 [SEO v13] Generating for "${niche}" in ${country}...`);
+  console.log(`🔍 [SEO v14] Generating for "${niche}" in ${country}...`);
 
   // TRENDS
   let trendData: number[] = [];
-  let trendSource: 'dataforseo' | 'google_trends' | 'none' = 'none';
-  if (isDataForSEOAvailable()) {
-    try {
-      const realTrends = await fetchRealTrends([niche], country);
-      if (realTrends.length > 0 && realTrends[0].timeline.length > 0) {
-        trendData = realTrends[0].timeline.map((t: { value: number }) => t.value);
-        trendSource = 'dataforseo';
-      }
-    } catch { /* fallback */ }
-  }
-  if (trendData.length === 0) {
+  let trendSource: 'google_trends' | 'none' = 'none';
+  try {
     trendData = await getGoogleTrends(niche, country).catch(() => []);
     if (trendData.length > 0) trendSource = 'google_trends';
-  }
+  } catch { /* ignore */ }
 
-  // SERP
+  // SERP — SerpAPI primary, Serper + ScraperAPI fallback
   const serpQuery = buildSerpQuery(niche, country);
   let serpProvider = 'No SERP provider returned results';
-  let searchData = await getScraperAPISearch(serpQuery, country).catch(() => null);
-  if (searchData?.organic_results) serpProvider = 'ScraperAPI';
-  if (!searchData?.organic_results) { searchData = await getSearchResults(serpQuery, country).catch(() => null); if (searchData?.organic_results) serpProvider = 'SerpAPI'; }
-  if (!searchData?.organic_results) { searchData = await getSerperResults(serpQuery, country).catch(() => null); if (searchData?.organic_results) serpProvider = 'Serper'; }
+  let searchData: any = null;
+  try {
+    searchData = await getSearchResults(serpQuery, country).catch(() => null);
+    if (searchData?.organic_results) serpProvider = 'SerpAPI';
+  } catch { /* ignore */ }
+  if (!searchData?.organic_results) {
+    try {
+      searchData = await getSerperResults(serpQuery, country).catch(() => null);
+      if (searchData?.organic_results) serpProvider = 'Serper';
+    } catch { /* ignore */ }
+  }
+  if (!searchData?.organic_results) {
+    try {
+      searchData = await getScraperAPISearch(serpQuery, country).catch(() => null);
+      if (searchData?.organic_results) serpProvider = 'ScraperAPI';
+    } catch { /* ignore */ }
+  }
   const serpResults = filterAndScoreSerp(searchData?.organic_results || [], niche, country).slice(0, 10);
-  console.log(`✅ [SERP] ${serpResults.length} relevant results.`);
+  console.log(`✅ [SERP] ${serpResults.length} relevant results from ${serpProvider}.`);
 
-  // AI
+  // AI — Gemini
   const prompt = `${buildSEOPrompt(niche, country, serpResults, trendData)}\n\nCALLER-SUPPLIED CLIENT CONTEXT:\nWebsite: ${options?.website || 'Not supplied'}\nProduct: ${options?.productDescription || 'Not supplied'}\nTarget ICP: ${options?.targetIcp || 'Not supplied'}\nCommercial inputs supplied in code; must not be guessed.`;
-  const aiResponse = await runGroqWithRetry(prompt, JSON.stringify({ niche, country }));
+  const aiResponse = await runGeminiWithRetry(prompt, JSON.stringify({ niche, country }));
   let analysis = extractJSON(aiResponse);
 
   analysis.business_inputs = options?.businessInputs ? { ...options.businessInputs } : {};
@@ -803,67 +802,35 @@ export async function generateSEOReport(
   analysis.case_studies = [];
   if (!options?.productDescription) analysis.client_value_proposition = [];
 
-  // KEYWORDS
+  // KEYWORDS — AI candidates only; no volume/CPC/KD because no metric provider
   let keywords = Array.isArray(analysis.keywords) ? analysis.keywords : [];
   keywords = keywords.map((kw: any, i: number) => {
     const tier = safeString(kw.tier, i < 14 ? 'money' : i < 32 ? 'growth' : 'long-tail');
     return {
       keyword: safeString(kw.keyword, ''),
-      volume: null, cpc: null, kd: null,
+      volume: null,
+      cpc: null,
+      kd: null,
       intent: resolveIntent(kw),
       tier,
-      dataSource: 'unverified_ai_candidate',
+      dataSource: 'ai_candidate_no_metric_provider',
     };
   }).filter((kw: any) => kw.keyword);
 
-  if (isDataForSEOAvailable() && keywords.length > 0) {
-    try {
-      const realMetrics = await fetchRealKeywordMetrics(keywords.map((k: any) => k.keyword), country);
-      if (realMetrics.length > 0) {
-        const metricMap = new Map<string, RealKeywordMetric>(realMetrics.map((m: RealKeywordMetric) => [m.keyword.toLowerCase(), m]));
-        keywords = keywords.map((kw: any) => {
-          const real = metricMap.get(kw.keyword.toLowerCase());
-          if (real) {
-            return {
-              ...kw,
-              volume: Number.isFinite(Number(real.volume)) && Number(real.volume) >= 0 ? Number(real.volume) : null,
-              kd: Number.isFinite(Number(real.kd)) && Number(real.kd) >= 0 ? Number(real.kd) : null,
-              cpc: Number.isFinite(Number(real.cpc)) && Number(real.cpc) >= 0 ? Number(real.cpc) : null,
-              intent: resolveIntent(kw),
-              dataSource: 'dataforseo',
-            };
-          }
-          return kw;
-        });
-      }
-    } catch (e: any) {
-      console.warn(`⚠️ [DataForSEO] override failed: ${e.message}`);
-    }
-  }
+  // Mark SERP-observed candidates
+  keywords = enrichKeywordsFromSerp(keywords, serpResults, searchData);
 
-  keywords = await mapWithConcurrency(keywords, 5, async (kw: any) => {
-    try {
-      if (kw.dataSource === 'dataforseo' && kw.cpc !== null && kw.cpc !== undefined && safeNumber(kw.cpc, -1) >= 0) {
-        const converted = await convertCurrency(kw.cpc, 'USD', (currencyInfo[country] || currencyInfo.us).code);
-        kw.cpc = (converted === null || isNaN(converted) || converted < 0) ? kw.cpc : Number(Number(converted).toFixed(2));
-      }
-    } catch { /* preserve original */ }
-    return kw;
-  });
-
+  // Per-field provenance
   keywords = keywords.map((kw: any) => {
-    const verified = kw.dataSource === 'dataforseo';
     const metricStatus = (value: any, label: string) => value !== null && value !== undefined
-      ? `Provider-returned ${label}; DataForSEO`
-      : verified
-        ? `DataForSEO did not return ${label} for this keyword; no estimate substituted`
-        : `Candidate keyword only; ${label} has not been measured`;
+      ? `Provider-returned ${label}`
+      : `Candidate keyword only; ${label} has not been measured (no keyword-metric provider connected)`;
     return {
       ...kw,
       volumeStatus: metricStatus(kw.volume, 'search volume'),
       kdStatus: metricStatus(kw.kd, 'keyword difficulty'),
       cpcStatus: metricStatus(kw.cpc, 'CPC in target-market currency'),
-      metricProvider: verified ? 'DataForSEO' : 'Unverified AI keyword candidate',
+      metricProvider: kw.serpPresence ? 'SERP-observed (SerpAPI related searches)' : 'AI candidate (unverified)',
     };
   });
 
@@ -875,9 +842,8 @@ export async function generateSEOReport(
   analysis.current_state.kpi_dashboard = Array.isArray(options?.baselineKpis) ? options.baselineKpis : [];
   const sourcePullDate = new Date().toISOString().slice(0, 10);
   const actualSources: any[] = [];
-  if (keywords.some((k: any) => k.dataSource === 'dataforseo' && (safeNumber(k.volume, 0) > 0 || safeNumber(k.cpc, 0) > 0 || (k.kd !== null && k.kd !== undefined)))) actualSources.push({ data_type: 'Keyword metrics', source: 'DataForSEO', pull_date: sourcePullDate });
-  if (trendSource === 'dataforseo') actualSources.push({ data_type: 'Search trends', source: 'DataForSEO Trends', pull_date: sourcePullDate });
-  else if (trendSource === 'google_trends') actualSources.push({ data_type: 'Search trends', source: 'Google Trends', pull_date: sourcePullDate });
+  actualSources.push({ data_type: 'Keyword metrics', source: 'No keyword-metric provider connected (volume/CPC/KD unverified)', pull_date: sourcePullDate });
+  if (trendSource === 'google_trends') actualSources.push({ data_type: 'Search trends', source: 'Google Trends', pull_date: sourcePullDate });
   else actualSources.push({ data_type: 'Search trends', source: 'No provider data returned; no trend values generated', pull_date: sourcePullDate });
   if (serpResults.length > 0) actualSources.push({ data_type: 'SERP results', source: serpProvider, pull_date: sourcePullDate });
   analysis.current_state.data_sources = actualSources;
@@ -898,7 +864,7 @@ export async function generateSEOReport(
   analysis.ground_intel.cultural_calendar_status = preloadedCalendar.length ? 'Country calendar loaded from project data module' : 'No country calendar configured';
   analysis.ground_intel.editor_intelligence_status = preloadedEditors.length ? 'Country editor dataset loaded; authority scores not inferred' : 'No editor entries configured';
 
-  // BUILD MARKDOWN
+  // MARKDOWN
   const today = new Date().toLocaleDateString((currencyInfo[country] || currencyInfo.us).locale, { year: 'numeric', month: 'long', day: 'numeric' });
   const reference = `MKT-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
   const currency = currencyInfo[country] || currencyInfo.us;
@@ -1018,6 +984,8 @@ TOP 3 FINDINGS (Ranked by Business Impact)
   Tier 2 — Strategic value, builds topical authority over 3-6 months.
   Tier 3 — Quick wins + niche opportunities, opportunistic.
 
+⚠️ No keyword-metric provider is connected; volume/CPC/KD fields remain unverified by design.
+
 `;
   const moneyKw = keywords.filter((k: any) => k.tier === 'money').slice(0, 14);
   const growthKw = keywords.filter((k: any) => k.tier === 'growth').slice(0, 18);
@@ -1026,24 +994,24 @@ TOP 3 FINDINGS (Ranked by Business Impact)
   if (moneyKw.length > 0) {
     markdown += `TIER 1 — MONEY KEYWORDS (Highest Commercial Intent)\n\n`;
     markdown += formatTable(
-      ['#', 'Keyword', 'Volume', 'KD', `CPC (${currency.symbol.trim()})`, 'Intent'],
-      moneyKw.map((k: any, i: number) => [String(i + 1), safeString(k.keyword), k.volume === null ? 'No provider metric' : String(k.volume), k.kd === null ? 'No provider metric' : String(k.kd), formatCpcSafe(k.cpc, country), safeString(k.intent)])
+      ['#', 'Keyword', 'Volume', 'KD', `CPC (${currency.symbol.trim()})`, 'Intent', 'SERP-Observed'],
+      moneyKw.map((k: any, i: number) => [String(i + 1), safeString(k.keyword), 'No provider metric', 'No provider metric', 'No provider metric', safeString(k.intent), k.serpPresence ? 'Yes' : '—'])
     );
     markdown += `\n`;
   }
   if (growthKw.length > 0) {
     markdown += `TIER 2 — GROWTH KEYWORDS (Strategic Value)\n\n`;
     markdown += formatTable(
-      ['#', 'Keyword', 'Volume', 'KD', `CPC (${currency.symbol.trim()})`, 'Intent'],
-      growthKw.map((k: any, i: number) => [String(i + 15), safeString(k.keyword), k.volume === null ? 'No provider metric' : String(k.volume), k.kd === null ? 'No provider metric' : String(k.kd), formatCpcSafe(k.cpc, country), safeString(k.intent)])
+      ['#', 'Keyword', 'Volume', 'KD', `CPC (${currency.symbol.trim()})`, 'Intent', 'SERP-Observed'],
+      growthKw.map((k: any, i: number) => [String(i + 15), safeString(k.keyword), 'No provider metric', 'No provider metric', 'No provider metric', safeString(k.intent), k.serpPresence ? 'Yes' : '—'])
     );
     markdown += `\n`;
   }
   if (longTailKw.length > 0) {
     markdown += `TIER 3 — LONG-TAIL KEYWORDS (Quick Wins)\n\n`;
     markdown += formatTable(
-      ['#', 'Keyword', 'Volume', 'KD', `CPC (${currency.symbol.trim()})`, 'Intent'],
-      longTailKw.map((k: any, i: number) => [String(i + 33), safeString(k.keyword), k.volume === null ? 'No provider metric' : String(k.volume), k.kd === null ? 'No provider metric' : String(k.kd), formatCpcSafe(k.cpc, country), safeString(k.intent)])
+      ['#', 'Keyword', 'Volume', 'KD', `CPC (${currency.symbol.trim()})`, 'Intent', 'SERP-Observed'],
+      longTailKw.map((k: any, i: number) => [String(i + 33), safeString(k.keyword), 'No provider metric', 'No provider metric', 'No provider metric', safeString(k.intent), k.serpPresence ? 'Yes' : '—'])
     );
     markdown += `\n`;
   }
@@ -1070,7 +1038,7 @@ editor relationships.
   markdown += `Top ${isMultilingual[country] ? 'local-language' : 'regional'} keywords with commercial intent:\n\n`;
   markdown += formatTable(
     ['Keyword', 'Volume', 'KD', `CPC (${currency.symbol.trim()})`, 'Scope'],
-    safeArray(groundIntel.language_split?.top_keywords).map((k: any) => [safeString(k.keyword), k.volume === null ? 'No provider metric' : String(k.volume), k.kd === null ? 'No provider metric' : String(k.kd), formatCpcSafe(k.cpc, country), safeString(k.scope, 'regional-intent candidate')])
+    safeArray(groundIntel.language_split?.top_keywords).map((k: any) => [safeString(k.keyword), 'No provider metric', 'No provider metric', 'No provider metric', safeString(k.scope, 'regional-intent candidate')])
   );
 
   markdown += `\n──────────────────────────────────────────────────────────────\n3.3  🧠 LOCAL BUYER BEHAVIOR PATTERNS\n──────────────────────────────────────────────────────────────\n\n`;
@@ -1108,9 +1076,9 @@ ${safeString(magicGoldmine.cluster_name, 'Cluster analysis pending verified keyw
     safeArray(magicGoldmine.top_keywords).map((k: any, i: number) => [
       String(i + 1),
       safeString(k.keyword),
-      k.volume === null || k.volume === undefined ? 'No provider metric' : String(k.volume),
-      k.kd === null || k.kd === undefined ? 'No provider metric' : String(k.kd),
-      formatCpcSafe(k.cpc, country),
+      'No provider metric',
+      'No provider metric',
+      'No provider metric',
       safeString(k.intent),
       safeString(k.status, 'unverified'),
     ])
@@ -1132,7 +1100,7 @@ ${safeString(magicGoldmine.cluster_name, 'Cluster analysis pending verified keyw
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 🕵️ WHAT THIS SECTION IS
-Competitor analysis is limited to the public SERP evidence and provider fields returned in this report.
+Competitor analysis is limited to the public SERP evidence returned in this report.
 
 ──────────────────────────────────────────────────────────────
 TARGET: ${safeString(magicPlaybook.target_competitor?.name, 'Not identified')}
@@ -1151,8 +1119,7 @@ Domain Rating: ${safeString(magicPlaybook.target_competitor?.da, 'Not measured')
   markdown += `\n🎯 THEIR BACKLINK STRATEGY (MAPPED)\n`;
   markdown += `Total backlinks: ${safeString(magicPlaybook.backlink_strategy?.total_backlinks)}\n`;
   markdown += `Local percentage: ${safeString(magicPlaybook.backlink_strategy?.local_percentage)}\n`;
-  markdown += `Top 3 source domains: ${safeArray(magicPlaybook.backlink_strategy?.top_sources).length ? '' : 'Not verified'}\n\n`;
-  safeArray(magicPlaybook.backlink_strategy?.top_sources).forEach((s: any) => markdown += `  • ${safeString(s)}\n`);
+  markdown += `Top 3 source domains: Not verified\n\n`;
 
   markdown += `\n⚠️ THEIR VULNERABILITIES (WHAT THEY'RE NOT DOING)\n`;
   safeArray(magicPlaybook.vulnerabilities).forEach((v: string) => markdown += `• ${v}\n`);
@@ -1181,8 +1148,9 @@ Domain Rating: ${safeString(magicPlaybook.target_competitor?.da, 'Not measured')
     markdown += `💰 Size of prize: ${safeString(f.size_of_prize)}\n`;
     markdown += `   Formula: ${safeString(f.size_formula)}\n`;
     markdown += `✅ Evidence:\n`;
-    safeArray(f.evidence).forEach((e: string) => markdown += `  • ${e}\n`);
-    if (!safeArray(f.evidence).length) markdown += `  • No verified evidence supplied for this finding.\n`;
+    const ev = safeArray(f.evidence);
+    ev.forEach((e: string) => markdown += `  • ${e}\n`);
+    if (!ev.length) markdown += `  • No verified evidence supplied for this finding.\n`;
     markdown += `🎯 Recommendation: ${safeString(f.recommendation)}\n`;
     markdown += `⏱️ Timeline: ${safeString(f.timeline)}\n`;
     markdown += `👤 Owner: ${safeString(f.owner)}\n`;
@@ -1203,7 +1171,7 @@ Domain Rating: ${safeString(magicPlaybook.target_competitor?.da, 'Not measured')
   markdown += `\n📊 CONTENT GAP ANALYSIS\n\n`;
   markdown += formatTable(
     ['Topic', 'Volume', 'Leader', 'Your Position'],
-    safeArray(competitive.content_gap).map((c: any) => [safeString(c.topic), c.volume === null ? 'No provider metric' : String(c.volume), safeString(c.leader), safeString(c.your_position)])
+    safeArray(competitive.content_gap).map((c: any) => [safeString(c.topic), 'No provider metric', safeString(c.leader), safeString(c.your_position)])
   );
 
   markdown += `\n🔗 BACKLINK GAP ANALYSIS\n\n`;
@@ -1274,7 +1242,7 @@ E. CONTENT GAP ANALYSIS (Scored)
 `;
   markdown += formatTable(
     ['Topic', 'Volume', 'Competitor Coverage', 'Your Coverage', 'Priority', 'Expected Traffic'],
-    safeArray(competitorTeardown.content_gap_scored).map((c: any) => [safeString(c.topic), c.volume === null ? 'No provider metric' : String(c.volume), safeString(c.competitor_coverage), safeString(c.your_coverage), c.priority === 'Critical' ? '🔴 Critical' : c.priority === 'High' ? '🟠 High' : '🟡 Medium', c.expected_traffic === null ? 'Not forecast' : `${c.expected_traffic}/mo`])
+    safeArray(competitorTeardown.content_gap_scored).map((c: any) => [safeString(c.topic), 'No provider metric', safeString(c.competitor_coverage), safeString(c.your_coverage), c.priority === 'Critical' ? '🔴 Critical' : c.priority === 'High' ? '🟠 High' : '🟡 Medium', 'Not forecast'])
   );
 
   markdown += `\n═══════════════════════════════════════════════════════════════════════
@@ -1398,9 +1366,10 @@ ${safeString(analysis.methodology_note)}
   dataLimitations.forEach((d: string, i: number) => markdown += `${i + 1}. ${d}\n`);
 
   markdown += `\n📡 DATA SOURCE DISCLOSURE\n`;
-  markdown += `• Keyword Data: ${keywords.some((k: any) => k.dataSource === 'dataforseo') ? 'DataForSEO-verified where returned; unverified candidates labeled' : 'No verified keyword metrics returned; candidate phrases only'}\n`;
+  markdown += `• Keyword Data: No keyword-metric provider connected; candidate phrases only\n`;
   markdown += `• SERP Data: ${serpProvider}\n`;
   markdown += `• Trend Data: ${trendSource === 'none' ? 'No provider trend series returned' : trendSource}\n`;
+  markdown += `• AI Analysis: Gemini\n`;
   markdown += `• Currency: ${currency.code} (${currency.symbol.trim()})\n`;
   markdown += `• Strategic Synthesis: Nexlor Senior Research Division\n`;
 
@@ -1417,12 +1386,15 @@ Generated by Nexlor Senior Research Division.
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 `;
 
+  // ✅ v14: return niche + country explicitly so controller can save safely
   const result = {
     markdown: cleanMarkdown(markdown),
+    niche,               // ← ensures Mongoose gets a defined value
+    country,             // ← ensures Mongoose gets a defined value
     metadata: {
       niche, country, reference, date: today,
       generatedAt: new Date().toISOString(),
-      version: 'v13',
+      version: 'v14',
       options: { clientName: options?.clientName, website: options?.website },
     },
   };
