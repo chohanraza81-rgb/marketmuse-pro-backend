@@ -1,4 +1,4 @@
-// src/services/brand-protection.generator.ts
+// src/services/brand-protection.generator.ts - FIXED v2.0 - Evidence Safe
 // Counterfeit Intelligence Report Generator
 // Hybrid: OSINT + AI + DataForSEO
 
@@ -18,9 +18,6 @@ import {
   CounterfeitRiskProfile,
 } from './counterfeit-detector.service';
 
-// ═══════════════════════════════════════════════════════════════
-// RETURN TYPE INTERFACE
-// ═══════════════════════════════════════════════════════════════
 export interface BrandProtectionResult {
   brand: string;
   category: string;
@@ -58,15 +55,13 @@ export interface BrandProtectionResult {
   };
 }
 
-// ═══════════════════════════════════════════════════════════════
-// CONFIG
-// ═══════════════════════════════════════════════════════════════
 const countryNames: Record<string, string> = {
   us: 'United States', gb: 'United Kingdom', ca: 'Canada', au: 'Australia',
   de: 'Germany', sg: 'Singapore', sa: 'Saudi Arabia', ae: 'United Arab Emirates',
   pk: 'Pakistan', in: 'India', tr: 'Turkey', my: 'Malaysia',
 };
 
+// FIXED: Saudi symbol SAR, not Iranian ﷼
 const currencyInfo: Record<string, { symbol: string; locale: string }> = {
   us: { symbol: '$', locale: 'en-US' },
   gb: { symbol: '£', locale: 'en-GB' },
@@ -74,17 +69,14 @@ const currencyInfo: Record<string, { symbol: string; locale: string }> = {
   au: { symbol: 'A$', locale: 'en-AU' },
   de: { symbol: '€', locale: 'de-DE' },
   sg: { symbol: 'S$', locale: 'en-SG' },
-  sa: { symbol: '﷼', locale: 'ar-SA' },
-  ae: { symbol: 'د.إ', locale: 'ar-AE' },
-  pk: { symbol: '₨', locale: 'en-PK' },
+  sa: { symbol: 'SAR ', locale: 'ar-SA' },
+  ae: { symbol: 'AED ', locale: 'ar-AE' },
+  pk: { symbol: 'PKR ', locale: 'en-PK' },
   in: { symbol: '₹', locale: 'en-IN' },
-  tr: { symbol: '₺', locale: 'tr-TR' },
+  tr: { symbol: 'TRY ', locale: 'tr-TR' },
   my: { symbol: 'RM', locale: 'en-MY' },
 };
 
-// ═══════════════════════════════════════════════════════════════
-// HELPERS
-// ═══════════════════════════════════════════════════════════════
 const safeString = (val: any, fallback: string = 'N/A'): string => {
   if (!val || val === 'undefined' || val === 'null') return fallback;
   return String(val).trim() || fallback;
@@ -101,29 +93,40 @@ const extractJSON = (raw: string): any => {
   try {
     return JSON.parse(cleaned);
   } catch {
-    let completed = cleaned;
-    let braceCount = (completed.match(/{/g) || []).length;
-    let closeCount = (completed.match(/}/g) || []).length;
-    while (closeCount < braceCount) {
-      completed += '}';
-      closeCount++;
-    }
-    return JSON.parse(completed);
+    const fixed = cleaned.replace(/,\s*}/g, '}').replace(/,\s*]/g, ']');
+    try { return JSON.parse(fixed); } catch { throw new Error('AI response is not valid JSON'); }
   }
 };
 
 const formatThreatBar = (score: number): string => {
-  const filled = Math.round(score / 5);
+  const clamped = Math.max(0, Math.min(100, Math.round(score)));
+  const filled = Math.round(clamped / 5);
   return '█'.repeat(filled) + '░'.repeat(20 - filled);
 };
 
-// ═══════════════════════════════════════════════════════════════
-// MAIN GENERATOR
-// ═══════════════════════════════════════════════════════════════
+// FIXED: Prevent $180,000/month/month double suffix
+function formatImpact(raw: string): string {
+  if (!raw) return 'To be validated';
+  const s = String(raw).trim();
+  if (s.toLowerCase().includes('/month')) return s; // Already has /month, don't add again
+  if (s.toLowerCase().includes('month')) return s;
+  return `${s}/month`;
+}
+
+// FIXED: Format loss - never show fake exact $4,809,255
+function formatLoss(riskProfile: CounterfeitRiskProfile, currencySymbol: string): string {
+  if (riskProfile.estimatedAnnualLoss === null || riskProfile.estimatedAnnualLoss === undefined) {
+    return 'Not calculable - Brand revenue not supplied';
+  }
+  // Use pre-formatted display from detector service
+  return riskProfile.estimatedAnnualLossDisplay || `${currencySymbol}${riskProfile.estimatedAnnualLoss.toLocaleString()} (Modeled)`;
+}
+
 export async function generateBrandProtectionReport(
   brand: string,
   category: string,
-  country: string
+  country: string,
+  brandAnnualRevenue?: number | null
 ): Promise<BrandProtectionResult> {
   const cacheKey = `bpi_v1_${brand}_${category}_${country}`;
   const cached = cacheService.get<BrandProtectionResult>(cacheKey);
@@ -134,18 +137,17 @@ export async function generateBrandProtectionReport(
 
   console.log(`🔍 [BPI] Generating for ${brand} (${category}) in ${country}...`);
 
-  // ── STEP 1: OSINT Collection ──
   const osintFindings = await collectOSINTFindings(brand, country, 10);
   const platformDist = analyzePlatformDistribution(osintFindings);
   const keywordAnalysis = await analyzeCounterfeitKeywords(brand, country);
 
-  // ── STEP 2: Risk Profile ──
   const riskProfile = await generateCounterfeitRiskProfile(
     brand,
     category,
     country,
     osintFindings,
-    keywordAnalysis
+    keywordAnalysis,
+    brandAnnualRevenue ?? null
   );
 
   const networkMap = await generateNetworkMap(osintFindings);
@@ -155,7 +157,6 @@ export async function generateBrandProtectionReport(
     osintFindings
   );
 
-  // ── STEP 3: Trend Data ──
   let trendData: number[] = [];
   let trendSource: 'dataforseo' | 'pattern_fallback' = 'pattern_fallback';
 
@@ -179,12 +180,12 @@ export async function generateBrandProtectionReport(
     });
   }
 
-  // ── STEP 4: AI Narrative ──
   const findingsSummary = osintFindings
     .slice(0, 15)
     .map((f, i) => `${i + 1}. [${f.riskLevel}] ${f.platform}: ${f.title} (${f.url})`)
     .join('\n');
 
+  // FIXED PROMPT - Evidence Safe, No fake case studies, No fake legal status, No fake ROI
   const prompt = `You are a senior Brand Protection Intelligence Analyst. Write in a confident, forensic, executive-level tone. Return ONLY valid JSON.
 
 CLIENT: ${brand} (Category: ${category})
@@ -194,9 +195,20 @@ CURRENT YEAR: 2026
 PRE-COMPUTED RISK DATA:
 - Threat Level: ${riskProfile.threatLevel}
 - Risk Score: ${riskProfile.riskScore}/100
-- Counterfeit Rate: ${riskProfile.counterfeitRate}%
-- Estimated Annual Loss: $${riskProfile.estimatedAnnualLoss.toLocaleString()}
+- Counterfeit Rate: ${riskProfile.counterfeitRate !== null ? riskProfile.counterfeitRate + '%' : 'To be validated'}
+- Estimated Annual Loss: ${formatLoss(riskProfile, '$')}
 - Price Undercut: ${riskProfile.priceUndercutRange}
+
+**STRICT EVIDENCE RULES - VIOLATION = REPORT REJECTED**:
+1. DO NOT invent case studies. "case_studies" MUST be [] empty array. NEVER invent "Operation Glass House" or seizure numbers.
+2. DO NOT claim trademark is "Active registered" unless you have USPTO evidence. Write: "To be verified via USPTO TESS search - Not verified in this scan"
+3. DO NOT claim CBP recordation is "Active". Write: "To be verified - Not confirmed in this scan"
+4. DO NOT invent exact loss numbers like $4,809,255. Use the pre-computed loss above only.
+5. DO NOT invent ROI like 580%. For economic_impact.roi_of_action write: "Not calculable - enforcement cost and recovery data not supplied"
+6. DO NOT invent brand equity damage or enforcement cost. Write "To be validated" if not supplied.
+7. For top_3_hotspots impact: Write like "$180K/month (Modeled)" - DO NOT add "/month" twice. Just write the amount once.
+8. For most_targeted_products: ONLY use products from OSINT findings titles. DO NOT invent "Signature" or "Limited Edition" products.
+9. NEVER claim a listing is "verified counterfeit" - only "suspected listing found via OSINT" - test purchase needed for confirmation.
 
 OSINT FINDINGS:
 ${findingsSummary || 'No OSINT findings collected.'}
@@ -209,61 +221,49 @@ ${keywordAnalysis.slice(0, 10).map((k) => `${k.keyword} — Vol: ${k.volume}, CP
 
 RETURN ONLY VALID JSON WITH THIS EXACT STRUCTURE:
 {
-  "headline": "One-line business impact with specific number",
-  "threat_summary": "3-4 sentence executive brief on the counterfeit threat landscape",
+  "headline": "One-line impact - use rounded modeled estimate, e.g. 'Suspected listings indicate ~$4.8M modeled exposure'",
+  "threat_summary": "3-4 sentence executive brief - clearly label modeled vs verified",
   "top_3_hotspots": [
-    { "platform": "Instagram", "risk": "Critical", "finding": "Specific behavior", "impact": "$X/month" },
-    { "platform": "DHgate", "risk": "Critical", "finding": "Specific behavior", "impact": "$X/month" },
-    { "platform": "Telegram", "risk": "High", "finding": "Specific behavior", "impact": "$X/month" }
+    { "platform": "Platform", "risk": "Critical", "finding": "Specific behavior from OSINT", "impact": "$X/month (Modeled)" }
   ],
   "vulnerability_analysis": {
     "most_targeted_products": [
-      { "product": "Product name", "risk_score": 95, "reason": "Why targeted" }
+      { "product": "Product name from OSINT only", "risk_score": 95, "reason": "Why targeted" }
     ],
-    "price_undercut_analysis": "2-3 sentences on pricing patterns",
-    "channel_vulnerability": "2-3 sentences on channel-specific risks"
+    "price_undercut_analysis": "2-3 sentences - label as modeled",
+    "channel_vulnerability": "2-3 sentences"
   },
   "counterfeiter_profile": {
     "keyword_patterns": ["pattern1", "pattern2", "pattern3", "pattern4", "pattern5"],
     "behavioral_indicators": ["indicator1", "indicator2", "indicator3", "indicator4"],
-    "typical_operation": "3-4 sentences"
+    "typical_operation": "3-4 sentences - label as suspected pattern, not confirmed"
   },
   "consumer_insights": {
     "purchase_drivers": ["driver1", "driver2", "driver3"],
-    "intentional_vs_unintentional": "2-3 sentences",
+    "intentional_vs_unintentional": "2-3 sentences - label as modeled estimate",
     "ai_shopping_trend": "2 sentences"
   },
   "economic_impact": {
-    "lost_sales": "$X",
-    "brand_equity_damage": "$X",
-    "enforcement_cost": "$X",
-    "total_annual_impact": "$X",
-    "roi_of_action": "X%"
+    "lost_sales": "Use pre-computed loss or 'Not calculable'",
+    "brand_equity_damage": "To be validated",
+    "enforcement_cost": "To be validated",
+    "total_annual_impact": "To be validated - do not sum invented numbers",
+    "roi_of_action": "Not calculable - enforcement cost and recovery data not supplied"
   },
   "legal_landscape": {
-    "trademark_status": "Status",
-    "customs_protection": "State",
-    "jurisdictional_actions": ["Action 1", "Action 2", "Action 3"]
+    "trademark_status": "To be verified via USPTO TESS search - Not verified in this scan",
+    "customs_protection": "To be verified - Not confirmed in this scan",
+    "jurisdictional_actions": ["Action 1 - subject to legal review", "Action 2", "Action 3"]
   },
-  "evidence_package": [
-    { "type": "Instagram Post", "url": "https://...", "timestamp": "2026-XX-XX", "confidence": "High" }
-  ],
+  "evidence_package": [],
   "countermeasures": {
-    "immediate": [
-      { "action": "Action", "owner": "Legal", "timeline": "Week 1-2", "expected_impact": "$X" }
-    ],
-    "short_term": [
-      { "action": "Action", "owner": "Team", "timeline": "Month 1-3", "expected_impact": "$X" }
-    ],
-    "long_term": [
-      { "action": "Action", "owner": "Executive", "timeline": "Month 4-12", "expected_impact": "$X" }
-    ]
+    "immediate": [{ "action": "Action", "owner": "Legal", "timeline": "Week 1-2", "expected_impact": "To be validated" }],
+    "short_term": [{ "action": "Action", "owner": "Team", "timeline": "Month 1-3", "expected_impact": "To be validated" }],
+    "long_term": [{ "action": "Action", "owner": "Executive", "timeline": "Month 4-12", "expected_impact": "To be validated" }]
   },
-  "case_studies": [
-    { "title": "Case Study 1", "challenge": "Description", "solution": "What was done", "results": "Outcome" }
-  ],
-  "ceo_summary": ["Point 1", "Point 2", "Point 3"],
-  "data_limitations": ["Limitation 1", "Limitation 2", "Limitation 3"]
+  "case_studies": [],
+  "ceo_summary": ["Point 1 - label modeled", "Point 2", "Point 3"],
+  "data_limitations": ["Limitation 1", "Limitation 2", "Limitation 3 - test purchase needed to confirm counterfeit"]
 }`;
 
   const aiResponse = await runGroqWithRetry(
@@ -272,7 +272,6 @@ RETURN ONLY VALID JSON WITH THIS EXACT STRUCTURE:
   );
   const analysis = extractJSON(aiResponse);
 
-  // ── STEP 5: Build Markdown ──
   const today = new Date().toLocaleDateString('en-US', {
     year: 'numeric',
     month: 'long',
@@ -297,7 +296,7 @@ Classification:    CONFIDENTIAL
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 HEADLINE:
-"${safeString(analysis.headline, `Counterfeit activity detected across ${platformDist.length} platforms.`)}"
+"${safeString(analysis.headline, `Suspected counterfeit listings detected across ${platformDist.length} platforms - verification via test purchase required.`)}"
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -308,10 +307,10 @@ HEADLINE:
 │  THREAT LEVEL          ${formatThreatBar(riskProfile.riskScore)}  ${riskProfile.riskScore}/100  │
 │                        ${riskProfile.threatLevel.toUpperCase()}                          │
 ├────────────────────────────────────────────────────────────────────┤
-│  Counterfeit Rate      ${riskProfile.counterfeitRate}%                                       │
+│  Counterfeit Rate      ${riskProfile.counterfeitRate !== null ? riskProfile.counterfeitRate + '%' : 'To be validated'}                                       │
 │  Price Undercut        ${riskProfile.priceUndercutRange}                              │
-│  Est. Annual Loss      ${currency.symbol}${riskProfile.estimatedAnnualLoss.toLocaleString()}                                │
-│  OSINT Findings        ${osintFindings.length} verified listings                       │
+│  Est. Annual Loss      ${formatLoss(riskProfile, currency.symbol)}                                │
+│  OSINT Findings        ${osintFindings.length} suspected listings (not confirmed counterfeit)                       │
 │  Platforms Affected    ${platformDist.length}                                            │
 └────────────────────────────────────────────────────────────────────┘
 
@@ -329,7 +328,8 @@ ${safeString(analysis.threat_summary)}
     markdown += `│ #${i + 1} — ${safeString(h.platform)} [${safeString(h.risk)}]\n`;
     markdown += `├──────────────────────────────────────────────────────────────────┤\n`;
     markdown += `│ Finding: ${safeString(h.finding)}\n`;
-    markdown += `│ Impact:  ${safeString(h.impact)}/month\n`;
+    // FIXED: No double /month
+    markdown += `│ Impact:  ${formatImpact(safeString(h.impact))}\n`;
     markdown += `└──────────────────────────────────────────────────────────────────┘\n\n`;
   });
 
@@ -339,9 +339,14 @@ ${safeString(analysis.threat_summary)}
 📊 MOST TARGETED PRODUCTS
 
 `;
-  safeArray(analysis.vulnerability_analysis?.most_targeted_products).forEach((p: any) => {
-    markdown += `  • ${safeString(p.product)} — Risk ${p.risk_score}/100 — ${safeString(p.reason)}\n`;
-  });
+  const products = safeArray(analysis.vulnerability_analysis?.most_targeted_products);
+  if (products.length === 0) {
+    markdown += `  • No specific products confirmed - based on OSINT titles only, test purchase required.\n`;
+  } else {
+    products.forEach((p: any) => {
+      markdown += `  • ${safeString(p.product)} — Risk ${p.risk_score}/100 — ${safeString(p.reason)}\n`;
+    });
+  }
 
   markdown += `\n💰 PRICE UNDERCUT ANALYSIS\n${safeString(analysis.vulnerability_analysis?.price_undercut_analysis)}\n\n`;
   markdown += `📡 CHANNEL VULNERABILITY\n${safeString(analysis.vulnerability_analysis?.channel_vulnerability)}\n\n`;
@@ -360,7 +365,7 @@ ${safeString(analysis.threat_summary)}
     markdown += `  • ${b}\n`;
   });
 
-  markdown += `\n📖 TYPICAL OPERATION\n${safeString(analysis.counterfeiter_profile?.typical_operation)}\n\n`;
+  markdown += `\n📖 TYPICAL OPERATION (Suspected Pattern)\n${safeString(analysis.counterfeiter_profile?.typical_operation)}\n\n`;
 
   markdown += `5. PLATFORM DISTRIBUTION MAP
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -392,23 +397,23 @@ ${safeString(analysis.threat_summary)}
 
 `;
   const impact = analysis.economic_impact || {};
-  markdown += `  💰 Lost Sales:              ${safeString(impact.lost_sales)}\n`;
-  markdown += `  💔 Brand Equity Damage:     ${safeString(impact.brand_equity_damage)}\n`;
-  markdown += `  ⚖️  Enforcement Cost:        ${safeString(impact.enforcement_cost)}\n`;
+  markdown += `  💰 Lost Sales:              ${safeString(impact.lost_sales, formatLoss(riskProfile, currency.symbol))}\n`;
+  markdown += `  💔 Brand Equity Damage:     ${safeString(impact.brand_equity_damage, 'To be validated')}\n`;
+  markdown += `  ⚖️  Enforcement Cost:        ${safeString(impact.enforcement_cost, 'To be validated')}\n`;
   markdown += `  ───────────────────────────────────\n`;
-  markdown += `  📊 TOTAL ANNUAL IMPACT:     ${safeString(impact.total_annual_impact)}\n`;
-  markdown += `  ✅ ROI OF ACTION:           ${safeString(impact.roi_of_action)}\n\n`;
+  markdown += `  📊 TOTAL ANNUAL IMPACT:     ${safeString(impact.total_annual_impact, 'To be validated - do not sum invented numbers')}\n`;
+  markdown += `  ✅ ROI OF ACTION:           ${safeString(impact.roi_of_action, 'Not calculable - enforcement cost and recovery data not supplied')}\n\n`;
 
   markdown += `8. LEGAL & ENFORCEMENT LANDSCAPE
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 📜 TRADEMARK STATUS
-${safeString(analysis.legal_landscape?.trademark_status)}
+${safeString(analysis.legal_landscape?.trademark_status, 'To be verified via USPTO TESS search - Not verified in this scan')}
 
 🛃 CUSTOMS PROTECTION
-${safeString(analysis.legal_landscape?.customs_protection)}
+${safeString(analysis.legal_landscape?.customs_protection, 'To be verified - Not confirmed in this scan')}
 
-⚖️ RECOMMENDED JURISDICTIONAL ACTIONS
+⚖️ RECOMMENDED JURISDICTIONAL ACTIONS (Subject to Legal Review)
 `;
   safeArray(analysis.legal_landscape?.jurisdictional_actions).forEach((a: string, i: number) => {
     markdown += `  ${i + 1}. ${a}\n`;
@@ -421,8 +426,10 @@ ${safeString(analysis.legal_landscape?.customs_protection)}
   if (osintFindings.length > 0) {
     markdown += `| # | Platform | Title | URL | Risk | Timestamp |\n|---|---|---|---|---|---|\n`;
     osintFindings.slice(0, 15).forEach((f, i) => {
-      markdown += `| ${i + 1} | ${f.platform} | ${f.title.substring(0, 40)}... | ${f.url.substring(0, 50)}... | ${f.riskLevel} | ${f.timestamp.substring(0, 10)} |\n`;
+      // Show full URL, not truncated google goto - already cleaned in osint.service
+      markdown += `| ${i + 1} | ${f.platform} | ${f.title.substring(0, 40)}... | ${f.url} | ${f.riskLevel} | ${f.timestamp.substring(0, 10)} |\n`;
     });
+    markdown += `\nNote: Listings are SUSPECTED based on OSINT signals. Confirmation requires test purchase and forensic analysis.\n`;
   } else {
     markdown += `No verified OSINT findings available.\n`;
   }
@@ -434,31 +441,36 @@ ${safeString(analysis.legal_landscape?.customs_protection)}
 `;
   safeArray(analysis.countermeasures?.immediate).forEach((a: any, i: number) => {
     markdown += `${i + 1}. ${safeString(a.action)}\n`;
-    markdown += `   Owner: ${safeString(a.owner)} | Timeline: ${safeString(a.timeline)} | Impact: ${safeString(a.expected_impact)}\n\n`;
+    markdown += `   Owner: ${safeString(a.owner)} | Timeline: ${safeString(a.timeline)} | Impact: ${safeString(a.expected_impact, 'To be validated')}\n\n`;
   });
 
   markdown += `🟡 SHORT-TERM (Month 1-3)\n`;
   safeArray(analysis.countermeasures?.short_term).forEach((a: any, i: number) => {
     markdown += `${i + 1}. ${safeString(a.action)}\n`;
-    markdown += `   Owner: ${safeString(a.owner)} | Timeline: ${safeString(a.timeline)} | Impact: ${safeString(a.expected_impact)}\n\n`;
+    markdown += `   Owner: ${safeString(a.owner)} | Timeline: ${safeString(a.timeline)} | Impact: ${safeString(a.expected_impact, 'To be validated')}\n\n`;
   });
 
   markdown += `🟢 LONG-TERM (Month 4-12)\n`;
   safeArray(analysis.countermeasures?.long_term).forEach((a: any, i: number) => {
     markdown += `${i + 1}. ${safeString(a.action)}\n`;
-    markdown += `   Owner: ${safeString(a.owner)} | Timeline: ${safeString(a.timeline)} | Impact: ${safeString(a.expected_impact)}\n\n`;
+    markdown += `   Owner: ${safeString(a.owner)} | Timeline: ${safeString(a.timeline)} | Impact: ${safeString(a.expected_impact, 'To be validated')}\n\n`;
   });
 
   markdown += `11. CASE STUDIES
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 `;
-  safeArray(analysis.case_studies).forEach((cs: any, i: number) => {
-    markdown += `CASE STUDY ${String(i + 1).padStart(2, '0')}: ${safeString(cs.title)}\n`;
-    markdown += `  Challenge: ${safeString(cs.challenge)}\n`;
-    markdown += `  Solution: ${safeString(cs.solution)}\n`;
-    markdown += `  Results: ${safeString(cs.results)}\n\n`;
-  });
+  const caseStudies = safeArray(analysis.case_studies).filter((cs: any) => cs.title && cs.title !== 'N/A');
+  if (caseStudies.length === 0) {
+    markdown += `No verified enforcement case studies available. Case studies will be added only with permissioned client data, dated enforcement records, and legal approval.\n\n`;
+  } else {
+    caseStudies.forEach((cs: any, i: number) => {
+      markdown += `CASE STUDY ${String(i + 1).padStart(2, '0')}: ${safeString(cs.title)}\n`;
+      markdown += `  Challenge: ${safeString(cs.challenge)}\n`;
+      markdown += `  Solution: ${safeString(cs.solution)}\n`;
+      markdown += `  Results: ${safeString(cs.results)}\n\n`;
+    });
+  }
 
   markdown += `12. CEO SUMMARY
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -474,34 +486,41 @@ ${safeString(analysis.legal_landscape?.customs_protection)}
 📖 METHODOLOGY
 This report combines OSINT (Open Source Intelligence) collection, AI-powered risk scoring,
 ${trendSource === 'dataforseo' ? 'DataForSEO keyword analysis (live)' : 'modeled keyword estimates'},
-and forensic network mapping. All findings are timestamped and verifiable.
+and forensic network mapping. Listings are SUSPECTED, not confirmed counterfeit, unless verified by test purchase.
 
 📡 DATA SOURCES
-• OSINT Collection: SerpAPI / ScraperAPI / SerperAPI
-• Trend Data: ${trendSource === 'dataforseo' ? 'DataForSEO Google Trends (Live)' : 'Pattern-Based (Modeled)'}
+• OSINT Collection: SerpAPI / ScraperAPI / SerperAPI (google redirect links filtered)
+• Trend Data: ${trendSource === 'dataforseo' ? 'DataForSEO Google Trends (Live)' : 'Pattern-Based (Modeled) - To be validated'}
 • Platform Analysis: MusePRO Proprietary Database
 • Risk Scoring: MusePRO Counterfeit Detection Engine
 
 ⚠️ DATA LIMITATIONS
 `;
-  safeArray(analysis.data_limitations).forEach((d: string, i: number) => {
-    markdown += `  ${i + 1}. ${d}\n`;
-  });
+  const limitations = safeArray(analysis.data_limitations);
+  if (limitations.length > 0) {
+    limitations.forEach((d: string, i: number) => {
+      markdown += `  ${i + 1}. ${d}\n`;
+    });
+  } else {
+    markdown += `  1. Private messaging channels (Telegram, encrypted chats) remain unquantified.\n`;
+    markdown += `  2. Physical offline distribution excluded from digital telemetry.\n`;
+    markdown += `  3. Confirmation of counterfeit status requires test purchase and forensic analysis.\n`;
+  }
 
   markdown += `\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ⚠️ DISCLAIMER
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 This report is for informational and brand protection purposes only.
-All OSINT findings are collected from publicly available sources.
-This report does not constitute legal advice. Consult qualified IP
-attorneys before initiating enforcement actions.
+Listings are SUSPECTED based on OSINT signals and are not confirmed counterfeit
+unless verified by test purchase. All monetary values marked "Modeled" are
+estimates, not verified losses. This report does not constitute legal advice.
+Consult qualified IP attorneys before initiating enforcement actions.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Generated by MusePRO Brand Protection Intelligence Division.
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 `;
 
-  // ── STEP 6: Return Result ──
   const result: BrandProtectionResult = {
     brand,
     category,
@@ -510,6 +529,7 @@ Generated by MusePRO Brand Protection Intelligence Division.
     niche: `${brand} — ${category}`,
     data: {
       ...analysis,
+      case_studies: caseStudies,
       riskProfile,
       osintFindings: osintFindings.slice(0, 20),
       platformDistribution: platformDist,
