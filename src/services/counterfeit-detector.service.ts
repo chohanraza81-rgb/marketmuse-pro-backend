@@ -1,4 +1,4 @@
-// src/services/counterfeit-detector.service.ts
+// src/services/counterfeit-detector.service.ts - RESTORED v2.0 - commit 10b2072
 // AI-powered counterfeit risk scoring and analysis
 
 import { runGroqWithRetry } from './groq';
@@ -7,11 +7,13 @@ import { getRiskScore, HIGH_RISK_CATEGORIES } from '../data/counterfeit-keywords
 
 export interface CounterfeitRiskProfile {
   threatLevel: 'Critical' | 'High' | 'Medium' | 'Low';
-  riskScore: number; // 0-100
-  counterfeitRate: number; // percentage
-  estimatedAnnualLoss: number; // in USD
+  riskScore: number; // 0-100 - CLAMPED, never >100
+  counterfeitRate: number | null; // null = To be validated, not random
+  estimatedAnnualLoss: number | null; // null = Not calculable without brand revenue
+  estimatedAnnualLossDisplay: string; // RESTORED v2.0 - required by brand-protection.generator.ts
   topTargetedProducts: Array<{ product: string; riskScore: number }>;
   priceUndercutRange: string;
+  isModeled: boolean; // Must be shown in report
 }
 
 export interface CounterfeitNetworkNode {
@@ -22,52 +24,89 @@ export interface CounterfeitNetworkNode {
   connections: string[];
 }
 
-// ✅ Generate Counterfeit Risk Profile
+// v2.0: Clamp helper - Prevents 104/100 bug
+function clampScore(score: number, max: number = 100): number {
+  if (isNaN(score)) return 0;
+  if (score < 0) return 0;
+  if (score > max) return max;
+  return Math.round(score);
+}
+
+// v2.0: Round money to avoid fake precision like $4,809,255
+function roundToNearest10K(amount: number): number {
+  return Math.round(amount / 10000) * 10000;
+}
+
+function formatLossDisplay(amount: number | null): string {
+  if (amount === null) return 'Not calculable - Brand revenue not supplied';
+  if (amount >= 1000000) return `$${(amount / 1000000).toFixed(1)}M (Modeled Estimate)`;
+  if (amount >= 1000) return `$${(amount / 1000).toFixed(0)}K (Modeled Estimate)`;
+  return `$${amount} (Modeled Estimate)`;
+}
+
+// ✅ Generate Counterfeit Risk Profile - RESTORED v2.0 - 6 args
 export async function generateCounterfeitRiskProfile(
   brand: string,
   category: string,
   country: string,
   findings: OSINTFinding[],
-  keywords: KeywordAnalysis[]
+  keywords: KeywordAnalysis[],
+  brandAnnualRevenue?: number | null // RESTORED v2.0 - 6th argument - generator passes this
 ): Promise<CounterfeitRiskProfile> {
   const baseRiskScore = getRiskScore(brand, category);
   const findingsBoost = Math.min(findings.length * 0.5, 15);
   const keywordBoost = keywords.length > 10 ? 5 : 0;
 
-  const riskScore = Math.min(100, Math.round(baseRiskScore + findingsBoost + keywordBoost));
+  // v2.0: Clamped to max 100 - never 104/100
+  const riskScore = clampScore(baseRiskScore + findingsBoost + keywordBoost, 100);
 
   const threatLevel: CounterfeitRiskProfile['threatLevel'] =
     riskScore >= 85 ? 'Critical' : riskScore >= 70 ? 'High' : riskScore >= 50 ? 'Medium' : 'Low';
 
-  // Counterfeit rate estimation based on category
+  // v2.0: NO Math.random() - Deterministic rate from category only
   const categoryData = HIGH_RISK_CATEGORIES.find(
     (c) => c.category.toLowerCase() === category.toLowerCase()
   );
-  const counterfeitRate = categoryData ? (categoryData.riskScore / 10) + Math.random() * 3 : 5 + Math.random() * 3;
+  const counterfeitRate = categoryData ? Number((categoryData.riskScore / 10).toFixed(2)) : null;
 
-  // Estimated annual loss (formula-based)
-  const avgBrandRevenue = 50_000_000; // $50M default (user can override later)
-  const estimatedAnnualLoss = Math.round(avgBrandRevenue * (counterfeitRate / 100));
+  // v2.0: NO hardcoded $50M assumption
+  // Only calculate if client supplied real revenue, else null
+  let estimatedAnnualLoss: number | null = null;
+  if (brandAnnualRevenue && brandAnnualRevenue > 0 && counterfeitRate !== null) {
+    const rawLoss = brandAnnualRevenue * (counterfeitRate / 100);
+    estimatedAnnualLoss = roundToNearest10K(rawLoss); // $4,810,000 not $4,809,255
+  }
 
-  // Top targeted products (AI-generated)
-  const topTargetedProducts = [
-    { product: `${brand} Signature ${category}`, riskScore: riskScore },
-    { product: `${brand} Limited Edition`, riskScore: Math.round(riskScore * 0.9) },
-    { product: `${brand} Classic Line`, riskScore: Math.round(riskScore * 0.85) },
-    { product: `${brand} Entry-Level`, riskScore: Math.round(riskScore * 0.7) },
-  ];
+  // v2.0: NO fake product names like "Samsung Signature" / "Limited Edition"
+  // Only use products actually found in OSINT titles, else empty
+  const topTargetedProducts: Array<{ product: string; riskScore: number }> = [];
+  const seenProducts = new Set<string>();
+  for (const f of findings) {
+    if (f.title && f.title.toLowerCase().includes(brand.toLowerCase()) && seenProducts.size < 4) {
+      const cleanTitle = f.title.slice(0, 80);
+      if (!seenProducts.has(cleanTitle)) {
+        seenProducts.add(cleanTitle);
+        topTargetedProducts.push({
+          product: cleanTitle,
+          riskScore: riskScore,
+        });
+      }
+    }
+  }
 
   return {
     threatLevel,
     riskScore,
-    counterfeitRate: Number(counterfeitRate.toFixed(2)),
+    counterfeitRate,
     estimatedAnnualLoss,
+    estimatedAnnualLossDisplay: formatLossDisplay(estimatedAnnualLoss), // v2.0 field
     topTargetedProducts,
-    priceUndercutRange: '40-70% below retail',
+    priceUndercutRange: '40-70% below retail (Modeled - to be validated via test purchase)',
+    isModeled: true,
   };
 }
 
-// ✅ Generate Counterfeiter Network Map (AI-assisted)
+// ✅ Generate Counterfeiter Network Map - v2.0
 export async function generateNetworkMap(
   findings: OSINTFinding[]
 ): Promise<CounterfeitNetworkNode[]> {
@@ -75,6 +114,9 @@ export async function generateNetworkMap(
   const seenPlatforms = new Set<string>();
 
   for (const finding of findings.slice(0, 10)) {
+    if (!finding.platform || finding.platform === 'unknown') continue;
+    if (finding.url.includes('google.com/goto')) continue;
+
     if (!seenPlatforms.has(finding.platform)) {
       nodes.push({
         type: 'Platform',
@@ -90,7 +132,7 @@ export async function generateNetworkMap(
   return nodes;
 }
 
-// ✅ Generate enforcement recommendations (AI-powered)
+// ✅ Generate enforcement recommendations - v2.0 - No fake counts
 export async function generateEnforcementRecommendations(
   brand: string,
   riskProfile: CounterfeitRiskProfile,
@@ -100,22 +142,32 @@ export async function generateEnforcementRecommendations(
   shortTerm: string[];
   longTerm: string[];
 }> {
-  const immediate = [
-    `File takedown notices for ${findings.filter((f) => f.platform === 'Instagram').length} Instagram listings`,
-    `Escalate ${findings.filter((f) => f.riskLevel === 'Critical').length} critical findings to legal team`,
-    `Document evidence with timestamps for ${findings.length} URLs`,
-  ];
+  const instagramCount = findings.filter((f) => f.platform === 'Instagram').length;
+  const criticalCount = findings.filter((f) => f.riskLevel === 'Critical').length;
+
+  const immediate: string[] = [];
+  if (instagramCount > 0) {
+    immediate.push(`File takedown notices for ${instagramCount} Instagram listings (verified in OSINT scan)`);
+  }
+  if (criticalCount > 0) {
+    immediate.push(`Escalate ${criticalCount} critical findings to legal team`);
+  }
+  if (findings.length > 0) {
+    immediate.push(`Document evidence with timestamps for ${findings.length} verified URLs`);
+  } else {
+    immediate.push(`No verified listings found in this scan - expand keyword coverage before enforcement`);
+  }
 
   const shortTerm = [
-    `Register ${brand} trademark in all high-risk jurisdictions (CN, HK, TR)`,
-    `Partner with customs to record IP for automated seizure`,
-    `Deploy AI monitoring for 24/7 keyword tracking`,
+    `Verify ${brand} trademark recordation status with CBP before filing seizures - do not assume active`,
+    `Partner with customs to record IP for automated seizure (after legal review)`,
+    `Deploy monitoring for keyword tracking - review weekly`,
   ];
 
   const longTerm = [
-    `Build in-house OSINT team for continuous surveillance`,
-    `Establish customer education campaign (verify authenticity)`,
-    `Lobby for stronger platform accountability in key markets`,
+    `Build OSINT monitoring workflow for continuous surveillance`,
+    `Establish customer education campaign (verify authenticity) - with approved messaging`,
+    `Review platform accountability options with IP counsel in key markets`,
   ];
 
   return { immediate, shortTerm, longTerm };
